@@ -1,0 +1,46 @@
+# FastAPI
+fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+python-multipart>=0.0.6
+
+# Database
+sqlalchemy>=2.0.0
+asyncpg>=0.28.0
+psycopg2-binary>=2.9.0
+alembic>=1.11.0
+greenlet>=3.0.0
+
+# Pydantic
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+email-validator>=2.0.0
+
+# Auth
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# Security
+slowapi>=0.1.9
+
+# Redis & Celery
+redis>=4.5.0
+celery[redis]>=5.3.0
+
+# Backtesting
+backtrader>=1.9.78
+yfinance>=0.2.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# S3/MinIO
+boto3>=1.28.0
+
+# Utilities
+httpx>=0.24.0
+aiofiles>=23.1.0
+python-dotenv>=1.0.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+aiosqlite>=0.20.0
