@@ -64,7 +64,7 @@ backend:
 # - Auto-restarts when you edit task files
 # - Watch the output here to see backtest progress
 celery:
-	cd backend && celery -A app.tasks worker --loglevel=info
+	cd backend && celery -A app.tasks.celery_app:celery_app worker --loglevel=info
 
 # Start the Next.js frontend development server
 # - Runs on http://localhost:3000
