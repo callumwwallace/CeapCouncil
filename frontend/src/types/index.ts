@@ -49,6 +49,8 @@ export interface BacktestTrade {
   pnl_pct: number;
   commission: number;
   type: 'LONG' | 'SHORT';
+  slippage_cost?: number;
+  spread_cost?: number;
 }
 
 export interface EquityCurvePoint {
@@ -63,7 +65,7 @@ export interface DrawdownPoint {
 
 export interface Backtest {
   id: number;
-  strategy_id: number;
+  strategy_id: number | null;
   user_id: number;
   symbol: string;
   start_date: string;
@@ -108,10 +110,41 @@ export interface BacktestResults {
   max_consecutive_losses: number | null;
   calmar_ratio: number | null;
   exposure_pct: number | null;
+  orders?: Array<{
+    order_id: string;
+    symbol: string;
+    side: string;
+    order_type: string;
+    quantity: number;
+    filled_quantity: number;
+    avg_fill_price: number;
+    commission: number;
+    status: string;
+    created_at: string | null;
+    filled_at: string | null;
+  }>;
+  expectancy?: number | null;
+  volatility_annual?: number | null;
+  information_ratio?: number | null;
+  beta?: number | null;
+  alpha?: number | null;
+  total_commission?: number | null;
+  total_slippage?: number | null;
+  total_spread_cost?: number | null;
+  cost_as_pct_of_pnl?: number | null;
+  rolling_sharpe?: Array<{date: string; value: number}> | null;
+  rolling_sortino?: Array<{date: string; value: number}> | null;
+  rolling_beta?: Array<{date: string; value: number}> | null;
+  deflated_sharpe_ratio?: number | null;
+  robustness_score?: number | null;
+  risk_violations?: Array<{timestamp: string; rule: string; description: string; action: string}>;
+  custom_charts?: Record<string, Array<{date: string; series: string; value: number}>>;
+  alerts?: Array<{timestamp: string; level: string; message: string; data?: any}>;
 }
 
 export interface BacktestCreate {
-  strategy_id: number;
+  strategy_id?: number;  // Omit when passing inline code
+  code?: string;  // Inline strategy code when no saved strategy
   symbol: string;
   symbols?: string[] | null;
   start_date: string;

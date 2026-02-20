@@ -14,6 +14,9 @@ from app.core.config import settings
 from app.models.backtest import Backtest, BacktestStatus
 from app.models.strategy import Strategy
 
+from app.engine.core.engine import Engine, EngineConfig, EngineResult
+from app.engine.strategy.compiler import compile_strategy, extract_user_error as extract_strategy_error
+
 # Sync engine for Celery tasks
 sync_engine = create_engine(settings.DATABASE_URL.replace("+asyncpg", ""))
 SessionLocal = sessionmaker(bind=sync_engine)
@@ -83,7 +86,7 @@ def create_user_strategy(code: str) -> type:
     ``bt.Strategy``.  Only a restricted set of builtins and imports is
     available inside the executed code.
 
-    Note: Strategy parameters are baked directly into the code string by the
+    Strategy parameters are baked into the code string by the
     frontend (via ``updateCodeWithParams``), so no runtime param injection is
     needed.  Attempting to mutate ``strategy_cls.params`` after class creation
     breaks Backtrader's metaclass machinery.
@@ -290,6 +293,44 @@ def _compute_exposure_pct(trades: list[dict], total_bars: int) -> float | None:
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Engine runner
+# ---------------------------------------------------------------------------
+
+def _run_backtest(
+    code: str,
+    symbol: str,
+    data: pd.DataFrame,
+    initial_capital: float,
+    params: dict,
+) -> EngineResult:
+    """Run a backtest using the event-driven engine."""
+    is_crypto = any(
+        ind in symbol.upper()
+        for ind in ["-USD", "BTC", "ETH", "SOL", "DOGE", "XRP"]
+    )
+
+    config = EngineConfig(
+        initial_capital=initial_capital,
+        commission_rate=params.get("commission", 0.001),
+        slippage_model="percentage",
+        slippage_pct=params.get("slippage", 0.1),
+        spread_model="volatility" if is_crypto else "none",
+        is_crypto=is_crypto,
+        stop_loss_pct=params.get("stop_loss_pct"),
+        take_profit_pct=params.get("take_profit_pct"),
+    )
+
+    strategy_cls = compile_strategy(code, params)
+    strategy = strategy_cls(params=params)
+
+    engine = Engine(config)
+    engine.add_data(symbol, data)
+    engine.set_strategy(strategy)
+    return engine.run()
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -327,6 +368,74 @@ def _derive_drawdown_series(equity_curve: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Backtrader → Engine code translator
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+
+def _translate_bt_to_engine(code: str) -> str:
+    """Best-effort translation of Backtrader strategy code to Engine format.
+
+    Converts common Backtrader patterns so that the strategy can be run by
+    :class:`Engine` which expects a :class:`StrategyBase` subclass.
+    """
+    lines = code.split("\n")
+    translated: list[str] = []
+
+    translated.append(
+        "# Backtrader indicators unavailable — use self.history() for manual calculation."
+    )
+
+    for line in lines:
+        stripped = line.strip()
+
+        if _re.match(r"^import\s+backtrader\s+as\s+bt\s*$", stripped):
+            continue
+        if _re.match(r"^from\s+backtrader\s+import\s+", stripped):
+            continue
+
+        if "bt.ind." in stripped or "bt.indicators." in stripped:
+            indent = len(line) - len(line.lstrip())
+            translated.append(" " * indent + "# [removed: bt.ind not available] " + stripped)
+            continue
+
+        # Class definition: bt.Strategy → StrategyBase
+        line = _re.sub(
+            r"class\s+(\w+)\s*\(\s*bt\.Strategy\s*\)\s*:",
+            r"class \1(StrategyBase):",
+            line,
+        )
+
+        # Lifecycle methods
+        line = _re.sub(r"def\s+__init__\s*\(\s*self\s*\)\s*:", "def on_init(self):", line)
+        line = _re.sub(r"def\s+next\s*\(\s*self\s*\)\s*:", "def on_data(self, bar):", line)
+
+        # Data accessors → bar fields
+        line = line.replace("self.data.close[0]", "bar.close")
+        line = line.replace("self.data.high[0]", "bar.high")
+        line = line.replace("self.data.low[0]", "bar.low")
+        line = line.replace("self.data.open[0]", "bar.open")
+
+        # Position checks (order matters — do 'not self.position' before 'self.position')
+        line = _re.sub(r"not\s+self\.position\b", "self.is_flat(bar.symbol)", line)
+        line = _re.sub(r"\bself\.position\b", "self.is_long(bar.symbol)", line)
+
+        # Order methods
+        line = _re.sub(
+            r"\bself\.buy\s*\(\s*\)",
+            "self.market_order(bar.symbol, max(1, int(self.portfolio.cash * 0.95 / bar.close)))",
+            line,
+        )
+        line = _re.sub(r"\bself\.sell\s*\(\s*\)", "self.close_position(bar.symbol)", line)
+        line = _re.sub(r"\bself\.close\s*\(\s*\)", "self.close_position(bar.symbol)", line)
+
+        translated.append(line)
+
+    return "\n".join(translated)
+
+
+# ---------------------------------------------------------------------------
 # Celery task
 # ---------------------------------------------------------------------------
 
@@ -345,21 +454,16 @@ def run_backtest_task(self, backtest_id: int):
         backtest.started_at = datetime.utcnow()
         db.commit()
 
-        # -- fetch strategy --
-        strategy = db.query(Strategy).filter(Strategy.id == backtest.strategy_id).first()
-        if not strategy:
-            raise ValueError("Strategy not found")
-
-        # -- compile user strategy code --
-        # Params are already baked into the code by the frontend.
-        try:
-            user_strategy = create_user_strategy(strategy.code)
-        except ValueError as e:
-            backtest.status = BacktestStatus.FAILED
-            backtest.error_message = str(e)[:1000]
-            backtest.completed_at = datetime.utcnow()
-            db.commit()
-            return {"status": "failed", "error": str(e)}
+        # Get strategy code: inline or from saved strategy
+        if backtest.code and backtest.code.strip():
+            strategy_code = backtest.code
+        elif backtest.strategy_id:
+            strategy = db.query(Strategy).filter(Strategy.id == backtest.strategy_id).first()
+            if not strategy:
+                raise ValueError("Strategy not found")
+            strategy_code = strategy.code
+        else:
+            raise ValueError("Backtest has no code and no strategy_id")
 
         # -- fetch market data --
         params = backtest.parameters or {}
@@ -379,142 +483,65 @@ def run_backtest_task(self, backtest_id: int):
         if data.index.tz is not None:
             data.index = data.index.tz_localize(None)
 
-        # -- configure Cerebro --
-        cerebro = bt.Cerebro()
-        cerebro.broker.setcash(backtest.initial_capital)
-
-        commission = params.get("commission", 0.001)   # default 0.1 %
-        slippage = params.get("slippage", 0.001)       # default 0.1 %
-        cerebro.broker.setcommission(commission=commission)
-        cerebro.broker.set_slippage_perc(slippage)
-
-        # -- position sizing --
-        sizing_method = params.get("sizing_method", "full")
-        sizing_value = params.get("sizing_value")
-        if sizing_method == "percent_equity" and sizing_value:
-            cerebro.addsizer(bt.sizers.PercentSizer, percents=sizing_value)
-        elif sizing_method == "fixed_shares" and sizing_value:
-            cerebro.addsizer(bt.sizers.FixedSize, stake=int(sizing_value))
-        elif sizing_method == "fixed_dollar" and sizing_value:
-            # Custom: compute shares = dollar_amount / price at order time
-            # Backtrader doesn't have a built-in dollar sizer, so we use
-            # PercentSizer as approximation: pct = (dollar / cash) * 100
-            pct = (sizing_value / backtest.initial_capital) * 100
-            cerebro.addsizer(bt.sizers.PercentSizer, percents=min(pct, 100))
-
-        # -- data feed(s) --
-        data_feed = bt.feeds.PandasData(dataname=data, name=backtest.symbol)
-        cerebro.adddata(data_feed)
-
-        # Add additional data feeds for multi-symbol strategies
-        additional_symbols = params.get("additional_symbols") or []
-        for extra_sym in additional_symbols[:4]:  # Max 4 additional symbols
-            if extra_sym == backtest.symbol:
-                continue
-            try:
-                extra_data = yf.Ticker(extra_sym).history(
-                    start=backtest.start_date,
-                    end=backtest.end_date,
-                    interval=interval,
-                )
-                if not extra_data.empty:
-                    if extra_data.index.tz is not None:
-                        extra_data.index = extra_data.index.tz_localize(None)
-                    extra_feed = bt.feeds.PandasData(dataname=extra_data, name=extra_sym)
-                    cerebro.adddata(extra_feed)
-            except Exception:
-                pass  # Skip symbols that fail to load
-
-        # -- analyzers --
-        cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name="sharpe")
-        cerebro.addanalyzer(bt.analyzers.DrawDown, _name="drawdown")
-        cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
-        cerebro.addanalyzer(bt.analyzers.Returns, _name="returns")
-        cerebro.addanalyzer(TradeRecorder, _name="trade_recorder")
-
-        # -- wrap user strategy with stop-loss / take-profit if requested --
-        stop_loss_pct = params.get("stop_loss_pct")
-        take_profit_pct = params.get("take_profit_pct")
-
-        if stop_loss_pct or take_profit_pct:
-            # Dynamically create a wrapper that injects SL/TP logic
-            _orig_strategy = user_strategy
-            _sl = stop_loss_pct
-            _tp = take_profit_pct
-
-            class SLTPStrategy(_orig_strategy):  # type: ignore[misc]
-                """Wraps user strategy with automatic stop-loss / take-profit."""
-
-                def next(self):
-                    # Check existing position for SL/TP before user logic
-                    if self.position:
-                        entry = self.position.price
-                        current = self.data.close[0]
-                        if entry and entry > 0:
-                            pnl_pct = ((current - entry) / entry) * 100
-                            if self.position.size > 0:  # long
-                                if _sl and pnl_pct <= -_sl:
-                                    self.close()
-                                    return
-                                if _tp and pnl_pct >= _tp:
-                                    self.close()
-                                    return
-                            else:  # short
-                                if _sl and pnl_pct >= _sl:
-                                    self.close()
-                                    return
-                                if _tp and pnl_pct <= -_tp:
-                                    self.close()
-                                    return
-                    super().next()
-
-            cerebro.addstrategy(SLTPStrategy)
-        else:
-            cerebro.addstrategy(user_strategy)
-
-        # -- run --
         try:
-            results = cerebro.run()
+            strategy_cls = compile_strategy(strategy_code)
+            strategy = strategy_cls(params=params)
+        except (ValueError, Exception) as e:
+            backtest.status = BacktestStatus.FAILED
+            backtest.error_message = str(e)[:1000]
+            backtest.completed_at = datetime.utcnow()
+            db.commit()
+            return {"status": "failed", "error": str(e)}
+
+        is_crypto = any(
+            ind in backtest.symbol.upper()
+            for ind in ["-USD", "BTC", "ETH", "SOL", "DOGE", "XRP"]
+        )
+
+        # Resolve spread model: "auto" means volatility for crypto, none for equities
+        user_spread = params.get("spread_model", "auto")
+        if user_spread == "auto":
+            resolved_spread = "volatility" if is_crypto else "none"
+        else:
+            resolved_spread = user_spread
+
+        # Resolve slippage model from user config
+        user_slippage_model = params.get("slippage_model", "percentage")
+
+        # Margin settings
+        margin_enabled = bool(params.get("margin_enabled", False))
+        leverage = float(params.get("leverage", 1))
+
+        engine_config = EngineConfig(
+            initial_capital=backtest.initial_capital,
+            commission_rate=params.get("commission", 0.001),
+            slippage_model=user_slippage_model,
+            slippage_pct=params.get("slippage", 0.1),
+            spread_model=resolved_spread,
+            is_crypto=is_crypto,
+            stop_loss_pct=params.get("stop_loss_pct"),
+            take_profit_pct=params.get("take_profit_pct"),
+            max_drawdown_pct=float(params.get("max_drawdown_pct", 50)),
+            max_position_pct=float(params.get("max_position_pct", 100)),
+            margin_enabled=margin_enabled,
+            max_leverage=leverage if margin_enabled else 1.0,
+            warmup_bars=int(params.get("warmup_bars", 0)),
+            pdt_enabled=bool(params.get("pdt_enabled", False)),
+        )
+
+        engine = Engine(engine_config)
+        engine.add_data(backtest.symbol, data)
+        engine.set_strategy(strategy)
+
+        try:
+            result: EngineResult = engine.run()
         except Exception as run_err:
-            clean_msg = _extract_user_error(run_err, strategy.code)
+            clean_msg = extract_strategy_error(run_err, strategy_code)
             raise ValueError(f"Strategy runtime error:\n{clean_msg}") from run_err
-        strat = results[0]
 
-        # -- extract built-in analyzer data --
-        final_value = cerebro.broker.getvalue()
-        total_return = (
-            (final_value - backtest.initial_capital) / backtest.initial_capital
-        ) * 100
+        results_dict = result.to_results_dict()
 
-        sharpe_analysis = strat.analyzers.sharpe.get_analysis()
-        sharpe_ratio_val = sharpe_analysis.get("sharperatio")
-        # SharpeRatio can return None when there are no trades / not enough data
-        if sharpe_ratio_val is not None:
-            try:
-                sharpe_ratio_val = round(float(sharpe_ratio_val), 4)
-            except (TypeError, ValueError):
-                sharpe_ratio_val = None
-
-        drawdown_analysis = strat.analyzers.drawdown.get_analysis()
-        max_dd = drawdown_analysis.get("max", {}).get("drawdown", 0.0)
-
-        trade_analysis = strat.analyzers.trades.get_analysis()
-        total_trade_count = trade_analysis.get("total", {}).get("total", 0)
-        won_count = trade_analysis.get("won", {}).get("total", 0)
-        win_rate = round(won_count / max(total_trade_count, 1) * 100, 2)
-
-        # -- extract trade-level data from TradeRecorder --
-        recorder = strat.analyzers.trade_recorder.get_analysis()
-        trades_list = recorder["trades"]
-        equity_curve_full = recorder["equity_curve"]
-
-        # Sample equity curve to avoid huge JSON payloads
-        equity_curve = _sample_series(equity_curve_full, max_points=200)
-
-        # Derive drawdown series (sampled to same cadence as equity curve)
-        drawdown_series = _derive_drawdown_series(equity_curve)
-
-        # -- compute benchmark (buy & hold) return --
+        # Compute benchmark return
         benchmark_symbol = params.get("benchmark_symbol") or backtest.symbol
         benchmark_return = None
         try:
@@ -535,51 +562,42 @@ def run_backtest_task(self, backtest_id: int):
                         ((last_close - first_close) / first_close) * 100, 4
                     )
         except Exception:
-            pass  # non-critical — leave as None
+            pass
 
-        # -- compute extended metrics --
-        sortino = _compute_sortino_ratio(equity_curve_full)
-        profit_factor = _compute_profit_factor(trades_list)
-        avg_duration = _compute_avg_trade_duration(trades_list)
-        max_consec_losses = _compute_max_consecutive_losses(trades_list)
-        num_bars = len(equity_curve_full)
-        num_days = (data.index[-1] - data.index[0]).days if len(data) >= 2 else 0
-        calmar = _compute_calmar_ratio(total_return, max_dd, num_days)
-        exposure = _compute_exposure_pct(trades_list, num_bars)
+        results_dict["benchmark_return"] = benchmark_return
 
-        # -- persist results --
+        # Map result fields to database columns (convert numpy to plain Python)
+        def _safe(val, default=None):
+            """Convert value to plain Python type, handling numpy scalars."""
+            if val is None:
+                return default
+            try:
+                import numpy as _np
+                if isinstance(val, _np.integer):
+                    return int(val)
+                if isinstance(val, _np.floating):
+                    v = float(val)
+                    return default if (_np.isnan(v) or _np.isinf(v)) else v
+            except Exception:
+                pass
+            if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+                return default
+            return val
+
         backtest.status = BacktestStatus.COMPLETED
         backtest.completed_at = datetime.utcnow()
-        backtest.total_return = total_return
-        backtest.sharpe_ratio = sharpe_ratio_val
-        backtest.max_drawdown = max_dd
-        backtest.total_trades = total_trade_count
-        backtest.win_rate = win_rate
-        backtest.sortino_ratio = sortino
-        backtest.profit_factor = profit_factor
-        backtest.avg_trade_duration = avg_duration
-        backtest.max_consecutive_losses = max_consec_losses
-        backtest.calmar_ratio = calmar
-        backtest.exposure_pct = exposure
-        backtest.results = {
-            "final_value": round(final_value, 2),
-            "initial_capital": backtest.initial_capital,
-            "total_return_pct": round(total_return, 4),
-            "sharpe_ratio": sharpe_ratio_val,
-            "max_drawdown_pct": round(max_dd, 4),
-            "total_trades": total_trade_count,
-            "win_rate": win_rate,
-            "trades": trades_list,
-            "equity_curve": equity_curve,
-            "drawdown_series": drawdown_series,
-            "benchmark_return": benchmark_return,
-            "sortino_ratio": sortino,
-            "profit_factor": profit_factor,
-            "avg_trade_duration": avg_duration,
-            "max_consecutive_losses": max_consec_losses,
-            "calmar_ratio": calmar,
-            "exposure_pct": exposure,
-        }
+        backtest.total_return = _safe(results_dict.get("total_return_pct"), 0.0)
+        backtest.sharpe_ratio = _safe(results_dict.get("sharpe_ratio"))
+        backtest.max_drawdown = _safe(results_dict.get("max_drawdown_pct"), 0.0)
+        backtest.total_trades = _safe(results_dict.get("total_trades"), 0)
+        backtest.win_rate = _safe(results_dict.get("win_rate"), 0.0)
+        backtest.sortino_ratio = _safe(results_dict.get("sortino_ratio"))
+        backtest.profit_factor = _safe(results_dict.get("profit_factor"))
+        backtest.avg_trade_duration = _safe(results_dict.get("avg_trade_duration"))
+        backtest.max_consecutive_losses = _safe(results_dict.get("max_consecutive_losses"), 0)
+        backtest.calmar_ratio = _safe(results_dict.get("calmar_ratio"))
+        backtest.exposure_pct = _safe(results_dict.get("exposure_pct"))
+        backtest.results = results_dict
 
         db.commit()
         return {"status": "completed", "backtest_id": backtest_id}
@@ -625,26 +643,15 @@ def _run_single_backtest(
     end_date=None,
     interval: str = "1d",
 ) -> dict:
-    """Run a single backtest with specific params, returning key metrics.
+    """Run a single backtest with specific params.
 
     Either pass a pre-fetched ``data`` DataFrame **or** ``symbol`` /
     ``start_date`` / ``end_date`` to let this helper download it.
     """
-    import re
-
-    modified_code = code
-    if param_combo:
-        params_str = ", ".join(f"('{k}', {v})" for k, v in param_combo.items())
-        # Greedy match (no ?) captures the full params = ((...), (...))
-        modified_code = re.sub(
-            r"params\s*=\s*\(.*\)",
-            f"params = ({params_str})",
-            modified_code,
-        )
-
     try:
-        strategy_cls = create_user_strategy(modified_code)
-    except ValueError as e:
+        strategy_cls = compile_strategy(code)
+        strategy = strategy_cls(params=param_combo)
+    except (ValueError, Exception) as e:
         return {"params": param_combo, "error": str(e)}
 
     # Use pre-fetched data if available, otherwise download
@@ -655,47 +662,68 @@ def _run_single_backtest(
     if data is None or data.empty:
         return {"params": param_combo, "error": "No market data for this window"}
 
-    cerebro = bt.Cerebro()
-    cerebro.broker.setcash(initial_capital)
-    cerebro.broker.setcommission(commission=commission)
-    cerebro.broker.set_slippage_perc(slippage)
-    cerebro.adddata(bt.feeds.PandasData(dataname=data))
-    cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name="sharpe")
-    cerebro.addanalyzer(bt.analyzers.DrawDown, _name="drawdown")
-    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
-    cerebro.addstrategy(strategy_cls)
+    # Determine primary symbol from data or fallback
+    sym = symbol or "SYM"
+    if hasattr(data, 'name') and data.name:
+        sym = data.name
+
+    config = EngineConfig(
+        initial_capital=initial_capital,
+        commission_rate=commission,
+        slippage_model="percentage",
+        slippage_pct=slippage * 100 if slippage < 1 else slippage,
+    )
+
+    engine = Engine(config)
+    engine.add_data(sym, data)
+    engine.set_strategy(strategy)
 
     try:
-        results = cerebro.run()
+        result: EngineResult = engine.run()
     except Exception as e:
         return {"params": param_combo, "error": str(e)[:200]}
 
-    strat = results[0]
-    final_value = cerebro.broker.getvalue()
-    total_return = ((final_value - initial_capital) / initial_capital) * 100
+    m = result.metrics
 
-    sharpe = strat.analyzers.sharpe.get_analysis().get("sharperatio")
-    if sharpe is not None:
+    def _p(val, default=0):
+        if val is None:
+            return default
         try:
-            sharpe = round(float(sharpe), 4)
-        except (TypeError, ValueError):
-            sharpe = None
-
-    dd = strat.analyzers.drawdown.get_analysis().get("max", {}).get("drawdown", 0)
-    ta = strat.analyzers.trades.get_analysis()
-    total_trades = ta.get("total", {}).get("total", 0)
-    won = ta.get("won", {}).get("total", 0)
-    win_rate = round(won / max(total_trades, 1) * 100, 2)
+            import numpy as _np
+            if isinstance(val, (_np.floating, _np.integer)):
+                v = float(val)
+                return default if (_np.isnan(v) or _np.isinf(v)) else v
+        except Exception:
+            pass
+        if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+            return default
+        return val
 
     return {
         "params": param_combo,
-        "total_return": round(total_return, 4),
-        "sharpe_ratio": sharpe,
-        "max_drawdown": round(dd, 4),
-        "total_trades": total_trades,
-        "win_rate": win_rate,
-        "final_value": round(final_value, 2),
+        "total_return": _p(round(result.total_return_pct, 4)),
+        "sharpe_ratio": _p(m.sharpe_ratio),
+        "max_drawdown": _p(round(m.max_drawdown_pct, 4)),
+        "total_trades": _p(m.total_trades, 0),
+        "win_rate": _p(m.win_rate, 0),
+        "final_value": _p(round(result.final_value, 2)),
     }
+
+
+def _check_constraints(result: dict, constraints: dict) -> bool:
+    """Check if a backtest result violates any constraints. Returns True if violated."""
+    if not constraints:
+        return False
+    dd = abs(result.get("max_drawdown", 0))
+    if "max_drawdown" in constraints and dd > constraints["max_drawdown"]:
+        return True
+    if "min_trades" in constraints and (result.get("total_trades", 0) or 0) < constraints["min_trades"]:
+        return True
+    if "min_win_rate" in constraints and (result.get("win_rate", 0) or 0) < constraints["min_win_rate"]:
+        return True
+    if "max_exposure" in constraints and (result.get("exposure_pct") or 0) > constraints.get("max_exposure", 100):
+        return True
+    return False
 
 
 @celery_app.task(bind=True, time_limit=600, soft_time_limit=540)
@@ -709,6 +737,7 @@ def run_optimization_task(
     commission: float,
     slippage: float,
     param_grid: dict,
+    constraints: dict | None = None,
     interval: str = "1d",
 ):
     """Grid search over parameter combinations."""
@@ -729,24 +758,39 @@ def run_optimization_task(
         combos = combos[:500]
 
     results = []
-    for i, combo in enumerate(combos):
+    # Use thread pool for parallel execution (processes can't pickle Celery task)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    max_workers = min(4, len(combos))
+
+    def _run_combo(combo_with_idx):
+        idx, combo = combo_with_idx
         result = _run_single_backtest(
             code=code,
             initial_capital=initial_capital,
             commission=commission, slippage=slippage,
             param_combo=combo,
             data=data.copy(),
+            symbol=symbol,
         )
-        results.append(result)
-        # Update progress
-        if i % 5 == 0:
-            self.update_state(
-                state="PROGRESS",
-                meta={"current": i + 1, "total": len(combos)},
-            )
+        if constraints:
+            violated = _check_constraints(result, constraints)
+            if violated:
+                result["constraint_violated"] = True
+        return idx, result
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_run_combo, (i, combo)): i for i, combo in enumerate(combos)}
+        for future in as_completed(futures):
+            idx, result = future.result()
+            results.append(result)
+            if len(results) % 5 == 0:
+                self.update_state(
+                    state="PROGRESS",
+                    meta={"current": len(results), "total": len(combos)},
+                )
 
     # Sort by Sharpe ratio (best first), then by return
-    valid_results = [r for r in results if "error" not in r]
+    valid_results = [r for r in results if "error" not in r and not r.get("constraint_violated")]
     valid_results.sort(
         key=lambda r: (r.get("sharpe_ratio") or -999, r.get("total_return", -999)),
         reverse=True,
@@ -758,6 +802,491 @@ def run_optimization_task(
         "total_combinations": len(combos),
         "results": valid_results + error_results,
         "best": valid_results[0] if valid_results else None,
+    }
+
+
+@celery_app.task(bind=True, time_limit=600, soft_time_limit=540)
+def run_bayesian_optimization_task(
+    self,
+    code: str,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    initial_capital: float,
+    commission: float,
+    slippage: float,
+    param_ranges: dict,
+    n_trials: int = 50,
+    objective_metric: str = "sharpe_ratio",
+    constraints: dict | None = None,
+    interval: str = "1d",
+):
+    """Bayesian optimization using optuna TPE sampler."""
+    try:
+        import optuna
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+    except ImportError:
+        return {"status": "failed", "error": "optuna is not installed. Run: pip install optuna"}
+
+    data = _fetch_data(symbol, start_date, end_date, interval)
+    if data is None or data.empty:
+        return {"status": "failed", "error": "No market data for the selected date range"}
+
+    n_trials = min(n_trials, 200)
+    all_results = []
+
+    def objective(trial):
+        combo = {}
+        for key, rng in param_ranges.items():
+            if isinstance(rng, dict):
+                low = rng.get("low", rng.get("min", 1))
+                high = rng.get("high", rng.get("max", 100))
+                step = rng.get("step", None)
+                param_type = rng.get("type", "float")
+                if param_type == "int":
+                    combo[key] = trial.suggest_int(key, int(low), int(high), step=int(step) if step else 1)
+                else:
+                    combo[key] = trial.suggest_float(key, float(low), float(high), step=float(step) if step else None)
+            elif isinstance(rng, list) and len(rng) >= 2:
+                combo[key] = trial.suggest_float(key, float(min(rng)), float(max(rng)))
+            else:
+                combo[key] = rng[0] if isinstance(rng, list) else rng
+
+        result = _run_single_backtest(
+            code=code,
+            initial_capital=initial_capital,
+            commission=commission,
+            slippage=slippage,
+            param_combo=combo,
+            data=data.copy(),
+            symbol=symbol,
+        )
+        result["params"] = combo
+        all_results.append(result)
+
+        if "error" in result:
+            return float("-inf")
+
+        if constraints:
+            violated = _check_constraints(result, constraints)
+            if violated:
+                result["constraint_violated"] = True
+                return float("-inf")
+
+        value = result.get(objective_metric, result.get("sharpe_ratio", 0))
+        if value is None or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
+            return float("-inf")
+
+        # Report progress
+        self.update_state(
+            state="PROGRESS",
+            meta={"current": len(all_results), "total": n_trials},
+        )
+        return value
+
+    study = optuna.create_study(
+        direction="maximize",
+        sampler=optuna.samplers.TPESampler(seed=42),
+    )
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+    # Sort by objective metric
+    valid_results = [r for r in all_results if "error" not in r and not r.get("constraint_violated")]
+    valid_results.sort(
+        key=lambda r: (r.get(objective_metric, r.get("sharpe_ratio", 0)) or -999),
+        reverse=True,
+    )
+    error_results = [r for r in all_results if "error" in r]
+
+    best_params = study.best_params if study.best_trial else None
+    best_value = study.best_value if study.best_trial else None
+
+    return {
+        "status": "completed",
+        "method": "bayesian",
+        "total_trials": len(all_results),
+        "objective_metric": objective_metric,
+        "best_params": best_params,
+        "best_value": best_value,
+        "results": valid_results[:50] + error_results[:5],
+        "best": valid_results[0] if valid_results else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Genetic Algorithm Optimization task
+# ---------------------------------------------------------------------------
+
+@celery_app.task(bind=True, time_limit=900, soft_time_limit=840)
+def run_genetic_optimization_task(
+    self,
+    code: str,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    initial_capital: float,
+    commission: float,
+    slippage: float,
+    param_ranges: dict,
+    population_size: int = 50,
+    n_generations: int = 20,
+    crossover_prob: float = 0.7,
+    mutation_prob: float = 0.2,
+    objective_metric: str = "sharpe_ratio",
+    constraints: dict | None = None,
+    interval: str = "1d",
+):
+    """Genetic algorithm optimization using DEAP."""
+    try:
+        from deap import base, creator, tools, algorithms
+    except ImportError:
+        return {"status": "failed", "error": "deap is not installed. Run: pip install deap"}
+
+    import random
+
+    data = _fetch_data(symbol, start_date, end_date, interval)
+    if data is None or data.empty:
+        return {"status": "failed", "error": "No market data for the selected date range"}
+
+    population_size = min(population_size, 200)
+    n_generations = min(n_generations, 100)
+
+    # Build param info
+    param_keys = list(param_ranges.keys())
+    param_bounds = []
+    param_types = []
+    for key in param_keys:
+        rng = param_ranges[key]
+        if isinstance(rng, dict):
+            param_bounds.append((rng.get("low", 0), rng.get("high", 100)))
+            param_types.append(rng.get("type", "float"))
+        elif isinstance(rng, list) and len(rng) >= 2:
+            param_bounds.append((min(rng), max(rng)))
+            param_types.append("float")
+        else:
+            param_bounds.append((0, 100))
+            param_types.append("float")
+
+    # DEAP setup — use unique names to avoid conflicts
+    if hasattr(creator, "GeneticFitness"):
+        del creator.GeneticFitness
+    if hasattr(creator, "GeneticIndividual"):
+        del creator.GeneticIndividual
+
+    creator.create("GeneticFitness", base.Fitness, weights=(1.0,))
+    creator.create("GeneticIndividual", list, fitness=creator.GeneticFitness)
+
+    toolbox = base.Toolbox()
+
+    # Register attribute generators for each parameter
+    for i, (low, high) in enumerate(param_bounds):
+        toolbox.register(f"attr_{i}", random.uniform, low, high)
+
+    def create_individual():
+        ind = []
+        for i, (low, high) in enumerate(param_bounds):
+            ind.append(random.uniform(low, high))
+        return creator.GeneticIndividual(ind)
+
+    toolbox.register("individual", create_individual)
+    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+
+    all_results = []
+    generation_history = []
+
+    def evaluate(individual):
+        combo = {}
+        for i, key in enumerate(param_keys):
+            val = individual[i]
+            if param_types[i] == "int":
+                val = int(round(val))
+            combo[key] = val
+
+        result = _run_single_backtest(
+            code=code, initial_capital=initial_capital,
+            commission=commission, slippage=slippage,
+            param_combo=combo, data=data.copy(), symbol=symbol,
+        )
+        result["params"] = combo
+        all_results.append(result)
+
+        if "error" in result:
+            return (float("-inf"),)
+
+        # Check constraints
+        if constraints:
+            violated = _check_constraints(result, constraints)
+            if violated:
+                result["constraint_violated"] = True
+                return (float("-inf"),)
+
+        value = result.get(objective_metric, result.get("sharpe_ratio", 0))
+        if value is None or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
+            return (float("-inf"),)
+        return (float(value),)
+
+    toolbox.register("evaluate", evaluate)
+    toolbox.register("mate", tools.cxBlend, alpha=0.5)
+    toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=1, indpb=0.2)
+    toolbox.register("select", tools.selTournament, tournsize=3)
+
+    # Clamp values after crossover/mutation
+    def clamp(individual):
+        for i in range(len(individual)):
+            low, high = param_bounds[i]
+            individual[i] = max(low, min(high, individual[i]))
+        return individual
+
+    random.seed(42)
+    pop = toolbox.population(n=population_size)
+
+    # Evaluate initial population
+    fitnesses = list(map(toolbox.evaluate, pop))
+    for ind, fit in zip(pop, fitnesses):
+        ind.fitness.values = fit
+
+    for gen in range(n_generations):
+        offspring = toolbox.select(pop, len(pop))
+        offspring = list(map(toolbox.clone, offspring))
+
+        # Crossover
+        for c1, c2 in zip(offspring[::2], offspring[1::2]):
+            if random.random() < crossover_prob:
+                toolbox.mate(c1, c2)
+                clamp(c1)
+                clamp(c2)
+                del c1.fitness.values
+                del c2.fitness.values
+
+        # Mutation
+        for mut in offspring:
+            if random.random() < mutation_prob:
+                toolbox.mutate(mut)
+                clamp(mut)
+                del mut.fitness.values
+
+        # Evaluate new individuals
+        invalids = [ind for ind in offspring if not ind.fitness.valid]
+        fitnesses = list(map(toolbox.evaluate, invalids))
+        for ind, fit in zip(invalids, fitnesses):
+            ind.fitness.values = fit
+
+        pop[:] = offspring
+
+        # Track best per generation
+        best_fit = max(ind.fitness.values[0] for ind in pop)
+        generation_history.append({"generation": gen + 1, "best_fitness": best_fit if best_fit != float("-inf") else None})
+
+        self.update_state(
+            state="PROGRESS",
+            meta={"current": gen + 1, "total": n_generations},
+        )
+
+    valid_results = [r for r in all_results if "error" not in r and not r.get("constraint_violated")]
+    valid_results.sort(key=lambda r: (r.get(objective_metric, r.get("sharpe_ratio", 0)) or -999), reverse=True)
+    error_results = [r for r in all_results if "error" in r]
+
+    return {
+        "status": "completed",
+        "method": "genetic",
+        "total_evaluations": len(all_results),
+        "generations": n_generations,
+        "objective_metric": objective_metric,
+        "results": valid_results[:50] + error_results[:5],
+        "best": valid_results[0] if valid_results else None,
+        "generation_history": generation_history,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Multi-Objective Optimization task
+# ---------------------------------------------------------------------------
+
+@celery_app.task(bind=True, time_limit=600, soft_time_limit=540)
+def run_multiobjective_optimization_task(
+    self,
+    code: str,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    initial_capital: float,
+    commission: float,
+    slippage: float,
+    param_ranges: dict,
+    n_trials: int = 50,
+    objective_metrics: list | None = None,
+    directions: list | None = None,
+    constraints: dict | None = None,
+    interval: str = "1d",
+):
+    """Multi-objective optimization using NSGA-II via optuna."""
+    try:
+        import optuna
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+    except ImportError:
+        return {"status": "failed", "error": "optuna is not installed"}
+
+    data = _fetch_data(symbol, start_date, end_date, interval)
+    if data is None or data.empty:
+        return {"status": "failed", "error": "No market data for the selected date range"}
+
+    if not objective_metrics or len(objective_metrics) < 2:
+        objective_metrics = ["sharpe_ratio", "max_drawdown"]
+    if not directions or len(directions) != len(objective_metrics):
+        directions = ["maximize" if m != "max_drawdown" else "minimize" for m in objective_metrics]
+
+    n_trials = min(n_trials, 200)
+    all_results = []
+
+    def objective(trial):
+        combo = {}
+        for key, rng in param_ranges.items():
+            if isinstance(rng, dict):
+                low = rng.get("low", rng.get("min", 1))
+                high = rng.get("high", rng.get("max", 100))
+                step = rng.get("step")
+                param_type = rng.get("type", "float")
+                if param_type == "int":
+                    combo[key] = trial.suggest_int(key, int(low), int(high), step=int(step) if step else 1)
+                else:
+                    combo[key] = trial.suggest_float(key, float(low), float(high), step=float(step) if step else None)
+            elif isinstance(rng, list) and len(rng) >= 2:
+                combo[key] = trial.suggest_float(key, float(min(rng)), float(max(rng)))
+            else:
+                combo[key] = rng[0] if isinstance(rng, list) else rng
+
+        result = _run_single_backtest(
+            code=code, initial_capital=initial_capital,
+            commission=commission, slippage=slippage,
+            param_combo=combo, data=data.copy(), symbol=symbol,
+        )
+        result["params"] = combo
+        all_results.append(result)
+
+        if "error" in result:
+            return tuple(float("inf") if d == "minimize" else float("-inf") for d in directions)
+
+        if constraints:
+            violated = _check_constraints(result, constraints)
+            if violated:
+                result["constraint_violated"] = True
+                return tuple(float("inf") if d == "minimize" else float("-inf") for d in directions)
+
+        values = []
+        for metric in objective_metrics:
+            v = result.get(metric, 0)
+            if v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))):
+                v = 0
+            values.append(float(v))
+
+        self.update_state(state="PROGRESS", meta={"current": len(all_results), "total": n_trials})
+        return tuple(values)
+
+    study = optuna.create_study(
+        directions=directions,
+        sampler=optuna.samplers.NSGAIISampler(seed=42),
+    )
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+    # Extract Pareto front
+    pareto_front = []
+    for trial in study.best_trials:
+        pf_entry = {"values": {m: v for m, v in zip(objective_metrics, trial.values)}}
+        pf_entry["params"] = trial.params
+        pareto_front.append(pf_entry)
+
+    valid_results = [r for r in all_results if "error" not in r and not r.get("constraint_violated")]
+
+    return {
+        "status": "completed",
+        "method": "multiobjective",
+        "total_trials": len(all_results),
+        "objective_metrics": objective_metrics,
+        "directions": directions,
+        "pareto_front": pareto_front,
+        "results": valid_results[:50],
+        "best": valid_results[0] if valid_results else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Parameter Heatmap task
+# ---------------------------------------------------------------------------
+
+@celery_app.task(bind=True, time_limit=600, soft_time_limit=540)
+def run_heatmap_task(
+    self,
+    code: str,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    initial_capital: float,
+    commission: float,
+    slippage: float,
+    param_x: str,
+    param_y: str,
+    x_range: dict,
+    y_range: dict,
+    metric: str = "sharpe_ratio",
+    constraints: dict | None = None,
+    interval: str = "1d",
+):
+    """Generate a 2D parameter stability heatmap."""
+    data = _fetch_data(symbol, start_date, end_date, interval)
+    if data is None or data.empty:
+        return {"status": "failed", "error": "No market data for the selected date range"}
+
+    x_low, x_high = x_range.get("low", 5), x_range.get("high", 50)
+    x_steps = min(x_range.get("steps", 15), 25)
+    y_low, y_high = y_range.get("low", 5), y_range.get("high", 50)
+    y_steps = min(y_range.get("steps", 15), 25)
+
+    x_values = [round(x_low + i * (x_high - x_low) / max(x_steps - 1, 1), 4) for i in range(x_steps)]
+    y_values = [round(y_low + i * (y_high - y_low) / max(y_steps - 1, 1), 4) for i in range(y_steps)]
+
+    z_values = []
+    total = len(x_values) * len(y_values)
+    count = 0
+
+    for yi, yv in enumerate(y_values):
+        row = []
+        for xi, xv in enumerate(x_values):
+            combo = {param_x: xv, param_y: yv}
+            result = _run_single_backtest(
+                code=code, initial_capital=initial_capital,
+                commission=commission, slippage=slippage,
+                param_combo=combo, data=data.copy(), symbol=symbol,
+            )
+            val = result.get(metric, 0) if "error" not in result else None
+
+            if constraints and val is not None and "error" not in result:
+                violated = _check_constraints(result, constraints)
+                if violated:
+                    val = None
+
+            if val is not None:
+                try:
+                    val = float(val)
+                    if math.isnan(val) or math.isinf(val):
+                        val = None
+                except (TypeError, ValueError):
+                    val = None
+
+            row.append(val)
+            count += 1
+            if count % 10 == 0:
+                self.update_state(state="PROGRESS", meta={"current": count, "total": total})
+
+        z_values.append(row)
+
+    return {
+        "status": "completed",
+        "param_x": param_x,
+        "param_y": param_y,
+        "x_values": x_values,
+        "y_values": y_values,
+        "z_values": z_values,
+        "metric": metric,
     }
 
 
@@ -838,6 +1367,7 @@ def run_walk_forward_task(
             commission=commission, slippage=slippage,
             param_combo={},
             data=train_data,
+            symbol=symbol,
         )
 
         # Run backtest on test slice (with lookback warmup)
@@ -847,6 +1377,7 @@ def run_walk_forward_task(
             commission=commission, slippage=slippage,
             param_combo={},
             data=test_data,
+            symbol=symbol,
         )
 
         windows.append({
@@ -889,7 +1420,7 @@ def run_monte_carlo_task(
     initial_capital: float,
     n_simulations: int = 1000,
 ):
-    """Monte Carlo simulation: shuffle trade order to assess robustness."""
+    """Monte Carlo simulation: shuffle trade order for stability assessment."""
     if not trades:
         return {"status": "failed", "error": "No trades to simulate"}
 
@@ -936,4 +1467,199 @@ def run_monte_carlo_task(
         "std_final": round(float(np.std(fv)), 2),
         "sample_curves": sample_curves,
         "probability_of_loss": round(float(np.mean(fv < initial_capital)) * 100, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Batch Strategy Runner
+# ---------------------------------------------------------------------------
+
+@celery_app.task(bind=True, time_limit=1800, soft_time_limit=1740)
+def run_batch_backtest_task(
+    self,
+    strategies: list[dict],
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    initial_capital: float = 10000,
+    commission: float = 0.001,
+    slippage: float = 0.001,
+    interval: str = "1d",
+):
+    """Run multiple strategies in batch and return comparative results.
+    
+    Each strategy dict: {"name": str, "code": str, "params": dict}
+    """
+    data = _fetch_data(symbol, start_date, end_date, interval)
+    if data is None or data.empty:
+        return {"status": "failed", "error": "No market data"}
+
+    results = []
+    for i, strat in enumerate(strategies[:20]):  # Cap at 20 strategies
+        name = strat.get("name", f"Strategy {i+1}")
+        code = strat.get("code", "")
+        params = strat.get("params", {})
+
+        result = _run_single_backtest(
+            code=code, initial_capital=initial_capital,
+            commission=commission, slippage=slippage,
+            param_combo=params, data=data.copy(), symbol=symbol,
+        )
+        result["strategy_name"] = name
+        results.append(result)
+
+        self.update_state(
+            state="PROGRESS",
+            meta={"current": i + 1, "total": len(strategies[:20])},
+        )
+
+    # Sort by Sharpe
+    valid = [r for r in results if "error" not in r]
+    valid.sort(key=lambda r: (r.get("sharpe_ratio") or -999), reverse=True)
+    errors = [r for r in results if "error" in r]
+
+    return {
+        "status": "completed",
+        "total_strategies": len(results),
+        "results": valid + errors,
+        "best": valid[0] if valid else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Out-of-Sample Enforcement
+# ---------------------------------------------------------------------------
+
+@celery_app.task(bind=True, time_limit=600, soft_time_limit=540)
+def run_oos_validation_task(
+    self,
+    code: str,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    initial_capital: float = 10000,
+    commission: float = 0.001,
+    slippage: float = 0.001,
+    oos_ratio: float = 0.3,
+    param_ranges: dict | None = None,
+    n_trials: int = 30,
+    interval: str = "1d",
+):
+    """Run optimization on in-sample, then validate best params on out-of-sample.
+    
+    Splits data into in-sample and out-of-sample periods.
+    Optimizes on IS, then runs the best params on OOS to detect overfitting.
+    """
+    data = _fetch_data(symbol, start_date, end_date, interval)
+    if data is None or data.empty:
+        return {"status": "failed", "error": "No market data"}
+
+    # Split data
+    n = len(data)
+    split_idx = int(n * (1 - oos_ratio))
+    is_data = data.iloc[:split_idx]
+    oos_data = data.iloc[split_idx:]
+
+    if is_data.empty or oos_data.empty:
+        return {"status": "failed", "error": "Not enough data for IS/OOS split"}
+
+    is_start = str(is_data.index[0].date()) if hasattr(is_data.index[0], 'date') else str(is_data.index[0])
+    is_end = str(is_data.index[-1].date()) if hasattr(is_data.index[-1], 'date') else str(is_data.index[-1])
+    oos_start = str(oos_data.index[0].date()) if hasattr(oos_data.index[0], 'date') else str(oos_data.index[0])
+    oos_end = str(oos_data.index[-1].date()) if hasattr(oos_data.index[-1], 'date') else str(oos_data.index[-1])
+
+    # If no param_ranges, just run IS and OOS with default params
+    if not param_ranges:
+        is_result = _run_single_backtest(
+            code=code, initial_capital=initial_capital,
+            commission=commission, slippage=slippage,
+            param_combo={}, data=is_data.copy(), symbol=symbol,
+        )
+        oos_result = _run_single_backtest(
+            code=code, initial_capital=initial_capital,
+            commission=commission, slippage=slippage,
+            param_combo={}, data=oos_data.copy(), symbol=symbol,
+        )
+        return {
+            "status": "completed",
+            "is_period": f"{is_start} to {is_end}",
+            "oos_period": f"{oos_start} to {oos_end}",
+            "is_result": is_result,
+            "oos_result": oos_result,
+            "best_params": {},
+            "overfit_score": None,
+        }
+
+    # Optimize on IS data
+    try:
+        import optuna
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+    except ImportError:
+        return {"status": "failed", "error": "optuna required"}
+
+    is_results = []
+
+    def objective(trial):
+        combo = {}
+        for key, rng in param_ranges.items():
+            if isinstance(rng, dict):
+                low = rng.get("low", 1)
+                high = rng.get("high", 100)
+                param_type = rng.get("type", "float")
+                if param_type == "int":
+                    combo[key] = trial.suggest_int(key, int(low), int(high))
+                else:
+                    combo[key] = trial.suggest_float(key, float(low), float(high))
+            else:
+                combo[key] = rng[0] if isinstance(rng, list) else rng
+
+        result = _run_single_backtest(
+            code=code, initial_capital=initial_capital,
+            commission=commission, slippage=slippage,
+            param_combo=combo, data=is_data.copy(), symbol=symbol,
+        )
+        result["params"] = combo
+        is_results.append(result)
+
+        if "error" in result:
+            return float("-inf")
+        return result.get("sharpe_ratio", 0) or 0
+
+    study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=42))
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+    best_params = study.best_params if study.best_trial else {}
+
+    # Run best params on OOS
+    oos_result = _run_single_backtest(
+        code=code, initial_capital=initial_capital,
+        commission=commission, slippage=slippage,
+        param_combo=best_params, data=oos_data.copy(), symbol=symbol,
+    )
+
+    # Run best params on IS for comparison
+    is_best = _run_single_backtest(
+        code=code, initial_capital=initial_capital,
+        commission=commission, slippage=slippage,
+        param_combo=best_params, data=is_data.copy(), symbol=symbol,
+    )
+
+    # Compute overfit score: how much worse is OOS vs IS
+    is_sharpe = is_best.get("sharpe_ratio", 0) or 0
+    oos_sharpe = oos_result.get("sharpe_ratio", 0) or 0
+    overfit_score = None
+    if is_sharpe > 0:
+        overfit_score = round(max(0, 1 - (oos_sharpe / is_sharpe)) * 100, 1)
+
+    return {
+        "status": "completed",
+        "is_period": f"{is_start} to {is_end}",
+        "oos_period": f"{oos_start} to {oos_end}",
+        "best_params": best_params,
+        "is_result": is_best,
+        "oos_result": oos_result,
+        "is_sharpe": is_sharpe,
+        "oos_sharpe": oos_sharpe,
+        "overfit_score": overfit_score,
+        "total_is_trials": len(is_results),
     }

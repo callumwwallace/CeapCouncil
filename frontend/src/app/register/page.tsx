@@ -97,7 +97,7 @@ export default function RegisterPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-emerald-500 focus:border-emerald-500 sm:text-sm"
-                  placeholder="you@example.com"
+                  placeholder="name@quantguild.com"
                 />
               </div>
             </div>
@@ -116,7 +116,7 @@ export default function RegisterPage() {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-emerald-500 focus:border-emerald-500 sm:text-sm"
-                  placeholder="trader_name"
+                  placeholder="username"
                 />
               </div>
               <p className="mt-1 text-xs text-gray-500">This will be visible to other users</p>

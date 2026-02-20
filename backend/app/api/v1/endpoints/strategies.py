@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.api.deps import get_current_active_user
 from app.models.user import User
 from app.models.strategy import Strategy, StrategyVersion
+import difflib
 from app.schemas.strategy import StrategyCreate, StrategyUpdate, StrategyResponse, StrategyVersionResponse
 
 router = APIRouter()
@@ -365,3 +366,195 @@ async def fork_strategy(
     await db.refresh(forked)
     
     return forked
+
+
+# ---------------------------------------------------------------------------
+# Strategy Version Control
+# ---------------------------------------------------------------------------
+
+class CreateVersionRequest(BaseModel):
+    message: str | None = None
+
+
+@router.get("/{strategy_id}/versions")
+async def list_versions(
+    strategy_id: int,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List versions of a strategy with pagination."""
+    result = await db.execute(select(Strategy).where(Strategy.id == strategy_id))
+    strategy = result.scalar_one_or_none()
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    if not strategy.is_public and strategy.author_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    result = await db.execute(
+        select(StrategyVersion)
+        .where(StrategyVersion.strategy_id == strategy_id)
+        .order_by(StrategyVersion.version.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    versions = result.scalars().all()
+    return [
+        {
+            "id": v.id,
+            "version": v.version,
+            "commit_message": getattr(v, "commit_message", None),
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+            "code_preview": v.code[:100] + "..." if len(v.code) > 100 else v.code,
+        }
+        for v in versions
+    ]
+
+
+@router.get("/{strategy_id}/versions/{version}")
+async def get_version(
+    strategy_id: int,
+    version: int,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a specific version's code."""
+    result = await db.execute(
+        select(StrategyVersion)
+        .where(StrategyVersion.strategy_id == strategy_id, StrategyVersion.version == version)
+    )
+    sv = result.scalar_one_or_none()
+    if not sv:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return {"version": sv.version, "code": sv.code, "parameters": sv.parameters, "created_at": sv.created_at.isoformat() if sv.created_at else None}
+
+
+@router.post("/{strategy_id}/versions")
+async def create_version(
+    strategy_id: int,
+    body: CreateVersionRequest | None = None,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new version snapshot of the current strategy code."""
+    result = await db.execute(select(Strategy).where(Strategy.id == strategy_id))
+    strategy = result.scalar_one_or_none()
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    if strategy.author_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    commit_message = (body.message or "").strip()[:500] if body else None
+
+    # Check if code changed from last version
+    result = await db.execute(
+        select(StrategyVersion)
+        .where(StrategyVersion.strategy_id == strategy_id)
+        .order_by(StrategyVersion.version.desc())
+        .limit(1)
+    )
+    last_version = result.scalar_one_or_none()
+    if last_version and last_version.code == strategy.code:
+        return {"message": "No changes to version", "version": last_version.version}
+
+    new_version_num = (last_version.version + 1) if last_version else 1
+    sv = StrategyVersion(
+        strategy_id=strategy_id,
+        version=new_version_num,
+        code=strategy.code,
+        parameters=strategy.parameters or {},
+        commit_message=commit_message or None,
+    )
+    db.add(sv)
+    strategy.version = new_version_num
+    await db.commit()
+    return {"version": new_version_num, "message": "Version created"}
+
+
+@router.post("/{strategy_id}/versions/{version}/restore")
+async def restore_version(
+    strategy_id: int,
+    version: int,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore strategy code from a specific version."""
+    result = await db.execute(select(Strategy).where(Strategy.id == strategy_id))
+    strategy = result.scalar_one_or_none()
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    if strategy.author_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    result = await db.execute(
+        select(StrategyVersion)
+        .where(StrategyVersion.strategy_id == strategy_id, StrategyVersion.version == version)
+    )
+    sv = result.scalar_one_or_none()
+    if not sv:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    strategy.code = sv.code
+    strategy.parameters = sv.parameters
+    await db.commit()
+    return {"message": f"Restored to version {version}", "code": sv.code}
+
+
+@router.delete("/{strategy_id}/versions/{version}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_version(
+    strategy_id: int,
+    version: int,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a version snapshot. Current strategy code is unchanged."""
+    result = await db.execute(select(Strategy).where(Strategy.id == strategy_id))
+    strategy = result.scalar_one_or_none()
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    if strategy.author_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    result = await db.execute(
+        select(StrategyVersion)
+        .where(StrategyVersion.strategy_id == strategy_id, StrategyVersion.version == version)
+    )
+    sv = result.scalar_one_or_none()
+    if not sv:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    await db.delete(sv)
+    await db.commit()
+
+
+@router.get("/{strategy_id}/versions/{v1}/diff/{v2}")
+async def diff_versions(
+    strategy_id: int,
+    v1: int,
+    v2: int,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get unified diff between two versions."""
+    result1 = await db.execute(
+        select(StrategyVersion)
+        .where(StrategyVersion.strategy_id == strategy_id, StrategyVersion.version == v1)
+    )
+    sv1 = result1.scalar_one_or_none()
+    result2 = await db.execute(
+        select(StrategyVersion)
+        .where(StrategyVersion.strategy_id == strategy_id, StrategyVersion.version == v2)
+    )
+    sv2 = result2.scalar_one_or_none()
+
+    if not sv1 or not sv2:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    diff = list(difflib.unified_diff(
+        sv1.code.splitlines(keepends=True),
+        sv2.code.splitlines(keepends=True),
+        fromfile=f"v{v1}",
+        tofile=f"v{v2}",
+    ))
+    return {"v1": v1, "v2": v2, "diff": "".join(diff)}

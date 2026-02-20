@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     S3_BUCKET_NAME: str = "quantguild"
     S3_USE_SSL: bool = False
     
+    # Engine
+    ENGINE_VERSION: str = "engine"  # "backtrader" for legacy Backtrader adapter
+
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     

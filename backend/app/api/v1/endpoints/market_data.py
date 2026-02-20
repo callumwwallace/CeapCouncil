@@ -80,7 +80,7 @@ def get_market_data(
     symbol: str = Query(..., description="Ticker symbol"),
     start: str = Query(..., description="Start date YYYY-MM-DD"),
     end: str = Query(..., description="End date YYYY-MM-DD"),
-    interval: str = Query("1d", description="Data interval: 1d, 1h, 15m, 5m"),
+    interval: str = Query("1d", description="Data interval: 1d, 1h, 15m, 5m, 1m"),
 ):
     """Return OHLCV price data for a symbol, with 24-hour Redis caching."""
     symbol = symbol.upper()
@@ -89,7 +89,7 @@ def get_market_data(
         if not _validate_and_cache_symbol(symbol):
             raise HTTPException(status_code=400, detail=f"Symbol '{symbol}' is not valid")
 
-    if interval not in ("1d", "1h", "15m", "5m"):
+    if interval not in ("1d", "1h", "15m", "5m", "1m"):
         raise HTTPException(status_code=400, detail=f"Invalid interval '{interval}'")
 
     # Validate dates

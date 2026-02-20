@@ -1,47 +1,52 @@
+import '@testing-library/jest-dom';
 import { render, screen } from '@testing-library/react';
-import TradeLog, { generateMockTrades, Trade } from '@/components/playground/TradeLog';
+import TradeLog from '@/components/playground/TradeLog';
+import { BacktestTrade } from '@/types';
+
+// Mock lucide-react icons
+jest.mock('lucide-react', () => ({
+  ArrowUpRight: () => <span data-testid="icon-arrow-up" />,
+  ArrowDownRight: () => <span data-testid="icon-arrow-down" />,
+  TrendingUp: () => <span data-testid="icon-trending-up" />,
+}));
+
+const mockTrades: BacktestTrade[] = [
+  {
+    entry_date: '2023-02-15',
+    exit_date: '2023-03-10',
+    entry_price: 150.0,
+    exit_price: 165.0,
+    size: 66,
+    pnl: 990.0,
+    pnl_pct: 10.0,
+    commission: 1.32,
+    type: 'LONG',
+  },
+  {
+    entry_date: '2023-05-20',
+    exit_date: '2023-07-01',
+    entry_price: 155.0,
+    exit_price: 145.0,
+    size: 64,
+    pnl: -640.0,
+    pnl_pct: -6.45,
+    commission: 1.28,
+    type: 'LONG',
+  },
+  {
+    entry_date: '2023-08-01',
+    exit_date: '2023-09-15',
+    entry_price: 160.0,
+    exit_price: 155.0,
+    size: 50,
+    pnl: -250.0,
+    pnl_pct: -3.13,
+    commission: 1.0,
+    type: 'SHORT',
+  },
+];
 
 describe('TradeLog', () => {
-  // Use pre-defined trades for deterministic tests
-  const mockTrades: Trade[] = [
-    {
-      id: 'trade-1',
-      date: '2023-02-15',
-      type: 'BUY',
-      price: 150.00,
-      shares: 66,
-      value: 9900.00,
-    },
-    {
-      id: 'trade-2',
-      date: '2023-05-20',
-      type: 'SELL',
-      price: 165.00,
-      shares: 66,
-      value: 10890.00,
-      pnl: 990.00,
-      pnlPercent: 10.0,
-    },
-    {
-      id: 'trade-3',
-      date: '2023-07-10',
-      type: 'BUY',
-      price: 155.00,
-      shares: 64,
-      value: 9920.00,
-    },
-    {
-      id: 'trade-4',
-      date: '2023-10-15',
-      type: 'SELL',
-      price: 145.00,
-      shares: 64,
-      value: 9280.00,
-      pnl: -640.00,
-      pnlPercent: -6.45,
-    },
-  ];
-
   describe('rendering', () => {
     it('renders the trade log component with trades', () => {
       render(<TradeLog trades={mockTrades} />);
@@ -51,192 +56,145 @@ describe('TradeLog', () => {
     it('renders summary stats', () => {
       render(<TradeLog trades={mockTrades} />);
       expect(screen.getByText('Trades')).toBeInTheDocument();
-      expect(screen.getByText('Round Trips')).toBeInTheDocument();
       expect(screen.getByText('Win Rate')).toBeInTheDocument();
       expect(screen.getByText('Total P&L')).toBeInTheDocument();
+      expect(screen.getByText('Avg Trade')).toBeInTheDocument();
     });
 
     it('renders table headers', () => {
       render(<TradeLog trades={mockTrades} />);
       expect(screen.getByText('Date')).toBeInTheDocument();
       expect(screen.getByText('Type')).toBeInTheDocument();
-      expect(screen.getByText('Price')).toBeInTheDocument();
-      expect(screen.getByText('Shares')).toBeInTheDocument();
-      expect(screen.getByText('Value')).toBeInTheDocument();
+      expect(screen.getByText('Entry')).toBeInTheDocument();
+      expect(screen.getByText('Exit')).toBeInTheDocument();
+      expect(screen.getByText('Size')).toBeInTheDocument();
       expect(screen.getByText('P&L')).toBeInTheDocument();
+      expect(screen.getByText('Comm.')).toBeInTheDocument();
     });
 
-    it('renders trade rows', () => {
+    it('renders trade rows with numeric index testids', () => {
       render(<TradeLog trades={mockTrades} />);
-      const tradeRows = screen.getAllByTestId(/trade-row-/);
-      expect(tradeRows.length).toBe(4);
+      expect(screen.getByTestId('trade-row-0')).toBeInTheDocument();
+      expect(screen.getByTestId('trade-row-1')).toBeInTheDocument();
+      expect(screen.getByTestId('trade-row-2')).toBeInTheDocument();
     });
   });
 
   describe('trade display', () => {
-    it('renders provided trades', () => {
-      render(<TradeLog trades={mockTrades} />);
-      
-      expect(screen.getByTestId('trade-row-trade-1')).toBeInTheDocument();
-      expect(screen.getByTestId('trade-row-trade-2')).toBeInTheDocument();
-    });
-
     it('displays correct trade count', () => {
       render(<TradeLog trades={mockTrades} />);
-      
-      // Find the "4" in the Trades stat
       const tradesHeader = screen.getByText('Trades');
       const tradesValue = tradesHeader.parentElement?.querySelector('.font-semibold');
-      expect(tradesValue?.textContent).toBe('4');
+      expect(tradesValue?.textContent).toBe('3');
     });
 
-    it('displays BUY trades with green styling', () => {
+    it('displays LONG trades with green styling', () => {
       render(<TradeLog trades={mockTrades} />);
-      
-      const buyBadges = screen.getAllByText('BUY');
-      buyBadges.forEach(badge => {
-        expect(badge).toHaveClass('bg-emerald-900/50');
+      const longBadges = screen.getAllByText('LONG');
+      longBadges.forEach((badge) => {
+        expect(badge.className).toContain('bg-emerald-900/50');
       });
     });
 
-    it('displays SELL trades with red styling', () => {
+    it('displays SHORT trades with red styling', () => {
       render(<TradeLog trades={mockTrades} />);
-      
-      const sellBadges = screen.getAllByText('SELL');
-      sellBadges.forEach(badge => {
-        expect(badge).toHaveClass('bg-red-900/50');
+      const shortBadges = screen.getAllByText('SHORT');
+      shortBadges.forEach((badge) => {
+        expect(badge.className).toContain('bg-red-900/50');
       });
     });
 
-    it('displays positive P&L with green color', () => {
+    it('displays positive P&L with emerald color', () => {
       render(<TradeLog trades={mockTrades} />);
-      
-      // The first sell trade has positive P&L (+$990)
-      const pnlText = screen.getByText(/\+\$990/);
-      expect(pnlText).toHaveClass('text-emerald-400');
+      const pnlElement = screen.getByText((content, element) => {
+        return !!element?.classList.contains('text-emerald-400') && content.includes('+$990');
+      });
+      expect(pnlElement).toBeInTheDocument();
     });
 
     it('displays negative P&L with red color', () => {
       render(<TradeLog trades={mockTrades} />);
-      
-      // The second sell trade has negative P&L (-$640)
-      // Use a function matcher to handle formatting variations
-      const pnlText = screen.getByText((content, element) => {
-        return element?.classList.contains('text-red-400') && content.includes('-640');
-      });
-      expect(pnlText).toBeInTheDocument();
+      // The negative P&L text is split across nodes ("$" + "-640.00"), so match on the numeric part
+      const pnlElement = screen.getByText(/-640\.00/);
+      expect(pnlElement.closest('.text-red-400')).not.toBeNull();
+    });
+
+    it('displays win rate correctly', () => {
+      render(<TradeLog trades={mockTrades} />);
+      // 1 winning trade out of 3 = 33%
+      const winRateHeader = screen.getByText('Win Rate');
+      const winRateValue = winRateHeader.parentElement?.querySelector('.font-semibold');
+      expect(winRateValue?.textContent).toBe('33%');
+    });
+
+    it('displays entry and exit prices', () => {
+      render(<TradeLog trades={mockTrades} />);
+      // First trade entry: $150.00
+      expect(screen.getByText('$150.00')).toBeInTheDocument();
+      // First trade exit: $165.00
+      expect(screen.getByText('$165.00')).toBeInTheDocument();
+    });
+
+    it('displays trade size', () => {
+      render(<TradeLog trades={mockTrades} />);
+      expect(screen.getByText('66')).toBeInTheDocument();
+      expect(screen.getByText('64')).toBeInTheDocument();
+    });
+
+    it('displays commission', () => {
+      render(<TradeLog trades={mockTrades} />);
+      expect(screen.getByText('$1.32')).toBeInTheDocument();
     });
   });
 
   describe('empty state', () => {
     it('shows empty state when no trades', () => {
       render(<TradeLog trades={[]} />);
-      
       expect(screen.getByTestId('trade-log-empty')).toBeInTheDocument();
       expect(screen.getByText('No trades yet')).toBeInTheDocument();
     });
-  });
-});
 
-describe('generateMockTrades', () => {
-  // Note: This function uses random data, so tests must account for variability
-  // Run multiple times to increase chance of getting trades
-  
-  it('returns array (possibly empty due to random data)', () => {
-    const trades = generateMockTrades('AAPL', '2023-01-01', '2024-01-01', 10000);
-    expect(Array.isArray(trades)).toBe(true);
+    it('shows description text in empty state', () => {
+      render(<TradeLog trades={[]} />);
+      expect(screen.getByText('Run a backtest to see trade history')).toBeInTheDocument();
+    });
   });
 
-  it('when trades exist, first trade is always a BUY', () => {
-    // Run multiple times to get a non-empty result
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const trades = generateMockTrades('AAPL', '2020-01-01', '2024-01-01', 10000);
-      if (trades.length > 0) {
-        expect(trades[0].type).toBe('BUY');
-        return;
-      }
-    }
-    // If no trades after 5 attempts, that's acceptable for random data
-  });
+  describe('calculations', () => {
+    it('computes total P&L across all trades', () => {
+      render(<TradeLog trades={mockTrades} />);
+      // 990 + (-640) + (-250) = 100
+      const totalPnlHeader = screen.getByText('Total P&L');
+      const totalPnlValue = totalPnlHeader.parentElement?.querySelector('.font-semibold');
+      expect(totalPnlValue?.textContent).toBe('+$100');
+    });
 
-  it('when trades exist, they alternate between BUY and SELL', () => {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const trades = generateMockTrades('AAPL', '2020-01-01', '2024-01-01', 10000);
-      if (trades.length > 1) {
-        for (let i = 1; i < trades.length; i++) {
-          expect(trades[i].type).not.toBe(trades[i - 1].type);
-        }
-        return;
-      }
-    }
-  });
+    it('computes average trade P&L', () => {
+      render(<TradeLog trades={mockTrades} />);
+      // 100 / 3 = ~33
+      const avgHeader = screen.getByText('Avg Trade');
+      const avgValue = avgHeader.parentElement?.querySelector('.font-semibold');
+      expect(avgValue?.textContent).toBe('+$33');
+    });
 
-  it('SELL trades have P&L calculated', () => {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const trades = generateMockTrades('AAPL', '2020-01-01', '2024-01-01', 10000);
-      const sellTrades = trades.filter(t => t.type === 'SELL');
-      if (sellTrades.length > 0) {
-        sellTrades.forEach(trade => {
-          expect(trade.pnl).toBeDefined();
-          expect(trade.pnlPercent).toBeDefined();
-        });
-        return;
-      }
-    }
-  });
+    it('colors win rate amber when below 50%', () => {
+      render(<TradeLog trades={mockTrades} />);
+      // 33% win rate (1/3) < 50%
+      const winRateHeader = screen.getByText('Win Rate');
+      const winRateValue = winRateHeader.parentElement?.querySelector('.font-semibold');
+      expect(winRateValue?.className).toContain('text-amber-400');
+    });
 
-  it('BUY trades do not have P&L', () => {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const trades = generateMockTrades('AAPL', '2020-01-01', '2024-01-01', 10000);
-      const buyTrades = trades.filter(t => t.type === 'BUY');
-      if (buyTrades.length > 0) {
-        buyTrades.forEach(trade => {
-          expect(trade.pnl).toBeUndefined();
-          expect(trade.pnlPercent).toBeUndefined();
-        });
-        return;
-      }
-    }
-  });
-
-  it('when trades exist, position sizing respects initial capital', () => {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const trades = generateMockTrades('AAPL', '2020-01-01', '2024-01-01', 10000);
-      const buyTrades = trades.filter(t => t.type === 'BUY');
-      if (buyTrades.length > 0) {
-        buyTrades.forEach(trade => {
-          expect(trade.value).toBeLessThanOrEqual(10000 * 1.1);
-        });
-        return;
-      }
-    }
-  });
-
-  it('generates unique trade IDs when trades exist', () => {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const trades = generateMockTrades('AAPL', '2020-01-01', '2024-01-01', 10000);
-      if (trades.length > 0) {
-        const ids = trades.map(t => t.id);
-        const uniqueIds = new Set(ids);
-        expect(uniqueIds.size).toBe(ids.length);
-        return;
-      }
-    }
-  });
-
-  it('trade structure is correct when trades exist', () => {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const trades = generateMockTrades('AAPL', '2020-01-01', '2024-01-01', 10000);
-      if (trades.length > 0) {
-        const firstTrade = trades[0];
-        expect(firstTrade).toHaveProperty('id');
-        expect(firstTrade).toHaveProperty('date');
-        expect(firstTrade).toHaveProperty('type');
-        expect(firstTrade).toHaveProperty('price');
-        expect(firstTrade).toHaveProperty('shares');
-        expect(firstTrade).toHaveProperty('value');
-        return;
-      }
-    }
+    it('colors win rate green when 50% or above', () => {
+      const winningTrades: BacktestTrade[] = [
+        { ...mockTrades[0] },
+        { ...mockTrades[0], entry_date: '2023-06-01', exit_date: '2023-07-01' },
+      ];
+      render(<TradeLog trades={winningTrades} />);
+      // 2/2 = 100% win rate
+      const winRateHeader = screen.getByText('Win Rate');
+      const winRateValue = winRateHeader.parentElement?.querySelector('.font-semibold');
+      expect(winRateValue?.className).toContain('text-emerald-400');
+    });
   });
 });

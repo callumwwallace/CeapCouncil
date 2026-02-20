@@ -1,4 +1,4 @@
-// Tests for Phase 2 Playground features
+// Tests for Playground benchmark calculation
 
 // Import the benchmark calculation function by extracting it
 // Since it's defined inside the component file, we'll test the logic separately

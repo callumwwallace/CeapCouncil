@@ -38,11 +38,12 @@ class Strategy(Base):
     
     # Relationships
     author: Mapped["User"] = relationship("User", back_populates="strategies")
-    backtests: Mapped[list["Backtest"]] = relationship("Backtest", back_populates="strategy")
-    votes: Mapped[list["Vote"]] = relationship("Vote", back_populates="strategy")
-    comments: Mapped[list["Comment"]] = relationship("Comment", back_populates="strategy")
+    backtests: Mapped[list["Backtest"]] = relationship("Backtest", back_populates="strategy", cascade="all, delete-orphan")
+    votes: Mapped[list["Vote"]] = relationship("Vote", back_populates="strategy", cascade="all, delete-orphan")
+    comments: Mapped[list["Comment"]] = relationship("Comment", back_populates="strategy", cascade="all, delete-orphan")
     forked_from: Mapped["Strategy | None"] = relationship("Strategy", remote_side=[id])
-    versions: Mapped[list["StrategyVersion"]] = relationship("StrategyVersion", back_populates="strategy", order_by="StrategyVersion.version.desc()")
+    versions: Mapped[list["StrategyVersion"]] = relationship("StrategyVersion", back_populates="strategy", order_by="StrategyVersion.version.desc()", cascade="all, delete-orphan")
+    competition_entries: Mapped[list["CompetitionEntry"]] = relationship("CompetitionEntry", back_populates="strategy", cascade="all, delete-orphan")
 
 
 class StrategyVersion(Base):
@@ -53,6 +54,7 @@ class StrategyVersion(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     code: Mapped[str] = mapped_column(Text, nullable=False)
     parameters: Mapped[dict] = mapped_column(JSON, default=dict)
+    commit_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     
     # Relationships

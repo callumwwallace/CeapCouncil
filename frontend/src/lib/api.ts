@@ -29,7 +29,7 @@ class ApiClient {
       },
     });
 
-    // Attach access token to every request
+    // Add access token to requests
     this.client.interceptors.request.use((config) => {
       if (this.accessToken) {
         config.headers.Authorization = `Bearer ${this.accessToken}`;
@@ -37,13 +37,13 @@ class ApiClient {
       return config;
     });
 
-    // Intercept 401 responses and attempt a silent token refresh
+    // On 401, try token refresh and retry
     this.client.interceptors.response.use(
       (response) => response,
       async (error: AxiosError) => {
         const originalRequest = error.config as any;
 
-        // Only attempt refresh once per request, and skip for auth endpoints
+        // Attempt refresh once; skip auth endpoints
         if (
           error.response?.status === 401 &&
           !originalRequest._retry &&
@@ -53,19 +53,19 @@ class ApiClient {
           originalRequest._retry = true;
 
           try {
-            // Deduplicate: reuse an in-flight refresh if one exists
+            // Reuse in-flight refresh if one exists
             if (!this.refreshPromise) {
               this.refreshPromise = this._doRefresh();
             }
             const tokens = await this.refreshPromise;
             this.refreshPromise = null;
 
-            // Update stored tokens
+            // Store new tokens
             this.accessToken = tokens.access_token;
             this.refreshToken = tokens.refresh_token;
             this.onTokenRefreshed?.(tokens);
 
-            // Retry the original request with the new token
+            // Retry with new token
             originalRequest.headers.Authorization = `Bearer ${tokens.access_token}`;
             return this.client(originalRequest);
           } catch {
@@ -80,7 +80,7 @@ class ApiClient {
     );
   }
 
-  /** Register callbacks so the auth store stays in sync */
+  /** Register auth callbacks */
   onAuthChange(
     onRefreshed: (tokens: Token) => void,
     onFailed: () => void,
@@ -97,7 +97,7 @@ class ApiClient {
     this.refreshToken = token;
   }
 
-  /** Internal: call the backend refresh endpoint */
+  /** Call backend /auth/refresh */
   private async _doRefresh(): Promise<Token> {
     const response = await this.client.post<Token>('/auth/refresh', {
       refresh_token: this.refreshToken,
@@ -193,17 +193,116 @@ class ApiClient {
     return response.data;
   }
 
+  async createBacktestWithCode(data: Omit<BacktestCreate, 'strategy_id'> & { code: string }): Promise<Backtest> {
+    const response = await this.client.post<Backtest>('/backtests/with-code', data);
+    return response.data;
+  }
+
   async deleteBacktest(id: number): Promise<void> {
     await this.client.delete(`/backtests/${id}`);
   }
 
-  // Optimization
+  // Optimization (strategy_id or code for templates)
   async runOptimization(data: {
-    strategy_id: number; symbol: string; start_date: string; end_date: string;
+    strategy_id?: number; code?: string; symbol: string; start_date: string; end_date: string;
     initial_capital: number; commission: number; slippage: number;
-    param_grid: Record<string, number[]>; interval?: string;
+    param_grid: Record<string, number[]>; constraints?: Record<string, number>; interval?: string;
   }): Promise<{ task_id: string }> {
     const response = await this.client.post('/backtests/optimize', data);
+    return response.data;
+  }
+
+  async runBayesianOptimization(data: {
+    strategy_id?: number; code?: string; symbol: string; start_date: string; end_date: string;
+    initial_capital: number; commission: number; slippage: number;
+    param_ranges: Record<string, {low: number; high: number; step?: number; type?: string}>;
+    n_trials?: number; objective_metric?: string; constraints?: Record<string, number>; interval?: string;
+  }): Promise<{ task_id: string }> {
+    const response = await this.client.post('/backtests/optimize/bayesian', data);
+    return response.data;
+  }
+
+  async runGeneticOptimization(data: {
+    strategy_id?: number; code?: string; symbol: string; start_date: string; end_date: string;
+    initial_capital: number; commission: number; slippage: number;
+    param_ranges: Record<string, {low: number; high: number; step?: number; type?: string}>;
+    population_size?: number; n_generations?: number; objective_metric?: string;
+    constraints?: Record<string, number>; interval?: string;
+  }): Promise<{ task_id: string }> {
+    const response = await this.client.post('/backtests/optimize/genetic', data);
+    return response.data;
+  }
+
+  async runMultiObjectiveOptimization(data: {
+    strategy_id?: number; code?: string; symbol: string; start_date: string; end_date: string;
+    initial_capital: number; commission: number; slippage: number;
+    param_ranges: Record<string, {low: number; high: number; step?: number; type?: string}>;
+    n_trials?: number; objective_metrics?: string[]; directions?: string[];
+    constraints?: Record<string, number>; interval?: string;
+  }): Promise<{ task_id: string }> {
+    const response = await this.client.post('/backtests/optimize/multiobjective', data);
+    return response.data;
+  }
+
+  async runHeatmap(data: {
+    strategy_id?: number; code?: string; symbol: string; start_date: string; end_date: string;
+    initial_capital: number; commission: number; slippage: number;
+    param_x: string; param_y: string;
+    x_range: {low: number; high: number; steps: number};
+    y_range: {low: number; high: number; steps: number};
+    metric?: string; constraints?: Record<string, number>; interval?: string;
+  }): Promise<{ task_id: string }> {
+    const response = await this.client.post('/backtests/optimize/heatmap', data);
+    return response.data;
+  }
+
+  // Strategy version control
+  async listVersions(strategyId: number, skip = 0, limit = 20): Promise<Array<{id: number; version: number; commit_message: string | null; created_at: string | null; code_preview: string}>> {
+    const response = await this.client.get(`/strategies/${strategyId}/versions`, { params: { skip, limit } });
+    return response.data;
+  }
+
+  async getVersion(strategyId: number, version: number): Promise<{version: number; code: string; parameters: Record<string, unknown>; created_at: string | null}> {
+    const response = await this.client.get(`/strategies/${strategyId}/versions/${version}`);
+    return response.data;
+  }
+
+  async createVersion(strategyId: number, message?: string): Promise<{version: number; message: string}> {
+    const response = await this.client.post(`/strategies/${strategyId}/versions`, message != null ? { message } : {});
+    return response.data;
+  }
+
+  async restoreVersion(strategyId: number, version: number): Promise<{message: string; code: string}> {
+    const response = await this.client.post(`/strategies/${strategyId}/versions/${version}/restore`);
+    return response.data;
+  }
+
+  async deleteVersion(strategyId: number, version: number): Promise<void> {
+    await this.client.delete(`/strategies/${strategyId}/versions/${version}`);
+  }
+
+  async diffVersions(strategyId: number, v1: number, v2: number): Promise<{v1: number; v2: number; diff: string}> {
+    const response = await this.client.get(`/strategies/${strategyId}/versions/${v1}/diff/${v2}`);
+    return response.data;
+  }
+
+  // Batch runner
+  async runBatch(data: {
+    strategies: Array<{name: string; code: string; params: Record<string, unknown>}>;
+    symbol: string; start_date: string; end_date: string;
+    initial_capital: number; commission: number; slippage: number; interval?: string;
+  }): Promise<{ task_id: string }> {
+    const response = await this.client.post('/backtests/batch', data);
+    return response.data;
+  }
+
+  // Out-of-sample validation
+  async runOosValidation(data: {
+    strategy_id: number; symbol: string; start_date: string; end_date: string;
+    initial_capital: number; commission: number; slippage: number;
+    oos_ratio?: number; param_ranges?: Record<string, unknown>; n_trials?: number; interval?: string;
+  }): Promise<{ task_id: string }> {
+    const response = await this.client.post('/backtests/oos-validate', data);
     return response.data;
   }
 
@@ -212,9 +311,9 @@ class ApiClient {
     return response.data;
   }
 
-  // Walk-Forward
+  // Walk-Forward (strategy_id or code for templates)
   async runWalkForward(data: {
-    strategy_id: number; symbol: string; start_date: string; end_date: string;
+    strategy_id?: number; code?: string; symbol: string; start_date: string; end_date: string;
     initial_capital: number; commission: number; slippage: number;
     n_splits?: number; train_pct?: number; interval?: string;
   }): Promise<{ task_id: string }> {
@@ -259,6 +358,50 @@ class ApiClient {
 
   async deleteComment(id: number): Promise<void> {
     await this.client.delete(`/social/comments/${id}`);
+  }
+
+  // Tear sheet
+  async getTearsheet(backtestId: number): Promise<string> {
+    const response = await this.client.get(`/backtests/${backtestId}/tearsheet`, {
+      responseType: 'text',
+    });
+    return response.data;
+  }
+
+  async getMonthlyReturns(backtestId: number): Promise<Array<{year: number; month: number; return_pct: number}>> {
+    const response = await this.client.get(`/backtests/${backtestId}/monthly-returns`);
+    return response.data;
+  }
+
+  async getTradeDistribution(backtestId: number): Promise<Array<{bin_center: number; count: number}>> {
+    const response = await this.client.get(`/backtests/${backtestId}/trade-distribution`);
+    return response.data;
+  }
+
+  // Competitions
+  async listCompetitions(status?: string): Promise<any[]> {
+    const response = await this.client.get('/competitions', { params: status ? { status } : {} });
+    return response.data;
+  }
+
+  async getCompetition(id: number): Promise<any> {
+    const response = await this.client.get(`/competitions/${id}`);
+    return response.data;
+  }
+
+  async createCompetition(data: any): Promise<any> {
+    const response = await this.client.post('/competitions', data);
+    return response.data;
+  }
+
+  async enterCompetition(competitionId: number, strategyId: number): Promise<any> {
+    const response = await this.client.post(`/competitions/${competitionId}/enter`, { strategy_id: strategyId });
+    return response.data;
+  }
+
+  async getLeaderboard(competitionId: number): Promise<any> {
+    const response = await this.client.get(`/competitions/${competitionId}/leaderboard`);
+    return response.data;
   }
 
   // Market Data

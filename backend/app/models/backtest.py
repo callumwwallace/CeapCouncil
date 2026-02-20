@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, DateTime, ForeignKey, Float, Enum as SQLEnum, JSON
+from sqlalchemy import String, Text, DateTime, ForeignKey, Float, Enum as SQLEnum, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
@@ -55,7 +55,10 @@ class Backtest(Base):
 
     # Relations
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id"), nullable=False)
+    strategy_id: Mapped[int | None] = mapped_column(ForeignKey("strategies.id"), nullable=True)
+
+    # Inline code; when set, use instead of strategy.code
+    code: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Celery task tracking
     celery_task_id: Mapped[str | None] = mapped_column(String(50))

@@ -1,6 +1,8 @@
 'use client';
 
-import { Download, Keyboard, Clock, BarChart3, TrendingUp, TrendingDown, Activity } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { Download, Keyboard, Clock, ChevronDown, ZoomIn, ZoomOut } from 'lucide-react';
 
 interface StatusBarProps {
   isRunning: boolean;
@@ -11,10 +13,45 @@ interface StatusBarProps {
     total_trades: number;
   } | null;
   lastRunTime?: string;
-  onExport?: () => void;
+  onExportReport?: () => void;
+  onExportJSON?: () => void;
+  uiScale?: number;
+  onUiScaleChange?: (scale: number) => void;
 }
 
-export default function StatusBar({ isRunning, results, lastRunTime, onExport }: StatusBarProps) {
+export default function StatusBar({ isRunning, results, lastRunTime, onExportReport, onExportJSON, uiScale = 1, onUiScaleChange }: StatusBarProps) {
+  const [exportOpen, setExportOpen] = useState(false);
+  const [dropdownRect, setDropdownRect] = useState<{ top: number; left: number } | null>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const updateDropdownPosition = () => {
+    const btn = exportRef.current?.querySelector('button');
+    if (btn) {
+      const rect = btn.getBoundingClientRect();
+      const dropdownHeight = 80;
+      const dropdownWidth = 120;
+      const top = Math.max(8, rect.top - dropdownHeight - 8);
+      const left = Math.max(8, Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8));
+      setDropdownRect({ top, left });
+    }
+  };
+
+  const handleExportToggle = () => {
+    if (!exportOpen) updateDropdownPosition();
+    setExportOpen(!exportOpen);
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        exportRef.current && !exportRef.current.contains(e.target as Node) &&
+        dropdownRef.current && !dropdownRef.current.contains(e.target as Node)
+      ) setExportOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
   return (
     <div className="h-8 bg-gray-800 border-t border-gray-700 px-4 flex items-center justify-between text-xs">
       {/* Left: Status */}
@@ -34,54 +71,71 @@ export default function StatusBar({ isRunning, results, lastRunTime, onExport }:
         )}
       </div>
 
-      {/* Center: Quick Metrics */}
-      {results && !isRunning && (
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-1.5">
-            <TrendingUp className="h-3 w-3 text-gray-500" />
-            <span className="text-gray-400">Return:</span>
-            <span className={results.total_return >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-              {results.total_return >= 0 ? '+' : ''}{results.total_return.toFixed(2)}%
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Activity className="h-3 w-3 text-gray-500" />
-            <span className="text-gray-400">Sharpe:</span>
-            <span className={results.sharpe_ratio > 1 ? 'text-emerald-400' : 'text-amber-400'}>
-              {results.sharpe_ratio.toFixed(2)}
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <TrendingDown className="h-3 w-3 text-gray-500" />
-            <span className="text-gray-400">Drawdown:</span>
-            <span className={results.max_drawdown > -20 ? 'text-emerald-400' : 'text-red-400'}>
-              {results.max_drawdown.toFixed(1)}%
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <BarChart3 className="h-3 w-3 text-gray-500" />
-            <span className="text-gray-400">Trades:</span>
-            <span className="text-gray-200">{results.total_trades}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Right: Actions & Shortcuts */}
+      {/* Right: Export, Shortcuts, UI Scale */}
       <div className="flex items-center gap-3">
-        {results && onExport && (
-          <button
-            onClick={onExport}
-            className="flex items-center gap-1 text-gray-400 hover:text-gray-200 transition"
-            title="Export Results"
-          >
-            <Download className="h-3 w-3" />
-            <span>Export</span>
-          </button>
+        {results && (onExportReport || onExportJSON) && (
+          <div ref={exportRef}>
+            <button
+              onClick={handleExportToggle}
+              className="flex items-center gap-1 text-gray-400 hover:text-gray-200 transition"
+              title="Export Results"
+            >
+              <Download className="h-3 w-3" />
+              <span>Export</span>
+              <ChevronDown className={`h-3 w-3 transition-transform ${exportOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {exportOpen && dropdownRect && typeof document !== 'undefined' && createPortal(
+              <div
+                ref={dropdownRef}
+                className="fixed py-1 bg-gray-800 border border-gray-600 rounded-lg shadow-xl z-[9999] min-w-[120px]"
+                style={{ top: dropdownRect.top, left: dropdownRect.left }}
+              >
+                {onExportReport && (
+                  <button
+                    onClick={() => { onExportReport(); setExportOpen(false); }}
+                    className="w-full px-3 py-2 text-left text-xs text-gray-200 hover:bg-gray-700 hover:text-white transition"
+                  >
+                    Report (HTML)
+                  </button>
+                )}
+                {onExportJSON && (
+                  <button
+                    onClick={() => { onExportJSON(); setExportOpen(false); }}
+                    className="w-full px-3 py-2 text-left text-xs text-gray-200 hover:bg-gray-700 hover:text-white transition"
+                  >
+                    JSON
+                  </button>
+                )}
+              </div>,
+              document.body
+            )}
+          </div>
         )}
         <div className="flex items-center gap-1 text-gray-500">
           <Keyboard className="h-3 w-3" />
           <span>⌘↵ Run</span>
         </div>
+        {onUiScaleChange && (
+          <div className="flex items-center gap-0.5 border-l border-gray-700 pl-3" title="UI scale (panels only, chart unaffected)">
+            <button
+              type="button"
+              onClick={() => onUiScaleChange(Math.max(0.75, uiScale - 0.1))}
+              className="p-0.5 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700"
+              aria-label="Decrease UI size"
+            >
+              <ZoomOut className="h-3 w-3" />
+            </button>
+            <span className="text-[10px] text-gray-500 tabular-nums w-6 text-center">{Math.round(uiScale * 100)}%</span>
+            <button
+              type="button"
+              onClick={() => onUiScaleChange(Math.min(1.25, uiScale + 0.1))}
+              className="p-0.5 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700"
+              aria-label="Increase UI size"
+            >
+              <ZoomIn className="h-3 w-3" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

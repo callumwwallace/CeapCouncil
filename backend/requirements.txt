@@ -29,6 +29,8 @@ celery[redis]>=5.3.0
 # Backtesting
 backtrader>=1.9.78
 yfinance>=0.2.0
+optuna>=3.0.0
+deap>=1.4.0
 pandas>=2.0.0
 numpy>=1.24.0
 
