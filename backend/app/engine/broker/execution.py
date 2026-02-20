@@ -1,10 +1,10 @@
-"""Execution algorithms — algorithmic order execution for reducing market impact.
+"""Execution algorithms : algorithmic order execution for reducing market impact.
 
 Supports:
-- TWAP (Time-Weighted Average Price) — spread order evenly over time
-- VWAP execution — execute proportional to historical volume profile
-- Iceberg orders — show only a visible portion at a time
-- PercentOfVolume — limit execution rate to % of bar volume
+- TWAP (Time-Weighted Average Price) : spread order evenly over time
+- VWAP execution : execute proportional to historical volume profile
+- Iceberg orders : show only a visible portion at a time
+- PercentOfVolume : limit execution rate to % of bar volume
 """
 
 from __future__ import annotations
@@ -120,7 +120,7 @@ class TWAPExecutor:
 
 
 class VWAPExecutor:
-    """VWAP executor — distributes order according to volume profile."""
+    """VWAP executor : distributes order according to volume profile."""
 
     def __init__(self, config: VWAPConfig, submit_fn: Callable[[Order, datetime], Order]):
         self.config = config
@@ -173,7 +173,7 @@ class VWAPExecutor:
 
 
 class IcebergExecutor:
-    """Iceberg order — shows only visible_quantity at a time.
+    """Iceberg order : shows only visible_quantity at a time.
 
     When a visible slice fills, the next slice is submitted automatically.
     """

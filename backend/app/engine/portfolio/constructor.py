@@ -1,4 +1,4 @@
-"""Portfolio construction — weight allocation and rebalancing for multi-asset portfolios."""
+"""Portfolio construction: weight allocation and rebalancing for multi-asset portfolios."""
 
 from __future__ import annotations
 

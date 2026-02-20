@@ -33,10 +33,10 @@ class StrategyBase(ABC):
     """Base class for all trading strategies.
 
     Lifecycle:
-    1. on_init() — called once before backtest starts
-    2. on_data(bar) — called for each new bar (after warm-up)
-    3. on_order_event(fill) — called when an order fills
-    4. on_end() — called when backtest completes
+    1. on_init() : called once before backtest starts
+    2. on_data(bar) : called for each new bar (after warm-up)
+    3. on_order_event(fill) : called when an order fills
+    4. on_end() : called when backtest completes
 
     Strategies use helper methods to submit orders and query state.
     """
@@ -241,7 +241,7 @@ class StrategyBase(ABC):
         """Submit a bracket order (entry + take profit + stop loss).
 
         If entry_price is None, entry is a market order.
-        The stop loss and take profit are linked — when one fills, the other is cancelled.
+        The stop loss and take profit are linked : when one fills, the other is cancelled.
 
         Returns dict with keys: 'entry', 'take_profit', 'stop_loss'
         """
@@ -311,7 +311,7 @@ class StrategyBase(ABC):
             other_id = order.metadata["oco_other"]
             self.broker.cancel_order(other_id, self.time)
 
-        # Bracket handling — cancel other leg when TP or SL fills
+        # Bracket handling : cancel other leg when TP or SL fills
         if "bracket_role" in order.metadata and order.metadata["bracket_role"] in ("take_profit", "stop_loss"):
             if order.status.value == "filled":
                 group_id = order.metadata.get("bracket_group")

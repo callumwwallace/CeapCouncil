@@ -1,4 +1,4 @@
-"""Overlay indicators — plotted on the price chart."""
+"""Overlay indicators : plotted on the price chart."""
 
 from __future__ import annotations
 
@@ -148,7 +148,7 @@ class VWAP(MultiInputIndicator):
 
 
 class BollingerBands(Indicator):
-    """Bollinger Bands — returns dict with upper, middle, lower, %B, bandwidth."""
+    """Bollinger Bands : returns dict with upper, middle, lower, %B, bandwidth."""
 
     def __init__(self, period: int = 20, num_std: float = 2.0):
         super().__init__(period=period, num_std=num_std)
@@ -177,7 +177,7 @@ class BollingerBands(Indicator):
 
 
 class KeltnerChannel(MultiInputIndicator):
-    """Keltner Channel — EMA ± ATR multiplier."""
+    """Keltner Channel : EMA ± ATR multiplier."""
 
     def __init__(self, period: int = 20, atr_period: int = 10, multiplier: float = 1.5):
         super().__init__(period=period, atr_period=atr_period, multiplier=multiplier)
@@ -213,7 +213,7 @@ class KeltnerChannel(MultiInputIndicator):
 
 
 class DonchianChannel(MultiInputIndicator):
-    """Donchian Channel — highest high and lowest low over N periods."""
+    """Donchian Channel : highest high and lowest low over N periods."""
 
     def __init__(self, period: int = 20):
         super().__init__(period=period)
@@ -236,7 +236,7 @@ class DonchianChannel(MultiInputIndicator):
 
 
 class IchimokuCloud(MultiInputIndicator):
-    """Ichimoku Cloud — Tenkan, Kijun, Senkou A, Senkou B, Chikou."""
+    """Ichimoku Cloud : Tenkan, Kijun, Senkou A, Senkou B, Chikou."""
 
     def __init__(self, tenkan: int = 9, kijun: int = 26, senkou_b: int = 52):
         super().__init__(tenkan=tenkan, kijun=kijun, senkou_b=senkou_b)
@@ -275,7 +275,7 @@ class IchimokuCloud(MultiInputIndicator):
 
 
 class ParabolicSAR(MultiInputIndicator):
-    """Parabolic SAR — trend-following stop-and-reverse."""
+    """Parabolic SAR : trend-following stop-and-reverse."""
 
     def __init__(self, af_start: float = 0.02, af_step: float = 0.02, af_max: float = 0.2):
         super().__init__(af_start=af_start, af_step=af_step, af_max=af_max)
@@ -331,7 +331,7 @@ class ParabolicSAR(MultiInputIndicator):
 
 
 class Envelope(Indicator):
-    """Moving Average Envelope — SMA ± percentage."""
+    """Moving Average Envelope : SMA ± percentage."""
 
     def __init__(self, period: int = 20, pct: float = 2.5):
         super().__init__(period=period, pct=pct)

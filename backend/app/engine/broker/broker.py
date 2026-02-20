@@ -1,4 +1,4 @@
-"""Broker simulator — manages orders and produces fills.
+"""Broker simulator: manages orders and produces fills.
 
 Processes pending orders against incoming market data events.
 Handles order lifecycle, commission, and integrates spread/slippage models.

@@ -1,4 +1,4 @@
-"""Object store — persistent key-value storage for strategies.
+"""Object store: persistent key-value storage for strategies.
 
 Allows strategies to save and load state between backtests.
 Supports serialization of basic Python types, numpy arrays, and DataFrames.

@@ -1,4 +1,4 @@
-"""Legacy Backtrader adapter — wraps Backtrader execution behind the same interface as Engine.
+"""Legacy Backtrader adapter: wraps Backtrader execution behind the same interface as Engine.
 Used when ENGINE_VERSION=backtrader.
 """
 

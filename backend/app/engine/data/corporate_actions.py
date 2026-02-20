@@ -1,4 +1,4 @@
-"""Corporate actions engine — adjusts historical data for splits, dividends, and delistings.
+"""Corporate actions engine: adjusts historical data for splits, dividends, and delistings.
 
 Applies retroactive price/volume adjustments for accurate backtests.
 Crypto-aware: supports token migrations and hard forks.

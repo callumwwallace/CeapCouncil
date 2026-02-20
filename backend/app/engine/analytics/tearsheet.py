@@ -1,4 +1,4 @@
-"""HTML tear sheet generator — professional backtest report.
+"""HTML tear sheet generator: professional backtest report.
 
 Generates a standalone HTML report with:
 - Equity curve and drawdown charts (inline SVG)

@@ -1,4 +1,4 @@
-"""Algorithm Framework — composable Alpha / Portfolio / Risk / Execution pipeline.
+"""Algorithm Framework: composable Alpha / Portfolio / Risk / Execution pipeline.
 
 Modeled after QuantConnect's Algorithm Framework:
 - AlphaModel: emits signals (insights)

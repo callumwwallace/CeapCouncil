@@ -163,13 +163,13 @@ class IntrabarSimulator:
         """Check if target price was touched within the bar.
 
         Returns:
-            (touched: bool, tick_index: int | None) — tick_index is the
+            (touched: bool, tick_index: int | None) : tick_index is the
             synthetic tick at which the target was first reached.
         """
         prices = self.simulate(open_price, high_price, low_price, close_price)
         for i, p in enumerate(prices):
             if (target_price >= low_price and target_price <= high_price):
-                # Price was in range — find exact tick
+                # Price was in range : find exact tick
                 if abs(p - target_price) / max(target_price, 0.01) < 0.001:
                     return True, i
                 if i > 0:

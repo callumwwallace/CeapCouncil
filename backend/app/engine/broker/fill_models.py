@@ -1,4 +1,4 @@
-"""Fill logic — determines when and at what price orders get filled.
+"""Fill logic : determines when and at what price orders get filled.
 
 Processes pending orders against incoming market data. Handles:
 - Market orders: fill at next bar open (or configurable)
@@ -162,7 +162,7 @@ class FillModel:
             triggered = True
 
         if triggered:
-            # Stop triggered — fill as market at stop price (or worse)
+            # Stop triggered : fill as market at stop price (or worse)
             base_price = order.stop_price
             fill_price, slip, spread_cost = self._apply_spread_and_slippage(
                 base_price, order, bar, avg_volume
@@ -190,7 +190,7 @@ class FillModel:
         if not stop_triggered:
             return FillResult()
 
-        # Stop triggered — now check limit
+        # Stop triggered : now check limit
         if order.is_buy and bar.low <= order.limit_price:
             fill_price = min(order.limit_price, max(bar.open, order.stop_price))
             slip = self.slippage.compute_slippage(

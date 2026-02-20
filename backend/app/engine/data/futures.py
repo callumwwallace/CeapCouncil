@@ -139,7 +139,7 @@ class ContinuousContractBuilder:
         roll_dates = []
         for i, contract in enumerate(contracts):
             if i == len(contracts) - 1:
-                roll_dates.append(None)  # Last contract — no roll
+                roll_dates.append(None)  # Last contract: no roll
             else:
                 if self.config.roll_method == RollMethod.CALENDAR:
                     roll_date = contract.expiry - timedelta(days=self.config.roll_days_before_expiry)

@@ -101,7 +101,7 @@ class BacktestResponse(BaseModel):
     status: BacktestStatus
     error_message: str | None
 
-    # Results — the `results` dict may contain `trades` and `equity_curve` sub-keys
+    # Results : the `results` dict may contain `trades` and `equity_curve` sub-keys
     results: dict | None
     total_return: float | None
     sharpe_ratio: float | None

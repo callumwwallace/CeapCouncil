@@ -1,4 +1,4 @@
-"""Strategy compiler — safely compiles user code into a StrategyBase subclass.
+"""Strategy compiler : safely compiles user code into a StrategyBase subclass.
 
 Provides a sandboxed execution environment with restricted imports.
 User code must define a class named `MyStrategy` that extends `StrategyBase`.
@@ -144,7 +144,7 @@ def compile_strategy(code: str, params: dict[str, Any] | None = None) -> type[St
 
     try:
         compiled = compile(code, "<strategy>", "exec")
-        exec(compiled, safe_globals)  # noqa: S102 — intentional; sandboxed
+        exec(compiled, safe_globals)  # noqa: S102 : intentional; sandboxed
     except SyntaxError as e:
         line_info = f" (line {e.lineno})" if e.lineno else ""
         raise ValueError(f"SyntaxError{line_info}: {e.msg}") from e

@@ -104,11 +104,14 @@ export const useAuthStore = create<AuthState>()(
       partialize: (state) => ({
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
+        isAuthenticated: !!state.accessToken,
       }),
       onRehydrateStorage: () => (state) => {
-        // When Zustand rehydrates from localStorage, push tokens into the API client
         if (state) {
           state.hydrate();
+          if (state.accessToken && !state.user) {
+            useAuthStore.getState().fetchUser();
+          }
         }
       },
     }

@@ -1,4 +1,4 @@
-"""Bar consolidators — aggregate lower-timeframe bars into higher timeframes.
+"""Bar consolidators : aggregate lower-timeframe bars into higher timeframes.
 
 Supports:
 - Time-based consolidation (1m -> 5m, 5m -> 1h, etc.)
@@ -169,7 +169,7 @@ class BarCountConsolidator:
 
 
 class RenkoConsolidator:
-    """Renko bars — new bar only when price moves by brick_size."""
+    """Renko bars : new bar only when price moves by brick_size."""
 
     def __init__(self, brick_size: float, callback: Callable[[ConsolidatedBar], None] | None = None):
         self.brick_size = brick_size
@@ -217,7 +217,7 @@ class RenkoConsolidator:
 
 
 class RangeConsolidator:
-    """Range bars — new bar when price range reaches threshold."""
+    """Range bars : new bar when price range reaches threshold."""
 
     def __init__(self, range_size: float, callback: Callable[[ConsolidatedBar], None] | None = None):
         self.range_size = range_size

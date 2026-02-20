@@ -1,4 +1,4 @@
-"""Position tracking — per-symbol position with cost basis and P&L.
+"""Position tracking : per-symbol position with cost basis and P&L.
 
 Supports FIFO trade matching for entry/exit recording.
 """
@@ -204,7 +204,7 @@ class Position:
             total_qty = sum(abs(l.quantity) for l in self._lots)
             self.avg_cost = total_cost / total_qty if total_qty > 0 else 0
         else:
-            # Reversed position — add new lot for remaining
+            # Reversed position : add new lot for remaining
             if remaining > 1e-9:
                 self._add_lot(
                     remaining if quantity > 0 else -remaining,

@@ -1,4 +1,4 @@
-"""Event system — the backbone of the event-driven engine.
+"""Event system: the backbone of the event-driven engine.
 
 All engine communication flows through typed events placed on a priority queue.
 Events are processed in timestamp order; within the same timestamp, priority

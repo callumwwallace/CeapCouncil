@@ -13,7 +13,7 @@ from app.tasks.backtest import TradeRecorder
 
 
 # ---------------------------------------------------------------------------
-# Helpers — generate synthetic OHLCV data for deterministic tests
+# Helpers: generate synthetic OHLCV data for deterministic tests
 # ---------------------------------------------------------------------------
 
 def _make_ohlcv(days: int = 200, start_price: float = 100.0, seed: int = 42) -> pd.DataFrame:

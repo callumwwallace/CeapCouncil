@@ -1,9 +1,9 @@
-"""Notifications / alerts — send strategy alerts via various channels.
+"""Notifications / alerts : send strategy alerts via various channels.
 
 Supports:
 - In-memory log (always available)
 - Webhook (HTTP POST)
-- Email (via SMTP — optional)
+- Email (via SMTP : optional)
 
 Usage:
     class MyStrategy(StrategyBase):

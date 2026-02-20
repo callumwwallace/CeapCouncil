@@ -615,7 +615,7 @@ export default function AssetChart({
   const [dataLoading, setDataLoading] = useState(false);
   const [chartType, setChartType] = useState<ChartType>('candles');
 
-  // Zoom/pan state — indices into the data array
+  // Zoom/pan state : indices into the data array
   const [viewStart, setViewStart] = useState(0);
   const [viewEnd, setViewEnd] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -761,7 +761,7 @@ export default function AssetChart({
       const isHorizontalScroll = absX > absY * 1.5 && !isPinch;
 
       if (isHorizontalScroll) {
-        // PAN — horizontal two-finger swipe on trackpad
+        // PAN : horizontal two-finger swipe on trackpad
         const panSensitivity = Math.max(1, range / rect.width * 3);
         const panDelta = Math.round(e.deltaX * panSensitivity);
         if (panDelta === 0) return;
@@ -774,7 +774,7 @@ export default function AssetChart({
         setViewStart(Math.max(0, newStart));
         setViewEnd(Math.min(maxIdx, newEnd));
       } else {
-        // ZOOM — vertical scroll / pinch-to-zoom / mouse wheel
+        // ZOOM : vertical scroll / pinch-to-zoom / mouse wheel
         if (absY < 0.5) return;
 
         const cursorPct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));

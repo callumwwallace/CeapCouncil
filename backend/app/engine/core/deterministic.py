@@ -1,4 +1,4 @@
-"""Deterministic backtesting — seeded randomness, dataset/strategy hashing, reproducible IDs."""
+"""Deterministic backtesting: seeded randomness, dataset/strategy hashing, reproducible IDs."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Order model — full state machine for order lifecycle.
+"""Order model : full state machine for order lifecycle.
 
 Supports: Market, Limit, Stop Market, Stop Limit, Trailing Stop, MOO, MOC.
 Time-in-force: GTC (Good-Til-Cancelled), DAY.
@@ -168,14 +168,14 @@ class Order:
             self._trail_peak = current_price
 
         if self.side == OrderSide.SELL:
-            # Trailing stop for long position — sell when price drops from peak
+            # Trailing stop for long position : sell when price drops from peak
             self._trail_peak = max(self._trail_peak, current_price)
             if self.trail_percent:
                 return self._trail_peak * (1 - self.trail_percent / 100)
             elif self.trail_amount:
                 return self._trail_peak - self.trail_amount
         else:
-            # Trailing stop for short position — buy when price rises from trough
+            # Trailing stop for short position : buy when price rises from trough
             self._trail_peak = min(self._trail_peak, current_price)
             if self.trail_percent:
                 return self._trail_peak * (1 + self.trail_percent / 100)

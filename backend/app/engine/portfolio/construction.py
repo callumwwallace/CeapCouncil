@@ -1,4 +1,4 @@
-"""Portfolio construction — weighting schemes and rebalancing.
+"""Portfolio construction: weighting schemes and rebalancing.
 
 Supports: Equal Weight, Inverse Volatility, Risk Parity.
 Enforces position constraints and sector exposure limits.

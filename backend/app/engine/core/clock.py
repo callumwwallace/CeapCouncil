@@ -1,4 +1,4 @@
-"""Simulation clock — advances time based on events in the queue.
+"""Simulation clock: advances time based on events in the queue.
 
 In backtest mode, the clock jumps to the next event's timestamp.
 In live/paper mode, the clock follows wall-clock time.
@@ -30,7 +30,7 @@ class SimulationClock:
     def now(self) -> datetime:
         if self.mode == ClockMode.BACKTEST:
             if self._current_time is None:
-                raise RuntimeError("Clock not initialized — call advance() first")
+                raise RuntimeError("Clock not initialized: call advance() first")
             return self._current_time
         return datetime.utcnow()
 

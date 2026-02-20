@@ -1,4 +1,4 @@
-"""Data storage layer — persistent time-series via TimescaleDB (PostgreSQL extension).
+"""Data storage layer: persistent time-series via TimescaleDB (PostgreSQL extension).
 Supports OHLCV bars, tick data, versioned datasets, and caching.
 """
 

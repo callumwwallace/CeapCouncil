@@ -81,7 +81,7 @@ class CurrencyManager:
             base_amount = amount * self._fx_rates[to_base]
             return base_amount * self._fx_rates[from_base]
 
-        # No rate available — return as-is (assume 1:1)
+        # No rate available: return as-is (assume 1:1)
         return amount
 
     def to_base(self, amount: float, currency: str) -> float:

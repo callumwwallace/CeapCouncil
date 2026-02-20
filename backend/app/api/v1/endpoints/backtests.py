@@ -188,7 +188,7 @@ async def _create_backtest_impl(
     strategy_id: int | None,
     code: str | None,
 ):
-    # Build the backtest record — copy config into parameters for the Celery task
+    # Build the backtest record: copy config into parameters for the Celery task
     additional_symbols = data.pop("symbols", None)
     data["parameters"] = {
         **data.get("parameters", {}),

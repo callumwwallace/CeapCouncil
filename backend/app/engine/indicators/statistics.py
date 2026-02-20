@@ -24,7 +24,7 @@ class StdDev(Indicator):
 
 
 class LinearRegression(Indicator):
-    """Linear Regression — returns slope, intercept, r_squared, forecast."""
+    """Linear Regression : returns slope, intercept, r_squared, forecast."""
 
     def __init__(self, period: int = 20):
         super().__init__(period=period)
@@ -72,7 +72,7 @@ class Correlation(Indicator):
 
 
 class ZScore(Indicator):
-    """Z-Score — how many standard deviations from the mean."""
+    """Z-Score : how many standard deviations from the mean."""
 
     def __init__(self, period: int = 20):
         super().__init__(period=period)
@@ -91,7 +91,7 @@ class ZScore(Indicator):
 
 
 class HurstExponent(Indicator):
-    """Hurst Exponent — measures trend persistence.
+    """Hurst Exponent : measures trend persistence.
 
     H > 0.5: trending, H < 0.5: mean-reverting, H ≈ 0.5: random walk.
     """

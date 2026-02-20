@@ -1,4 +1,4 @@
-"""FrameworkStrategy — composable strategy using Alpha/Portfolio/Execution/Risk pipeline."""
+"""FrameworkStrategy: composable strategy using Alpha/Portfolio/Execution/Risk pipeline."""
 
 from __future__ import annotations
 

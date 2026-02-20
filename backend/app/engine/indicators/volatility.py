@@ -97,7 +97,7 @@ class HistoricalVolatility(Indicator):
 
 
 class GarmanKlass(MultiInputIndicator):
-    """Garman-Klass volatility estimator — uses OHLC for better estimation."""
+    """Garman-Klass volatility estimator: uses OHLC for better estimation."""
 
     def __init__(self, period: int = 20, annualize: int = 252):
         super().__init__(period=period, annualize=annualize)

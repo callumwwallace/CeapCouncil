@@ -1,12 +1,12 @@
-"""Data feed — converts raw price data into MarketDataEvents.
+"""Data feed : converts raw price data into MarketDataEvents.
 
 Supports bar-level (OHLCV) and tick-level data. Handles multiple symbols
 for multi-asset strategies.
 
 Two modes:
-  - DataFeed (default): Eager — materializes BarData objects upfront.
+  - DataFeed (default): Eager : materializes BarData objects upfront.
     Best for small/medium datasets (< 100k rows).
-  - StreamingDataFeed: Lazy — keeps raw numpy arrays and creates BarData
+  - StreamingDataFeed: Lazy : keeps raw numpy arrays and creates BarData
     on-the-fly during iteration. Uses ~60% less memory for large datasets.
     Timestamp merging uses a heap-based k-way merge instead of collecting
     all timestamps into a single sorted list.
@@ -88,7 +88,7 @@ def _col(df: pd.DataFrame, name: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  DataFeed (original eager mode — unchanged API)
+#  DataFeed (original eager mode : unchanged API)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class DataFeed:
@@ -190,7 +190,7 @@ class DataFeed:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  StreamingDataFeed — lazy bar iteration with compact numpy storage
+#  StreamingDataFeed : lazy bar iteration with compact numpy storage
 # ═══════════════════════════════════════════════════════════════════════════
 
 class _SymbolArrays:
@@ -262,7 +262,7 @@ class _SymbolArrays:
 class StreamingDataFeed:
     """Data feed using raw numpy arrays (~60% less memory than BarData objects).
 
-    Drop-in replacement for DataFeed — same public API — uses ~60%
+    Drop-in replacement for DataFeed : same public API : uses ~60%
     less memory for large datasets because it stores compact numpy
     arrays instead of Python BarData objects.
 
@@ -281,7 +281,7 @@ class StreamingDataFeed:
         self._bar_count[symbol] = arr.length
 
     def get_bars(self, symbol: str) -> list[BarData]:
-        """Materialise all bars (use sparingly — defeats the memory benefit)."""
+        """Materialise all bars (use sparingly : defeats the memory benefit)."""
         arr = self._arrays.get(symbol)
         if arr is None:
             return []
@@ -309,7 +309,7 @@ class StreamingDataFeed:
     def iterate(self) -> Iterator[list[MarketDataEvent]]:
         """Heap-based k-way merge over compact arrays.
 
-        Creates MarketDataEvent objects lazily — only one bar-group's
+        Creates MarketDataEvent objects lazily : only one bar-group's
         worth of objects exist in memory at any time.
         """
         if not self._arrays:

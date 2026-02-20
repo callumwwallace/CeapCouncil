@@ -1,4 +1,4 @@
-"""Oscillator indicators — plotted in a separate pane."""
+"""Oscillator indicators : plotted in a separate pane."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ class MACD(Indicator):
 
 
 class Stochastic(MultiInputIndicator):
-    """Stochastic Oscillator — %K, %D."""
+    """Stochastic Oscillator : %K, %D."""
 
     def __init__(self, k_period: int = 14, d_period: int = 3, smooth: int = 3):
         super().__init__(k_period=k_period, d_period=d_period, smooth=smooth)
@@ -199,7 +199,7 @@ class ROC(Indicator):
 
 
 class MOM(Indicator):
-    """Momentum — simple price difference over N periods."""
+    """Momentum : simple price difference over N periods."""
 
     def __init__(self, period: int = 10):
         super().__init__(period=period)
@@ -213,7 +213,7 @@ class MOM(Indicator):
 
 
 class PPO(Indicator):
-    """Percentage Price Oscillator — MACD as percentage of slow EMA."""
+    """Percentage Price Oscillator : MACD as percentage of slow EMA."""
 
     def __init__(self, fast: int = 12, slow: int = 26, signal: int = 9):
         super().__init__(fast=fast, slow=slow, signal=signal)
@@ -257,7 +257,7 @@ class TSI(Indicator):
 
 
 class UltimateOscillator(MultiInputIndicator):
-    """Ultimate Oscillator — Williams' multi-timeframe oscillator."""
+    """Ultimate Oscillator : Williams' multi-timeframe oscillator."""
 
     def __init__(self, period1: int = 7, period2: int = 14, period3: int = 28):
         super().__init__(period1=period1, period2=period2, period3=period3)
@@ -289,7 +289,7 @@ class UltimateOscillator(MultiInputIndicator):
 
 
 class Aroon(MultiInputIndicator):
-    """Aroon indicator — measures trend strength via time since high/low."""
+    """Aroon indicator : measures trend strength via time since high/low."""
 
     def __init__(self, period: int = 25):
         super().__init__(period=period)
@@ -316,7 +316,7 @@ class Aroon(MultiInputIndicator):
 
 
 class ADX(MultiInputIndicator):
-    """Average Directional Index — trend strength."""
+    """Average Directional Index : trend strength."""
 
     def __init__(self, period: int = 14):
         super().__init__(period=period)

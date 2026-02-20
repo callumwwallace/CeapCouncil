@@ -14,7 +14,7 @@ from app.engine.data.feed import BarData
 
 
 class SpreadModel(ABC):
-    """Abstract spread model — compute bid/ask from bar data."""
+    """Abstract spread model : compute bid/ask from bar data."""
 
     @abstractmethod
     def get_spread(self, bar: BarData, avg_volume: float | None = None) -> float:
@@ -29,7 +29,7 @@ class SpreadModel(ABC):
 
 
 class NoSpread(SpreadModel):
-    """Zero spread — fills at mid price."""
+    """Zero spread : fills at mid price."""
 
     def get_spread(self, bar: BarData, avg_volume: float | None = None) -> float:
         return 0.0

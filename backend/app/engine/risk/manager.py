@@ -1,4 +1,4 @@
-"""Risk manager — pre-trade and real-time risk checks.
+"""Risk manager: pre-trade and real-time risk checks.
 
 Validates orders against risk limits before submission.
 Monitors portfolio for breach conditions.

@@ -384,7 +384,7 @@ def _translate_bt_to_engine(code: str) -> str:
     translated: list[str] = []
 
     translated.append(
-        "# Backtrader indicators unavailable — use self.history() for manual calculation."
+        "# Backtrader indicators unavailable : use self.history() for manual calculation."
     )
 
     for line in lines:
@@ -417,7 +417,7 @@ def _translate_bt_to_engine(code: str) -> str:
         line = line.replace("self.data.low[0]", "bar.low")
         line = line.replace("self.data.open[0]", "bar.open")
 
-        # Position checks (order matters — do 'not self.position' before 'self.position')
+        # Position checks (order matters : do 'not self.position' before 'self.position')
         line = _re.sub(r"not\s+self\.position\b", "self.is_flat(bar.symbol)", line)
         line = _re.sub(r"\bself\.position\b", "self.is_long(bar.symbol)", line)
 
@@ -967,7 +967,7 @@ def run_genetic_optimization_task(
             param_bounds.append((0, 100))
             param_types.append("float")
 
-    # DEAP setup — use unique names to avoid conflicts
+    # DEAP setup : use unique names to avoid conflicts
     if hasattr(creator, "GeneticFitness"):
         del creator.GeneticFitness
     if hasattr(creator, "GeneticIndividual"):

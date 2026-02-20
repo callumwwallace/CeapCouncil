@@ -1,4 +1,4 @@
-"""Integration tests — full engine run end-to-end.
+"""Integration tests: full engine run end-to-end.
 
 Tests the complete pipeline: data feed → strategy → broker → portfolio → results.
 Validates output format matches frontend contract.

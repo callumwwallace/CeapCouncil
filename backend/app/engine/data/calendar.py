@@ -28,7 +28,7 @@ class TradingSession:
     timezone: str = "America/New_York"
 
 
-# US market holidays (2024-2027 — expand as needed)
+# US market holidays will need expanding.
 _US_HOLIDAYS: set[date] = {
     # 2025
     date(2025, 1, 1), date(2025, 1, 20), date(2025, 2, 17),

@@ -1,4 +1,4 @@
-"""Portfolio manager — tracks cash, positions, equity, and margin.
+"""Portfolio manager : tracks cash, positions, equity, and margin.
 
 Central hub for position tracking, P&L computation, and equity recording.
 Supports margin, buying power, and forced liquidation.
@@ -128,7 +128,7 @@ class Portfolio:
         return pos.quantity if pos else 0.0
 
     def on_fill(self, fill: FillEvent) -> list[TradeRecord]:
-        """Process a fill event — update position and cash."""
+        """Process a fill event : update position and cash."""
         pos = self.get_position(fill.symbol)
 
         # Determine signed quantity

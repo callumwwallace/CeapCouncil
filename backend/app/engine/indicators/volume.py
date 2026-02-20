@@ -29,7 +29,7 @@ class OBV(MultiInputIndicator):
 
 
 class MFI(MultiInputIndicator):
-    """Money Flow Index — volume-weighted RSI."""
+    """Money Flow Index : volume-weighted RSI."""
 
     def __init__(self, period: int = 14):
         super().__init__(period=period)
@@ -96,7 +96,7 @@ class ChaikinMoneyFlow(MultiInputIndicator):
 
 
 class ForceIndex(MultiInputIndicator):
-    """Force Index — price change × volume."""
+    """Force Index : price change × volume."""
 
     def __init__(self, period: int = 13):
         super().__init__(period=period)

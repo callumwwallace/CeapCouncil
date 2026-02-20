@@ -1,4 +1,4 @@
-"""Universe selection module — dynamic asset filtering and scanning.
+"""Universe selection module: dynamic asset filtering and scanning.
 
 Filters tradeable assets based on liquidity, volume, volatility, and custom criteria.
 Supports scheduled refresh for walk-forward and live trading scenarios.

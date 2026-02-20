@@ -322,7 +322,7 @@ def _compute_rolling_beta(
 
 
 def _deflated_sharpe(sharpe: float, n_obs: int, n_trials: int) -> float:
-    """Deflated Sharpe Ratio — accounts for multiple testing.
+    """Deflated Sharpe Ratio: accounts for multiple testing.
 
     Based on Bailey & López de Prado (2014).
     """

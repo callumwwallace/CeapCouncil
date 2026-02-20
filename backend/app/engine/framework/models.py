@@ -1,4 +1,4 @@
-"""Framework model interfaces — Alpha, Portfolio, Execution, Risk."""
+"""Framework model interfaces : Alpha, Portfolio, Execution, Risk."""
 
 from __future__ import annotations
 
@@ -204,7 +204,7 @@ class InsightWeightedPortfolio(PortfolioModel):
 
 
 class ImmediateExecution(ExecutionModel):
-    """Simple execution — market orders to reach target weights."""
+    """Simple execution : market orders to reach target weights."""
 
     def __init__(self, min_weight_change: float = 0.01):
         super().__init__()

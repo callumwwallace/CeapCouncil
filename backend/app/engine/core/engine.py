@@ -1,4 +1,4 @@
-"""Engine — the main event-driven backtest runner.
+"""Engine : the main event-driven backtest runner.
 
 Orchestrates the event loop: feeds data, processes orders, fills, signals.
 Replaces Backtrader's cerebro.run() with a deterministic, extensible loop.
@@ -285,7 +285,7 @@ class Engine:
         if self.config.warmup_bars > 0 and self._strategy._warmup_bars == 0:
             self._strategy.set_warmup(bars=self.config.warmup_bars)
 
-        # Main event loop — iterate through all bars
+        # Main event loop : iterate through all bars
         bar_index = 0
         for bar_group in self._data_feed.iterate():
             timestamp = bar_group[0].timestamp
@@ -442,7 +442,7 @@ class Engine:
         })
 
     def _on_fill(self, fill: FillEvent) -> None:
-        """Handle fill events — update portfolio and notify strategy."""
+        """Handle fill events : update portfolio and notify strategy."""
         completed_trades = self._portfolio.on_fill(fill)
         if self._strategy:
             self._strategy.on_order_event(fill)
@@ -460,7 +460,7 @@ class Engine:
         })
 
     def _liquidate_all(self, timestamp: datetime) -> None:
-        """Emergency liquidation — close all positions."""
+        """Emergency liquidation : close all positions."""
         for symbol, pos in self._portfolio._positions.items():
             if not pos.is_flat:
                 from app.engine.broker.order import Order, OrderSide, OrderType

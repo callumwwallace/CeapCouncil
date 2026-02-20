@@ -153,7 +153,7 @@ class TestTrailingStop:
         stop = o.update_trail(210.0)
         assert stop == pytest.approx(199.5)  # 210 * 0.95
 
-        # Price drops to 205 — peak stays at 210
+        # Price drops to 205; peak stays at 210
         stop = o.update_trail(205.0)
         assert stop == pytest.approx(199.5)
 
