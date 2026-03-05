@@ -50,8 +50,8 @@ describe('AssetChart', () => {
       const ma20Button = screen.getByTestId('indicator-ma20');
       const ma50Button = screen.getByTestId('indicator-ma50');
 
-      expect(ma20Button.className).not.toContain('bg-blue-900');
-      expect(ma50Button.className).not.toContain('bg-orange-900');
+      expect(ma20Button.className).not.toContain('bg-blue-500');
+      expect(ma50Button.className).not.toContain('bg-orange-500');
     });
 
     it('toggles MA20 indicator on click', () => {
@@ -60,7 +60,7 @@ describe('AssetChart', () => {
 
       fireEvent.click(ma20Button);
 
-      expect(ma20Button.className).toContain('bg-blue-900');
+      expect(ma20Button.className).toContain('bg-blue-500');
     });
 
     it('toggles MA50 indicator on click', () => {
@@ -69,7 +69,7 @@ describe('AssetChart', () => {
 
       fireEvent.click(ma50Button);
 
-      expect(ma50Button.className).toContain('bg-orange-900');
+      expect(ma50Button.className).toContain('bg-orange-500');
     });
 
     it('calls onIndicatorsChange when controlled', () => {

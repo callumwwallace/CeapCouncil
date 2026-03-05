@@ -15,6 +15,8 @@ from app.models.backtest import Backtest, BacktestStatus
 from app.models.strategy import Strategy
 
 from app.engine.core.engine import Engine, EngineConfig, EngineResult
+from app.engine.broker.slippage import auto_detect_tier
+from app.engine.data.calendar import filter_to_trading_days
 from app.engine.strategy.compiler import compile_strategy, extract_user_error as extract_strategy_error
 
 # Sync engine for Celery tasks
@@ -439,7 +441,7 @@ def _translate_bt_to_engine(code: str) -> str:
 # Celery task
 # ---------------------------------------------------------------------------
 
-@celery_app.task(bind=True, time_limit=300, soft_time_limit=240)
+@celery_app.task(bind=True, time_limit=300, soft_time_limit=240, autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 2})
 def run_backtest_task(self, backtest_id: int):
     """Execute a backtest for a given strategy."""
     db = SessionLocal()
@@ -483,6 +485,11 @@ def run_backtest_task(self, backtest_id: int):
         if data.index.tz is not None:
             data.index = data.index.tz_localize(None)
 
+        # Filter to valid trading days per asset type (exclude weekends/holidays for equities)
+        data = filter_to_trading_days(data, backtest.symbol)
+        if data.empty:
+            raise ValueError(f"No trading-day data found for {backtest.symbol} (weekends/holidays excluded)")
+
         try:
             strategy_cls = compile_strategy(strategy_code)
             strategy = strategy_cls(params=params)
@@ -507,9 +514,21 @@ def run_backtest_task(self, backtest_id: int):
 
         # Resolve slippage model from user config
         user_slippage_model = params.get("slippage_model", "percentage")
+        liquidity_tier = None
+        if user_slippage_model == "auto":
+            user_slippage_model = "volume_aware"
+            # Infer tier from avg daily volume (cost-only; never rejects orders)
+            try:
+                dollar_vol = (data["Volume"] * data["Close"]).dropna()
+                avg_daily_usd = float(dollar_vol.mean()) if len(dollar_vol) > 0 else 0
+                tier = auto_detect_tier(avg_daily_usd)
+                liquidity_tier = tier.value
+            except Exception:
+                liquidity_tier = "high"
 
         # Margin settings
         margin_enabled = bool(params.get("margin_enabled", False))
+        allow_shorts_without_margin = bool(params.get("allow_shorts_without_margin", False))
         leverage = float(params.get("leverage", 1))
 
         engine_config = EngineConfig(
@@ -517,13 +536,15 @@ def run_backtest_task(self, backtest_id: int):
             commission_rate=params.get("commission", 0.001),
             slippage_model=user_slippage_model,
             slippage_pct=params.get("slippage", 0.1),
+            liquidity_tier=liquidity_tier,
             spread_model=resolved_spread,
             is_crypto=is_crypto,
             stop_loss_pct=params.get("stop_loss_pct"),
             take_profit_pct=params.get("take_profit_pct"),
-            max_drawdown_pct=float(params.get("max_drawdown_pct", 50)),
+            max_drawdown_pct=float(params.get("max_drawdown_pct", 100)),
             max_position_pct=float(params.get("max_position_pct", 100)),
             margin_enabled=margin_enabled,
+            allow_shorts_without_margin=allow_shorts_without_margin,
             max_leverage=leverage if margin_enabled else 1.0,
             warmup_bars=int(params.get("warmup_bars", 0)),
             pdt_enabled=bool(params.get("pdt_enabled", False)),
@@ -554,6 +575,9 @@ def run_backtest_task(self, backtest_id: int):
                     end=backtest.end_date,
                     interval=interval,
                 )
+                if bm_data.index.tz is not None:
+                    bm_data.index = bm_data.index.tz_localize(None)
+                bm_data = filter_to_trading_days(bm_data, benchmark_symbol)
             if not bm_data.empty and len(bm_data) >= 2:
                 first_close = float(bm_data["Close"].iloc[0])
                 last_close = float(bm_data["Close"].iloc[-1])
@@ -565,6 +589,20 @@ def run_backtest_task(self, backtest_id: int):
             pass
 
         results_dict["benchmark_return"] = benchmark_return
+
+        # Backtest versioning: tie run to exact code, params, data, config for reproducibility
+        from app.core.data_cache import compute_config_hash, compute_data_hash, compute_code_hash
+        versioning = {
+            "code_hash": compute_code_hash(strategy_code),
+            "data_hash": compute_data_hash(data),
+            "config_hash": compute_config_hash({
+                **params,
+                "initial_capital": backtest.initial_capital,
+                "commission": params.get("commission", 0.001),
+                "slippage": params.get("slippage", 0.1),
+            }),
+        }
+        results_dict["versioning"] = versioning
 
         # Map result fields to database columns (convert numpy to plain Python)
         def _safe(val, default=None):
@@ -620,13 +658,29 @@ def run_backtest_task(self, backtest_id: int):
 # ---------------------------------------------------------------------------
 
 def _fetch_data(symbol: str, start_date, end_date, interval: str = "1d"):
-    """Download market data once, returning a clean DataFrame or None."""
+    """Download market data (or serve from cache), returning a clean DataFrame or None.
+
+    Caches OHLCV by (symbol, start, end, interval) to reduce API calls and ensure
+    reproducible runs. Filters to valid trading days per asset type.
+    """
+    from app.core.data_cache import get_cached, set_cached
+
+    start_s = str(start_date)[:10] if start_date else ""
+    end_s = str(end_date)[:10] if end_date else ""
+
+    cached = get_cached(symbol, start_s, end_s, interval)
+    if cached is not None:
+        return cached
+
     ticker = yf.Ticker(symbol)
     data = ticker.history(start=start_date, end=end_date, interval=interval)
     if data.empty:
         return None
     if data.index.tz is not None:
         data.index = data.index.tz_localize(None)
+    data = filter_to_trading_days(data, symbol)
+
+    set_cached(symbol, start_s, end_s, interval, data)
     return data
 
 
@@ -1294,7 +1348,7 @@ def run_heatmap_task(
 # Walk-Forward Analysis task
 # ---------------------------------------------------------------------------
 
-@celery_app.task(bind=True, time_limit=600, soft_time_limit=540)
+@celery_app.task(bind=True, time_limit=600, soft_time_limit=540, autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 2})
 def run_walk_forward_task(
     self,
     code: str,
@@ -1306,10 +1360,16 @@ def run_walk_forward_task(
     slippage: float,
     n_splits: int = 5,
     train_pct: float = 0.7,
+    purge_bars: int = 0,
+    window_mode: str = "rolling",
     interval: str = "1d",
 ):
-    """Walk-forward analysis: split data into N windows, train+test each."""
-    # Pre-fetch all data once
+    """Walk-forward analysis: split data into N windows, train+test each.
+
+    purge_bars: gap between train and test to prevent information leakage.
+    window_mode: "rolling" (fixed train_pct per window) or "anchored" (train grows from start).
+    """
+    # Pre-fetch all data once (uses cache for reproducibility)
     data = _fetch_data(symbol, start_date, end_date, interval)
     if data is None or data.empty:
         return {"status": "failed", "error": "No market data for the selected date range"}
@@ -1327,8 +1387,8 @@ def run_walk_forward_task(
         }
 
     # Lookback bars to warm up indicators in each sub-window.
-    # Most strategies need 20-50 bars of history before indicators are valid.
     lookback = min(50, window_size)
+    anchored = window_mode == "anchored"
 
     windows = []
     for i in range(n_splits):
@@ -1337,13 +1397,20 @@ def run_walk_forward_task(
         if end_idx - start_idx < 10:
             continue
 
-        split = int((end_idx - start_idx) * train_pct)
-        train_end = start_idx + split
-        test_start = train_end
+        if anchored:
+            train_start_idx = 0
+            train_end = start_idx + int((end_idx - start_idx) * train_pct)
+        else:
+            train_start_idx = start_idx
+            split = int((end_idx - start_idx) * train_pct)
+            train_end = start_idx + split
+
+        test_start = min(train_end + purge_bars, end_idx)
+        if test_start >= end_idx:
+            continue
 
         # Include lookback bars before each window so indicators can warm up.
-        # Training slice: pull lookback bars from *before* this window.
-        train_lb_start = max(0, start_idx - lookback)
+        train_lb_start = max(0, train_start_idx - lookback)
         train_data = data.iloc[train_lb_start:train_end].copy()
 
         # Test slice: pull lookback bars from the end of the training window
@@ -1352,7 +1419,7 @@ def run_walk_forward_task(
         test_data = data.iloc[test_lb_start:end_idx].copy()
 
         train_period = {
-            "start": data.index[start_idx].strftime("%Y-%m-%d"),
+            "start": data.index[train_lb_start].strftime("%Y-%m-%d"),
             "end": data.index[min(train_end - 1, total_bars - 1)].strftime("%Y-%m-%d"),
         }
         test_period = {
@@ -1404,6 +1471,8 @@ def run_walk_forward_task(
         "status": "completed",
         "n_splits": n_splits,
         "train_pct": train_pct,
+        "purge_bars": purge_bars,
+        "window_mode": window_mode,
         "windows": windows,
         "avg_oos_return": avg_oos_return,
     }
@@ -1530,7 +1599,98 @@ def run_batch_backtest_task(
 # Out-of-Sample Enforcement
 # ---------------------------------------------------------------------------
 
-@celery_app.task(bind=True, time_limit=600, soft_time_limit=540)
+def _run_kfold_oos(
+    code: str,
+    data: pd.DataFrame,
+    symbol: str,
+    initial_capital: float,
+    commission: float,
+    slippage: float,
+    n_folds: int,
+    param_ranges: dict,
+    n_trials: int,
+    task_self,
+) -> dict:
+    """K-fold cross-validation: optimize on train, test on holdout, report mean ± std."""
+    try:
+        import optuna
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+    except ImportError:
+        return {"status": "failed", "error": "optuna required"}
+
+    n = len(data)
+    fold_size = n // n_folds
+    oos_sharpes: list[float] = []
+    oos_returns: list[float] = []
+    fold_results: list[dict] = []
+
+    for k in range(n_folds):
+        test_start = k * fold_size
+        test_end = (k + 1) * fold_size if k < n_folds - 1 else n
+        train_indices = list(range(0, test_start)) + list(range(test_end, n))
+        if len(train_indices) < 50 or (test_end - test_start) < 20:
+            continue
+
+        train_data = data.iloc[train_indices].copy()
+        test_data = data.iloc[test_start:test_end].copy()
+
+        def objective(trial):
+            combo = {}
+            for key, rng in param_ranges.items():
+                if isinstance(rng, dict):
+                    low, high = rng.get("low", 1), rng.get("high", 100)
+                    pt = rng.get("type", "float")
+                    combo[key] = trial.suggest_int(key, int(low), int(high)) if pt == "int" else trial.suggest_float(key, float(low), float(high))
+                else:
+                    combo[key] = rng[0] if isinstance(rng, list) else rng
+
+            r = _run_single_backtest(
+                code=code, initial_capital=initial_capital,
+                commission=commission, slippage=slippage,
+                param_combo=combo, data=train_data.copy(), symbol=symbol,
+            )
+            return r.get("sharpe_ratio", 0) or 0 if "error" not in r else float("-inf")
+
+        study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=42 + k))
+        study.optimize(objective, n_trials=min(n_trials, 50), show_progress_bar=False)
+        best_params = study.best_params if study.best_trial else {}
+
+        oos_r = _run_single_backtest(
+            code=code, initial_capital=initial_capital,
+            commission=commission, slippage=slippage,
+            param_combo=best_params, data=test_data.copy(), symbol=symbol,
+        )
+        sr = oos_r.get("sharpe_ratio") or 0
+        ret = oos_r.get("total_return") or 0
+        oos_sharpes.append(float(sr))
+        oos_returns.append(float(ret))
+        fold_results.append({"fold": k + 1, "oos_sharpe": sr, "oos_return": ret, "best_params": best_params})
+
+        if task_self:
+            task_self.update_state(state="PROGRESS", meta={"current": k + 1, "total": n_folds})
+
+    if not oos_sharpes:
+        return {"status": "failed", "error": "No valid folds"}
+
+    import numpy as np
+    return {
+        "status": "completed",
+        "n_folds": len(oos_sharpes),
+        "oos_sharpe_mean": round(float(np.mean(oos_sharpes)), 4),
+        "oos_sharpe_std": round(float(np.std(oos_sharpes)), 4),
+        "oos_return_mean": round(float(np.mean(oos_returns)), 4),
+        "oos_return_std": round(float(np.std(oos_returns)), 4),
+        "fold_results": fold_results,
+        "is_result": None,
+        "oos_result": {"sharpe_ratio": np.mean(oos_sharpes), "total_return": np.mean(oos_returns)},
+        "is_sharpe": None,
+        "oos_sharpe": np.mean(oos_sharpes),
+        "best_params": fold_results[0]["best_params"] if fold_results else {},
+        "overfit_score": None,
+    }
+
+
+@celery_app.task(bind=True, time_limit=900, soft_time_limit=840, autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 2})
 def run_oos_validation_task(
     self,
     code: str,
@@ -1541,14 +1701,14 @@ def run_oos_validation_task(
     commission: float = 0.001,
     slippage: float = 0.001,
     oos_ratio: float = 0.3,
+    n_folds: int = 1,
     param_ranges: dict | None = None,
     n_trials: int = 30,
     interval: str = "1d",
 ):
     """Run optimization on in-sample, then validate best params on out-of-sample.
-    
-    Splits data into in-sample and out-of-sample periods.
-    Optimizes on IS, then runs the best params on OOS to detect overfitting.
+
+    n_folds=1: single IS/OOS split. n_folds>1: k-fold cross-validation, report mean ± std.
     """
     data = _fetch_data(symbol, start_date, end_date, interval)
     if data is None or data.empty:
@@ -1562,6 +1722,16 @@ def run_oos_validation_task(
 
     if is_data.empty or oos_data.empty:
         return {"status": "failed", "error": "Not enough data for IS/OOS split"}
+
+    # K-fold cross-validation (report mean ± std across folds)
+    if n_folds > 1 and param_ranges:
+        return _run_kfold_oos(
+            code=code, data=data, symbol=symbol,
+            initial_capital=initial_capital, commission=commission, slippage=slippage,
+            n_folds=min(n_folds, max(1, n // 50)),
+            param_ranges=param_ranges, n_trials=n_trials,
+            task_self=self,
+        )
 
     is_start = str(is_data.index[0].date()) if hasattr(is_data.index[0], 'date') else str(is_data.index[0])
     is_end = str(is_data.index[-1].date()) if hasattr(is_data.index[-1], 'date') else str(is_data.index[-1])
@@ -1644,12 +1814,16 @@ def run_oos_validation_task(
         param_combo=best_params, data=is_data.copy(), symbol=symbol,
     )
 
-    # Compute overfit score: how much worse is OOS vs IS
+    # Compute overfit score and multiple-testing note
     is_sharpe = is_best.get("sharpe_ratio", 0) or 0
     oos_sharpe = oos_result.get("sharpe_ratio", 0) or 0
     overfit_score = None
     if is_sharpe > 0:
         overfit_score = round(max(0, 1 - (oos_sharpe / is_sharpe)) * 100, 1)
+
+    multiple_testing_note = None
+    if n_trials > 1:
+        multiple_testing_note = f"Deflated Sharpe recommended: {n_trials} trials may inflate best result."
 
     return {
         "status": "completed",
@@ -1661,5 +1835,6 @@ def run_oos_validation_task(
         "is_sharpe": is_sharpe,
         "oos_sharpe": oos_sharpe,
         "overfit_score": overfit_score,
+        "multiple_testing_note": multiple_testing_note,
         "total_is_trials": len(is_results),
     }

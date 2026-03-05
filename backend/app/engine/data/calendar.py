@@ -9,6 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, time, date, timedelta
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 class MarketType(Enum):
@@ -28,8 +32,18 @@ class TradingSession:
     timezone: str = "America/New_York"
 
 
-# US market holidays will need expanding.
+# US market holidays (NYSE/NASDAQ)
 _US_HOLIDAYS: set[date] = {
+    # 2023
+    date(2023, 1, 2), date(2023, 1, 16), date(2023, 2, 20),
+    date(2023, 4, 7), date(2023, 5, 29), date(2023, 6, 19),
+    date(2023, 7, 4), date(2023, 9, 4), date(2023, 11, 23),
+    date(2023, 12, 25),
+    # 2024
+    date(2024, 1, 1), date(2024, 1, 15), date(2024, 2, 19),
+    date(2024, 3, 29), date(2024, 5, 27), date(2024, 6, 19),
+    date(2024, 7, 4), date(2024, 9, 2), date(2024, 11, 28),
+    date(2024, 12, 25),
     # 2025
     date(2025, 1, 1), date(2025, 1, 20), date(2025, 2, 17),
     date(2025, 4, 18), date(2025, 5, 26), date(2025, 6, 19),
@@ -141,9 +155,36 @@ class ExchangeCalendar:
             return MarketType.CRYPTO
         if s.endswith("=F"):
             return MarketType.US_FUTURES
-        if "/" in s:
+        if "/" in s or s.endswith("=X"):
             return MarketType.FOREX
         return MarketType.US_EQUITY
+
+
+def filter_to_trading_days(df: "pd.DataFrame", symbol: str) -> "pd.DataFrame":
+    """Filter DataFrame to only include rows on valid trading days for the symbol.
+
+    For US equities: excludes weekends and US market holidays.
+    For crypto: returns df unchanged (24/7).
+    For forex/futures: uses appropriate calendar.
+
+    Preserves data integrity so backtests don't include weekend/holiday bars for
+    equities or accidentally exclude valid crypto weekend bars.
+    """
+    import pandas as pd
+
+    if df.empty:
+        return df
+
+    market_type = ExchangeCalendar.detect_market_type(symbol)
+    if market_type == MarketType.CRYPTO:
+        return df
+
+    cal = ExchangeCalendar(market_type=market_type)
+    idx = df.index
+    if hasattr(idx, "tz") and idx.tz is not None:
+        idx = idx.tz_localize(None)
+    keep = [cal.is_trading_day(pd.Timestamp(ts).date()) for ts in idx]
+    return df.loc[keep].copy()
 
 
 @dataclass

@@ -44,13 +44,45 @@ class UserUpdate(BaseModel):
     avatar_url: str | None = None
 
 
+class EmailChange(BaseModel):
+    new_email: EmailStr
+    current_password: str
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator('new_password')
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters')
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not re.search(r'[a-z]', v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not re.search(r'[0-9]', v):
+            raise ValueError('Password must contain at least one number')
+        return v
+
+
 class UserResponse(UserBase):
     id: int
     bio: str | None
     avatar_url: str | None
     is_active: bool
     is_verified: bool
+    notify_on_mention: bool = True
+    email_on_mention: bool = False
+    email_marketing: bool = False
     created_at: datetime
     
     class Config:
         from_attributes = True
+
+
+class NotificationPreferencesUpdate(BaseModel):
+    notify_on_mention: bool | None = None
+    email_on_mention: bool | None = None
+    email_marketing: bool | None = None

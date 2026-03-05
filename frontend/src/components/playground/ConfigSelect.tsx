@@ -17,6 +17,8 @@ interface ConfigSelectProps {
   className?: string;
   /** Extra classes for the trigger button (e.g. dark background in optimize panel) */
   buttonClassName?: string;
+  /** Light variant for use on white/light backgrounds */
+  light?: boolean;
 }
 
 export default function ConfigSelect({
@@ -27,6 +29,7 @@ export default function ConfigSelect({
   small = false,
   className = '',
   buttonClassName = '',
+  light = false,
 }: ConfigSelectProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -49,10 +52,11 @@ export default function ConfigSelect({
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className={`w-full flex items-center justify-between gap-2 bg-gray-700/80 border border-gray-600 rounded-md px-2.5 py-1.5
-          text-gray-100 transition-colors duration-150
-          hover:border-gray-500
+        className={`w-full flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 transition-colors duration-150
           focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500
+          ${light
+            ? 'bg-white border border-gray-200 text-gray-900 hover:border-gray-300'
+            : 'bg-gray-700/80 border border-gray-600 text-gray-100 hover:border-gray-500'}
           ${small ? 'text-xs py-1 px-2' : 'text-sm'} ${buttonClassName}`}
       >
         <span className={`truncate text-left ${!value ? 'text-gray-500' : ''}`}>
@@ -64,7 +68,7 @@ export default function ConfigSelect({
         />
       </button>
       {open && (
-        <div className="absolute top-full left-0 right-0 mt-1.5 bg-gray-800 border border-gray-600 rounded-lg shadow-xl shadow-black/30 z-50 max-h-52 overflow-y-auto">
+        <div className={`absolute top-full left-0 right-0 mt-1.5 rounded-lg shadow-xl z-50 max-h-52 overflow-y-auto ${light ? 'bg-white border border-gray-200 shadow-black/10' : 'bg-gray-800 border border-gray-600 shadow-black/30'}`}>
           {options.map((opt) => (
             <button
               key={opt.value}
@@ -75,7 +79,9 @@ export default function ConfigSelect({
                 setOpen(false);
               }}
               className={`w-full text-left px-3 py-2 text-sm transition-colors flex justify-between items-center
-                hover:bg-gray-700/80 ${value === opt.value ? 'text-emerald-400 bg-gray-700/50' : 'text-gray-200'}`}
+                ${light
+                  ? `hover:bg-gray-50 ${value === opt.value ? 'text-emerald-600 bg-emerald-50' : 'text-gray-900'}`
+                  : `hover:bg-gray-700/80 ${value === opt.value ? 'text-emerald-400 bg-gray-700/50' : 'text-gray-200'}`}`}
             >
               <span className="font-medium truncate">{opt.label}</span>
             </button>

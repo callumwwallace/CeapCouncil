@@ -1,301 +1,296 @@
 import Link from 'next/link';
-import { 
-  BarChart3, 
-  Users, 
-  TrendingUp, 
-  MessageSquare, 
-  ThumbsUp,
+import {
+  Code2,
+  Trophy,
+  MessageSquare,
+  FileCode,
+  BookOpen,
+  ArrowRight,
+  Search,
+  AtSign,
   GitFork,
-  LineChart,
   Shield,
-  ArrowRight
 } from 'lucide-react';
 
 export default function Home() {
   return (
     <div className="bg-white">
-      {/* Hero Section */}
-      <div className="relative overflow-hidden">
-        {/* Background Pattern */}
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#f0f0f0_1px,transparent_1px),linear-gradient(to_bottom,#f0f0f0_1px,transparent_1px)] bg-[size:4rem_4rem]" />
-        <div className="absolute top-0 right-0 w-1/2 h-full bg-gradient-to-l from-emerald-50 to-transparent" />
-        
+      {/* Hero */}
+      <section className="relative overflow-hidden bg-gradient-to-b from-slate-50 to-white">
+        <div
+          className="absolute inset-0 opacity-[0.03]"
+          style={{
+            backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23000000' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+          }}
+        />
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 lg:py-28">
-          <div className="grid lg:grid-cols-2 gap-12 items-center">
-            <div>
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 leading-tight mb-6">
-                Backtest Strategies.<br />
-                <span className="text-emerald-600">Grow Together.</span>
-              </h1>
-              
-              <p className="text-xl text-gray-600 leading-relaxed">
-                Build, test, and share trading strategies. Whether you&apos;re a beginner 
-                learning the ropes or an experienced trader refining your edge.
-              </p>
-
+          <div className="max-w-3xl">
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-slate-900 leading-tight tracking-tight">
+              Build strategies. Backtest. Compete.
+            </h1>
+            <p className="mt-6 text-xl text-slate-600 leading-relaxed">
+              Write Python strategies in the Playground, run them on real market data, and compete on the Leaderboard. 
+              Discuss ideas in the Community. Ceap Council is built for systematic traders who want to validate, benchmark, and improve.
+            </p>
+            <div className="mt-10 flex flex-wrap gap-4">
+              <Link
+                href="/register"
+                className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg shadow-lg shadow-emerald-900/20 transition"
+              >
+                Get started
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+              <Link
+                href="/playground"
+                className="inline-flex items-center gap-2 px-6 py-3 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium rounded-lg transition"
+              >
+                Try Playground
+              </Link>
             </div>
+          </div>
+        </div>
+      </section>
 
-            {/* Hero Visual - Example Strategy Card */}
-            <div className="relative lg:pl-8">
-              <div className="absolute -inset-4 bg-gradient-to-r from-emerald-100 to-teal-100 rounded-3xl blur-2xl opacity-60" />
-              <div className="relative bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden">
-                {/* Card Header */}
-                <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center">
-                        <TrendingUp className="h-5 w-5 text-white" />
-                      </div>
-                      <div>
-                        <div className="font-semibold text-gray-900">Your Strategy</div>
-                        <div className="text-sm text-gray-500">Example Preview</div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-bold text-emerald-600">+XX.X%</div>
-                      <div className="text-xs text-gray-500">Total Return</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Fake Chart Area */}
-                <div className="px-6 py-4">
-                  <div className="h-32 flex items-end gap-1">
-                    {[40, 45, 35, 50, 48, 55, 52, 60, 58, 65, 70, 68, 75, 72, 80, 85, 82, 90, 88, 95].map((h, i) => (
-                      <div 
-                        key={i} 
-                        className="flex-1 bg-gradient-to-t from-emerald-500 to-emerald-400 rounded-t"
-                        style={{ height: `${h}%` }}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex justify-between text-xs text-gray-400 mt-2">
-                    <span>Jan 2024</span>
-                    <span>Dec 2024</span>
-                  </div>
-                </div>
-
-                {/* Stats */}
-                <div className="grid grid-cols-4 divide-x divide-gray-200 border-t border-gray-200">
-                  <div className="px-4 py-3 text-center">
-                    <div className="text-lg font-bold text-gray-900">-</div>
-                    <div className="text-xs text-gray-500">Sharpe</div>
-                  </div>
-                  <div className="px-4 py-3 text-center">
-                    <div className="text-lg font-bold text-gray-900">-</div>
-                    <div className="text-xs text-gray-500">Max DD</div>
-                  </div>
-                  <div className="px-4 py-3 text-center">
-                    <div className="text-lg font-bold text-gray-900">-</div>
-                    <div className="text-xs text-gray-500">Win Rate</div>
-                  </div>
-                  <div className="px-4 py-3 text-center">
-                    <div className="text-lg font-bold text-gray-900">-</div>
-                    <div className="text-xs text-gray-500">Trades</div>
-                  </div>
-                </div>
-
-                {/* Strategy Actions */}
-                <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-1 text-gray-600">
-                      <ThumbsUp className="h-4 w-4" />
-                      <span className="text-sm font-medium">Vote</span>
-                    </div>
-                    <div className="flex items-center gap-1 text-gray-600">
-                      <MessageSquare className="h-4 w-4" />
-                      <span className="text-sm font-medium">Discuss</span>
-                    </div>
-                    <div className="flex items-center gap-1 text-gray-600">
-                      <GitFork className="h-4 w-4" />
-                      <span className="text-sm font-medium">Fork</span>
-                    </div>
-                  </div>
-                  <button className="text-sm font-medium text-emerald-600 hover:text-emerald-700">
-                    View Details →
-                  </button>
-                </div>
+      {/* Three pillars */}
+      <section className="py-20 border-t border-slate-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid md:grid-cols-3 gap-8">
+            <Link
+              href="/playground"
+              className="group rounded-2xl border border-slate-200 bg-white p-8 hover:border-emerald-200 hover:shadow-lg hover:shadow-emerald-900/5 transition"
+            >
+              <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center mb-5 group-hover:bg-emerald-500/20 transition">
+                <Code2 className="h-6 w-6 text-emerald-600" />
               </div>
-            </div>
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">Playground</h3>
+              <p className="text-slate-600 text-sm leading-relaxed">
+                Write and edit Python strategies in a live code editor. Run backtests on equities and ETFs with slippage, 
+                commissions, and full trade logs. View equity curves, drawdowns, and metrics.
+              </p>
+              <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-emerald-600 group-hover:gap-2 transition-all">
+                Open Playground
+                <ArrowRight className="h-4 w-4" />
+              </span>
+            </Link>
+
+            <Link
+              href="/leaderboard"
+              className="group rounded-2xl border border-slate-200 bg-white p-8 hover:border-amber-200 hover:shadow-lg hover:shadow-amber-900/5 transition"
+            >
+              <div className="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center mb-5 group-hover:bg-amber-500/20 transition">
+                <Trophy className="h-6 w-6 text-amber-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">Leaderboard</h3>
+              <p className="text-slate-600 text-sm leading-relaxed">
+                Enter strategies into time-bound competitions. Same data and rules for everyone. Rankings by Sharpe, 
+                return, drawdown, or custom metrics. Earn badges. Completed competitions auto-archive to the forum.
+              </p>
+              <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-amber-600 group-hover:gap-2 transition-all">
+                View competitions
+                <ArrowRight className="h-4 w-4" />
+              </span>
+            </Link>
+
+            <Link
+              href="/community"
+              className="group rounded-2xl border border-slate-200 bg-white p-8 hover:border-slate-300 hover:shadow-lg transition"
+            >
+              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mb-5 group-hover:bg-slate-200 transition">
+                <MessageSquare className="h-6 w-6 text-slate-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">Community</h3>
+              <p className="text-slate-600 text-sm leading-relaxed">
+                Forum with topics for current competitions, past archives, strategy help, and education. 
+                Search threads, @mention others, get notifications. Discuss, vote on strategies, and fork public ones.
+              </p>
+              <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-slate-700 group-hover:gap-2 transition-all">
+                Browse Community
+                <ArrowRight className="h-4 w-4" />
+              </span>
+            </Link>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Platform Overview */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-        <div className="text-center max-w-3xl mx-auto mb-16">
-          <h2 className="text-2xl sm:text-3xl font-semibold text-gray-900 mb-4">
-            Systematic backtesting. Ranked competitions. A community that learns.
-          </h2>
-          <p className="text-gray-600 leading-relaxed">
-            QuantGuild is where quantitative traders validate ideas, benchmark against peers, 
-            and level up through feedback and competition.
-          </p>
-        </div>
-
-        <div className="grid md:grid-cols-3 gap-8">
-          <div className="border border-gray-200 rounded-lg p-8 bg-white hover:border-gray-300 transition">
-            <div className="w-11 h-11 rounded-lg bg-gray-100 flex items-center justify-center mb-5">
-              <LineChart className="h-5 w-5 text-gray-700" />
-            </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Backtesting</h3>
-            <p className="text-gray-600 text-sm leading-relaxed">
-              Run strategies on historical market data. Slippage, commissions, margin, and execution realism built in.
-            </p>
-          </div>
-          <div className="border border-gray-200 rounded-lg p-8 bg-white hover:border-gray-300 transition">
-            <div className="w-11 h-11 rounded-lg bg-gray-100 flex items-center justify-center mb-5">
-              <BarChart3 className="h-5 w-5 text-gray-700" />
-            </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Competitions</h3>
-            <p className="text-gray-600 text-sm leading-relaxed">
-              Enter strategies into time-bound contests. Leaderboards rank by Sharpe, return, or custom metrics.
-            </p>
-          </div>
-          <div className="border border-gray-200 rounded-lg p-8 bg-white hover:border-gray-300 transition">
-            <div className="w-11 h-11 rounded-lg bg-gray-100 flex items-center justify-center mb-5">
-              <Users className="h-5 w-5 text-gray-700" />
-            </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Community & Learning</h3>
-            <p className="text-gray-600 text-sm leading-relaxed">
-              Share strategies, fork others&apos; work, discuss ideas. Learn from feedback and build reputation over time.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Competitions */}
-      <div className="bg-gray-50 border-y border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+      {/* Competitions detail */}
+      <section className="py-20 bg-slate-50 border-y border-slate-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-12">
             <div className="max-w-xl">
-              <h2 className="text-2xl font-semibold text-gray-900 mb-4">Competitions</h2>
-              <p className="text-gray-600 leading-relaxed mb-6">
-                Compete on equal footing. Submit a strategy, run it on the same data and timeframe as everyone else. 
-                Rankings are transparent (Sharpe, return, drawdown) so you know exactly where you stand.
+              <h2 className="text-2xl font-semibold text-slate-900 mb-4">Competitions</h2>
+              <p className="text-slate-600 leading-relaxed mb-6">
+                Compete on equal footing. Every entry runs on the same symbol, date range, and capital. 
+                Rankings are transparent. When a competition ends, the site automatically posts the top 25 
+                results to Past Competition Archives so the community can learn from them.
               </p>
               <Link
-                href="/competitions"
-                className="inline-flex items-center gap-2 text-emerald-600 hover:text-emerald-700 font-medium text-sm"
+                href="/leaderboard"
+                className="inline-flex items-center gap-2 text-emerald-600 hover:text-emerald-700 font-medium"
               >
-                View competitions
+                Go to Leaderboard
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
             <div className="flex-1 max-w-md lg:ml-12">
-              <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-                <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-4">Example leaderboard</div>
+              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+                <div className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-4">Example leaderboard</div>
                 <div className="space-y-3">
                   {[
-                    { rank: 1, name: 'Strategy Alpha', metric: '1.82' },
-                    { rank: 2, name: 'Momentum v2', metric: '1.67' },
-                    { rank: 3, name: 'Mean Reversion', metric: '1.54' },
+                    { rank: 1, name: 'momentum_v2', user: 'alice', sharpe: '1.82' },
+                    { rank: 2, name: 'mean_reversion', user: 'bob', sharpe: '1.67' },
+                    { rank: 3, name: 'sma_crossover', user: 'charlie', sharpe: '1.54' },
                   ].map((r) => (
-                    <div key={r.rank} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                    <div
+                      key={r.rank}
+                      className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0"
+                    >
                       <div className="flex items-center gap-3">
-                        <span className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-600">{r.rank}</span>
-                        <span className="text-gray-900 text-sm">{r.name}</span>
+                        <span
+                          className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
+                            r.rank === 1 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {r.rank}
+                        </span>
+                        <div>
+                          <span className="text-slate-900 text-sm font-medium">{r.name}</span>
+                          <span className="text-slate-500 text-xs block">{r.user}</span>
+                        </div>
                       </div>
-                      <span className="text-sm font-medium text-emerald-600">{r.metric}</span>
+                      <span className="text-sm font-mono font-medium text-emerald-600">{r.sharpe}</span>
                     </div>
                   ))}
                 </div>
-                <div className="text-xs text-gray-400 mt-2">Ranked by Sharpe ratio</div>
+                <div className="text-xs text-slate-400 mt-2">Ranked by Sharpe ratio</div>
               </div>
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Learning & Workflow */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-        <h2 className="text-2xl font-semibold text-gray-900 mb-3">How it works</h2>
-        <p className="text-gray-600 mb-12 max-w-2xl">
-          Write Python strategies in the Playground, backtest on real data, then share or enter competitions.
-        </p>
-        <div className="grid md:grid-cols-3 gap-6">
-          <div className="flex gap-4">
-            <span className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-900 text-white flex items-center justify-center text-sm font-medium">1</span>
-            <div>
-              <h3 className="font-semibold text-gray-900 mb-1">Write strategy</h3>
-              <p className="text-sm text-gray-600">Define logic with Python: signals, sizing, risk. Use our API and built-in indicators.</p>
+      {/* How it works */}
+      <section className="py-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <h2 className="text-2xl font-semibold text-slate-900 mb-3">How it works</h2>
+          <p className="text-slate-600 mb-12 max-w-2xl">
+            Start in the Playground, validate your strategy, then compete or discuss in the Community.
+          </p>
+          <div className="grid md:grid-cols-3 gap-8">
+            <div className="flex gap-5">
+              <span className="flex-shrink-0 w-10 h-10 rounded-full bg-slate-900 text-white flex items-center justify-center text-sm font-semibold">
+                1
+              </span>
+              <div>
+                <h3 className="font-semibold text-slate-900 mb-1">Write your strategy</h3>
+                <p className="text-sm text-slate-600">
+                  Python in the Playground. Use our StrategyBase API, built-in indicators, and parameters. Save versions.
+                </p>
+              </div>
             </div>
-          </div>
-          <div className="flex gap-4">
-            <span className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-900 text-white flex items-center justify-center text-sm font-medium">2</span>
-            <div>
-              <h3 className="font-semibold text-gray-900 mb-1">Backtest</h3>
-              <p className="text-sm text-gray-600">Run on equities, ETFs, or crypto. Get full metrics and trade-level detail.</p>
+            <div className="flex gap-5">
+              <span className="flex-shrink-0 w-10 h-10 rounded-full bg-slate-900 text-white flex items-center justify-center text-sm font-semibold">
+                2
+              </span>
+              <div>
+                <h3 className="font-semibold text-slate-900 mb-1">Run a backtest</h3>
+                <p className="text-sm text-slate-600">
+                  Choose symbol, date range, and capital. Get equity curve, trade log, Sharpe, return, drawdown, win rate.
+                </p>
+              </div>
             </div>
-          </div>
-          <div className="flex gap-4">
-            <span className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-900 text-white flex items-center justify-center text-sm font-medium">3</span>
-            <div>
-              <h3 className="font-semibold text-gray-900 mb-1">Compete or share</h3>
-              <p className="text-sm text-gray-600">Enter competitions, publish to the community, fork and iterate.</p>
+            <div className="flex gap-5">
+              <span className="flex-shrink-0 w-10 h-10 rounded-full bg-slate-900 text-white flex items-center justify-center text-sm font-semibold">
+                3
+              </span>
+              <div>
+                <h3 className="font-semibold text-slate-900 mb-1">Compete & discuss</h3>
+                <p className="text-sm text-slate-600">
+                  Submit to active competitions, earn badges, or discuss in the forum. Vote, fork, and build on others&apos; work.
+                </p>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Community */}
-      <div className="bg-gray-50 border-y border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
-            <div>
-              <div className="w-10 h-10 rounded-lg bg-gray-200 flex items-center justify-center mb-4">
-                <ThumbsUp className="h-5 w-5 text-gray-600" />
+      {/* Community features */}
+      <section className="py-20 bg-slate-50 border-y border-slate-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <h2 className="text-2xl font-semibold text-slate-900 mb-3">Community</h2>
+          <p className="text-slate-600 mb-10 max-w-2xl">
+            The forum brings everything together: Current Competitions, Past Archives, Strategy Showcase, dev help, and more.
+          </p>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="bg-white rounded-xl border border-slate-200 p-5">
+              <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center mb-4">
+                <Search className="h-5 w-5 text-slate-600" />
               </div>
-              <h3 className="font-semibold text-gray-900 mb-2">Vote</h3>
-              <p className="text-sm text-gray-600">Upvote strategies that perform. Surface what works.</p>
+              <h3 className="font-semibold text-slate-900 mb-1">Search</h3>
+              <p className="text-sm text-slate-600">Search threads by keywords, author, section, and date range.</p>
             </div>
-            <div>
-              <div className="w-10 h-10 rounded-lg bg-gray-200 flex items-center justify-center mb-4">
-                <MessageSquare className="h-5 w-5 text-gray-600" />
+            <div className="bg-white rounded-xl border border-slate-200 p-5">
+              <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center mb-4">
+                <AtSign className="h-5 w-5 text-slate-600" />
               </div>
-              <h3 className="font-semibold text-gray-900 mb-2">Discuss</h3>
-              <p className="text-sm text-gray-600">Comment on strategies. Get and give feedback.</p>
+              <h3 className="font-semibold text-slate-900 mb-1">@mentions</h3>
+              <p className="text-sm text-slate-600">Tag users in posts. Get notified when someone mentions you.</p>
             </div>
-            <div>
-              <div className="w-10 h-10 rounded-lg bg-gray-200 flex items-center justify-center mb-4">
-                <GitFork className="h-5 w-5 text-gray-600" />
+            <div className="bg-white rounded-xl border border-slate-200 p-5">
+              <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center mb-4">
+                <GitFork className="h-5 w-5 text-slate-600" />
               </div>
-              <h3 className="font-semibold text-gray-900 mb-2">Fork</h3>
-              <p className="text-sm text-gray-600">Start from public strategies. Build on others&apos; work.</p>
+              <h3 className="font-semibold text-slate-900 mb-1">Fork strategies</h3>
+              <p className="text-sm text-slate-600">Fork public strategies into your Playground and iterate.</p>
             </div>
-            <div>
-              <div className="w-10 h-10 rounded-lg bg-gray-200 flex items-center justify-center mb-4">
-                <Shield className="h-5 w-5 text-gray-600" />
+            <div className="bg-white rounded-xl border border-slate-200 p-5">
+              <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center mb-4">
+                <Shield className="h-5 w-5 text-slate-600" />
               </div>
-              <h3 className="font-semibold text-gray-900 mb-2">Private by default</h3>
-              <p className="text-sm text-gray-600">Strategies stay private until you choose to share.</p>
+              <h3 className="font-semibold text-slate-900 mb-1">Private by default</h3>
+              <p className="text-sm text-slate-600">Strategies stay private until you share or enter a competition.</p>
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
       {/* CTA */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-        <div className="text-center">
-          <h2 className="text-2xl font-semibold text-gray-900 mb-3">Start backtesting</h2>
-          <p className="text-gray-600 mb-8 max-w-xl mx-auto">
-            Create an account to use the Playground, enter competitions, and join the community.
+      <section className="py-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <h2 className="text-2xl font-semibold text-slate-900 mb-3">Ready to start?</h2>
+          <p className="text-slate-600 mb-8 max-w-xl mx-auto">
+            Create an account to use the Playground, enter competitions, and join the Community.
           </p>
-          <Link
-            href="/register"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg transition"
-          >
-            Create account
-            <ArrowRight className="h-4 w-4" />
-          </Link>
+          <div className="flex flex-wrap justify-center gap-4">
+            <Link
+              href="/register"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg shadow-lg shadow-emerald-900/20 transition"
+            >
+              Create account
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <Link
+              href="/docs"
+              className="inline-flex items-center gap-2 px-6 py-3 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium rounded-lg transition"
+            >
+              <FileCode className="h-4 w-4" />
+              Docs
+            </Link>
+            <Link
+              href="/blog"
+              className="inline-flex items-center gap-2 px-6 py-3 border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium rounded-lg transition"
+            >
+              <BookOpen className="h-4 w-4" />
+              Blog
+            </Link>
+          </div>
         </div>
-      </div>
+      </section>
 
       {/* Footer */}
-      <footer className="border-t border-gray-200 bg-white">
+      <footer className="border-t border-slate-200 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <p className="text-center text-gray-500 text-sm">
-            QuantGuild: backtest, compete, learn.
+          <p className="text-center text-slate-500 text-sm">
+            Ceap Council — backtest, compete, learn.
           </p>
         </div>
       </footer>

@@ -47,6 +47,7 @@ class StrategyVersionResponse(BaseModel):
     version: int
     code: str
     parameters: dict
+    commit_message: str | None = None
     created_at: datetime
     
     class Config:

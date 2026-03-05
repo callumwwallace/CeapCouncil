@@ -137,7 +137,7 @@ def run_from_args(args: argparse.Namespace) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="QuantGuild Backtesting Engine CLI",
+        description="Ceap Council Backtesting Engine CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

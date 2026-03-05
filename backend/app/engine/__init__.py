@@ -1,4 +1,4 @@
-"""QuantGuild Backtesting Engine: event-driven execution, order state machine,
+"""Ceap Council Backtesting Engine: event-driven execution, order state machine,
 spread/slippage models, margin/multi-currency portfolio, analytics, deterministic reproducibility.
 """
 

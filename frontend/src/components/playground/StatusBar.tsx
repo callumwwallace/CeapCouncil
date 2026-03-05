@@ -53,12 +53,12 @@ export default function StatusBar({ isRunning, results, lastRunTime, onExportRep
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
   return (
-    <div className="h-8 bg-gray-800 border-t border-gray-700 px-4 flex items-center justify-between text-xs">
+    <div className="h-8 bg-white border-t border-gray-200 px-4 flex items-center justify-between text-xs">
       {/* Left: Status */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-1.5">
-          <div className={`w-2 h-2 rounded-full ${isRunning ? 'bg-yellow-500 animate-pulse' : results ? 'bg-emerald-500' : 'bg-gray-500'}`} />
-          <span className="text-gray-400">
+          <div className={`w-2 h-2 rounded-full ${isRunning ? 'bg-yellow-500 animate-pulse' : results ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+          <span className="text-gray-600">
             {isRunning ? 'Running...' : results ? 'Complete' : 'Ready'}
           </span>
         </div>
@@ -77,7 +77,7 @@ export default function StatusBar({ isRunning, results, lastRunTime, onExportRep
           <div ref={exportRef}>
             <button
               onClick={handleExportToggle}
-              className="flex items-center gap-1 text-gray-400 hover:text-gray-200 transition"
+              className="flex items-center gap-1 text-gray-500 hover:text-gray-900 transition"
               title="Export Results"
             >
               <Download className="h-3 w-3" />
@@ -87,13 +87,13 @@ export default function StatusBar({ isRunning, results, lastRunTime, onExportRep
             {exportOpen && dropdownRect && typeof document !== 'undefined' && createPortal(
               <div
                 ref={dropdownRef}
-                className="fixed py-1 bg-gray-800 border border-gray-600 rounded-lg shadow-xl z-[9999] min-w-[120px]"
+                className="fixed py-1 bg-white border border-gray-200 rounded-lg shadow-xl z-[9999] min-w-[120px]"
                 style={{ top: dropdownRect.top, left: dropdownRect.left }}
               >
                 {onExportReport && (
                   <button
                     onClick={() => { onExportReport(); setExportOpen(false); }}
-                    className="w-full px-3 py-2 text-left text-xs text-gray-200 hover:bg-gray-700 hover:text-white transition"
+                    className="w-full px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition"
                   >
                     Report (HTML)
                   </button>
@@ -101,7 +101,7 @@ export default function StatusBar({ isRunning, results, lastRunTime, onExportRep
                 {onExportJSON && (
                   <button
                     onClick={() => { onExportJSON(); setExportOpen(false); }}
-                    className="w-full px-3 py-2 text-left text-xs text-gray-200 hover:bg-gray-700 hover:text-white transition"
+                    className="w-full px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition"
                   >
                     JSON
                   </button>
@@ -116,11 +116,11 @@ export default function StatusBar({ isRunning, results, lastRunTime, onExportRep
           <span>⌘↵ Run</span>
         </div>
         {onUiScaleChange && (
-          <div className="flex items-center gap-0.5 border-l border-gray-700 pl-3" title="UI scale (panels only, chart unaffected)">
+          <div className="flex items-center gap-0.5 border-l border-gray-200 pl-3" title="UI scale (panels only, chart unaffected)">
             <button
               type="button"
               onClick={() => onUiScaleChange(Math.max(0.75, uiScale - 0.1))}
-              className="p-0.5 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700"
+              className="p-0.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100"
               aria-label="Decrease UI size"
             >
               <ZoomOut className="h-3 w-3" />
@@ -129,7 +129,7 @@ export default function StatusBar({ isRunning, results, lastRunTime, onExportRep
             <button
               type="button"
               onClick={() => onUiScaleChange(Math.min(1.25, uiScale + 0.1))}
-              className="p-0.5 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700"
+              className="p-0.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100"
               aria-label="Increase UI size"
             >
               <ZoomIn className="h-3 w-3" />

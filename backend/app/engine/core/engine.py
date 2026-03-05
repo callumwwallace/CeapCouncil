@@ -24,7 +24,7 @@ from app.engine.core.events import (
 )
 from app.engine.broker.broker import BrokerSimulator, CommissionModel
 from app.engine.broker.fill_models import FillModel
-from app.engine.broker.slippage import SlippageModel, PercentageSlippage, VolumeAwareSlippage, NoSlippage
+from app.engine.broker.slippage import SlippageModel, PercentageSlippage, VolumeAwareSlippage, NoSlippage, LiquidityTier
 from app.engine.broker.spread import SpreadModel, VolatilitySpread, NoSpread
 from app.engine.data.feed import DataFeed, StreamingDataFeed, BarData
 from app.engine.portfolio.portfolio import Portfolio, MarginConfig
@@ -44,8 +44,9 @@ class EngineConfig:
     min_commission: float = 0.0
 
     # Slippage model selection
-    slippage_model: str = "percentage"   # "none", "percentage", "volume_aware", "linear"
+    slippage_model: str = "percentage"   # "none", "percentage", "volume_aware", "linear", "auto"
     slippage_pct: float = 0.1            # For percentage model
+    liquidity_tier: str | None = None    # For volume_aware/auto: "high", "mid", "low"
 
     # Spread model selection
     spread_model: str = "none"           # "none", "fixed", "fixed_bps", "volatility"
@@ -53,6 +54,7 @@ class EngineConfig:
 
     # Margin
     margin_enabled: bool = False
+    allow_shorts_without_margin: bool = False  # e.g. crypto perps
     initial_margin_pct: float = 50.0
     maintenance_margin_pct: float = 25.0
     max_leverage: float = 2.0
@@ -237,12 +239,21 @@ class Engine:
             stop_loss_pct=self.config.stop_loss_pct,
             take_profit_pct=self.config.take_profit_pct,
             pdt_enabled=self.config.pdt_enabled,
+            allow_shorts_without_margin=self.config.allow_shorts_without_margin,
         )
         self._risk_manager = RiskManager(limits=risk_limits)
 
         # Wire up callbacks
         self._broker.set_fill_callback(self._on_fill)
         self._broker.set_order_submit_callback(self._on_order_submit)
+
+        def _pre_submit_check(order):
+            price = self._portfolio._current_prices.get(order.symbol, 1.0)
+            if price <= 0:
+                price = 1.0
+            return self._risk_manager.check_order(order, self._portfolio, price)
+
+        self._broker.set_pre_submit_check(_pre_submit_check)
 
         # Event log for audit
         self._event_log: list[dict] = []
@@ -365,8 +376,10 @@ class Engine:
                 )
                 self._strategy._record_bar(b)
 
-            # Execute strategy logic (skip during warm-up)
-            if not self._risk_manager.is_halted and self._strategy._check_warmup(bar_index):
+            # Execute strategy logic (skip during warm-up).
+            # Run on_data even when halted so the strategy can submit closing orders;
+            # pre_submit_check will reject new opens but allow closing/reducing positions.
+            if self._strategy._check_warmup(bar_index):
                 self._strategy.on_data(primary_bar)
 
             # Check scheduled events
@@ -489,8 +502,14 @@ class Engine:
         cfg = self.config
         if cfg.slippage_model == "none":
             return NoSlippage()
-        elif cfg.slippage_model == "volume_aware":
-            return VolumeAwareSlippage()
+        elif cfg.slippage_model in ("volume_aware", "auto"):
+            tier = LiquidityTier.HIGH
+            if cfg.liquidity_tier:
+                try:
+                    tier = LiquidityTier(cfg.liquidity_tier)
+                except ValueError:
+                    tier = LiquidityTier.HIGH
+            return VolumeAwareSlippage(tier=tier)
         elif cfg.slippage_model == "linear":
             from app.engine.broker.slippage import LinearSlippage
             return LinearSlippage()

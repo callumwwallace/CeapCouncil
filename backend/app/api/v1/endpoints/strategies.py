@@ -11,7 +11,7 @@ from app.api.deps import get_current_active_user
 from app.models.user import User
 from app.models.strategy import Strategy, StrategyVersion
 import difflib
-from app.schemas.strategy import StrategyCreate, StrategyUpdate, StrategyResponse, StrategyVersionResponse
+from app.schemas.strategy import StrategyCreate, StrategyUpdate, StrategyResponse
 
 router = APIRouter()
 
@@ -229,18 +229,8 @@ async def update_strategy(
     if strategy.author_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
     
-    # Save a version snapshot before updating (if code or params changed)
+    # Save = update working copy only. No version created. Use POST /versions to commit.
     update_data = strategy_update.model_dump(exclude_unset=True)
-    if "code" in update_data or "parameters" in update_data:
-        version = StrategyVersion(
-            strategy_id=strategy.id,
-            version=strategy.version,
-            code=strategy.code,
-            parameters=strategy.parameters,
-        )
-        db.add(version)
-        strategy.version = (strategy.version or 1) + 1
-    
     for field, value in update_data.items():
         setattr(strategy, field, value)
     
@@ -268,28 +258,6 @@ async def delete_strategy(
     await db.delete(strategy)
 
 
-@router.get("/{strategy_id}/versions", response_model=list[StrategyVersionResponse])
-async def list_strategy_versions(
-    strategy_id: int,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """List all version snapshots for a strategy."""
-    result = await db.execute(select(Strategy).where(Strategy.id == strategy_id))
-    strategy = result.scalar_one_or_none()
-    if not strategy:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strategy not found")
-    if strategy.author_id != current_user.id and not strategy.is_public:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    result = await db.execute(
-        select(StrategyVersion)
-        .where(StrategyVersion.strategy_id == strategy_id)
-        .order_by(StrategyVersion.version.desc())
-    )
-    return result.scalars().all()
-
-
 @router.post("/{strategy_id}/versions/{version}/restore", response_model=StrategyResponse)
 async def restore_strategy_version(
     strategy_id: int,
@@ -313,19 +281,9 @@ async def restore_strategy_version(
     if not ver:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Version {version} not found")
     
-    # Save current state as a version before restoring
-    snapshot = StrategyVersion(
-        strategy_id=strategy.id,
-        version=strategy.version,
-        code=strategy.code,
-        parameters=strategy.parameters,
-    )
-    db.add(snapshot)
-    
-    # Restore
+    # Restore working copy to this version. No new commit created.
     strategy.code = ver.code
     strategy.parameters = ver.parameters
-    strategy.version = (strategy.version or 1) + 1
     
     await db.flush()
     await db.refresh(strategy)
@@ -376,7 +334,7 @@ class CreateVersionRequest(BaseModel):
     message: str | None = None
 
 
-@router.get("/{strategy_id}/versions")
+@router.get("/{strategy_id}/versions")  # Paginated; used by playground
 async def list_versions(
     strategy_id: int,
     skip: int = Query(0, ge=0),
@@ -446,6 +404,8 @@ async def create_version(
         raise HTTPException(status_code=403, detail="Access denied")
 
     commit_message = (body.message or "").strip()[:500] if body else None
+    if not commit_message:
+        raise HTTPException(status_code=400, detail="Commit message is required")
 
     # Check if code changed from last version
     result = await db.execute(
@@ -470,35 +430,6 @@ async def create_version(
     strategy.version = new_version_num
     await db.commit()
     return {"version": new_version_num, "message": "Version created"}
-
-
-@router.post("/{strategy_id}/versions/{version}/restore")
-async def restore_version(
-    strategy_id: int,
-    version: int,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Restore strategy code from a specific version."""
-    result = await db.execute(select(Strategy).where(Strategy.id == strategy_id))
-    strategy = result.scalar_one_or_none()
-    if not strategy:
-        raise HTTPException(status_code=404, detail="Strategy not found")
-    if strategy.author_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    result = await db.execute(
-        select(StrategyVersion)
-        .where(StrategyVersion.strategy_id == strategy_id, StrategyVersion.version == version)
-    )
-    sv = result.scalar_one_or_none()
-    if not sv:
-        raise HTTPException(status_code=404, detail="Version not found")
-
-    strategy.code = sv.code
-    strategy.parameters = sv.parameters
-    await db.commit()
-    return {"message": f"Restored to version {version}", "code": sv.code}
 
 
 @router.delete("/{strategy_id}/versions/{version}", status_code=status.HTTP_204_NO_CONTENT)

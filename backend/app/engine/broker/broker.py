@@ -64,6 +64,8 @@ class BrokerSimulator:
         self._on_fill: Callable[[FillEvent], None] | None = None
         # Order submit callback (set by engine for audit logging)
         self._on_order_submit: Callable[[Order, datetime], None] | None = None
+        # Pre-submit check (order) -> (allowed, reason). If returns (False, _), order is rejected.
+        self._pre_submit_check: Callable[[Order], tuple[bool, str]] | None = None
 
     def set_fill_callback(self, callback: Callable[[FillEvent], None]) -> None:
         self._on_fill = callback
@@ -71,9 +73,22 @@ class BrokerSimulator:
     def set_order_submit_callback(self, callback: Callable[[Order, datetime], None]) -> None:
         self._on_order_submit = callback
 
+    def set_pre_submit_check(self, callback: Callable[[Order], tuple[bool, str]] | None) -> None:
+        """Set optional pre-submit validator. If it returns (False, reason), order is rejected."""
+        self._pre_submit_check = callback
+
     def submit_order(self, order: Order, timestamp: datetime) -> Order:
-        """Submit a new order. Returns the order with SUBMITTED status."""
+        """Submit a new order. Returns the order with SUBMITTED or REJECTED status."""
         order.created_at = timestamp
+        if self._pre_submit_check:
+            allowed, reason = self._pre_submit_check(order)
+            if not allowed:
+                order.reject(reason)
+                self._all_orders.append(order)
+                self._order_map[order.order_id] = order
+                if self._on_order_submit:
+                    self._on_order_submit(order, timestamp)
+                return order
         order.submit(timestamp)
         self._pending_orders.append(order)
         self._all_orders.append(order)

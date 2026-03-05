@@ -95,8 +95,8 @@ def run_backtest(config_path: str, output_path: str | None = None) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="quantguild-engine",
-        description="QuantGuild Backtesting Engine CLI",
+        prog="ceapcouncil-engine",
+        description="Ceap Council Backtesting Engine CLI",
     )
     subparsers = parser.add_subparsers(dest="command")
 

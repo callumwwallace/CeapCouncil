@@ -1,8 +1,8 @@
 # ============================================================================
-# QuantGuild Development Makefile
+# Ceap Council Development Makefile
 # ============================================================================
 # This Makefile provides shortcuts for common development tasks.
-# Run commands from the project root: /Users/callumwallace/Documents/GitHub/QuantGuild
+# Run commands from the project root.
 #
 # Quick Start:
 #   1. make up        - Start Docker services (PostgreSQL, Redis, MinIO)

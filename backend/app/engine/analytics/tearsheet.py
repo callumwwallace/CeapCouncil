@@ -71,7 +71,7 @@ canvas {{ width: 100%; height: 200px; }}
 <body>
 <div class="container">
 <h1>{title}</h1>
-<div class="subtitle">Generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')} &middot; QuantGuild</div>
+<div class="subtitle">Generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')} &middot; Ceap Council</div>
 
 <h2>Performance Summary</h2>
 <div class="metrics-grid">
@@ -104,7 +104,7 @@ canvas {{ width: 100%; height: 200px; }}
 <h2>Recent Trades</h2>
 {_format_trade_table(results.get("trades", [])[:20])}
 
-<div class="footer">QuantGuild Backtesting Platform &middot; {datetime.utcnow().year}</div>
+<div class="footer">Ceap Council Backtesting Platform &middot; {datetime.utcnow().year}</div>
 </div>
 
 <script>

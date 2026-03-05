@@ -111,6 +111,8 @@ class TestEngineIntegration:
         assert result.final_value > 0
         assert len(result.equity_curve) > 200
         assert result.metrics.total_trades >= 0
+        # When SMA crossover closes a position, trades must be recorded
+        assert len(result.trades) == result.metrics.total_trades
 
     def test_results_dict_matches_frontend_contract(self):
         config = EngineConfig(initial_capital=50000)
@@ -159,6 +161,8 @@ class MyStrategy(StrategyBase):
         result = engine.run()
         assert result.final_value > 0
         assert len(result.orders) > 0
+        # Strategy buys at bar 5, closes at bar 50 - must record completed trades
+        assert len(result.trades) >= 1, "Expected trades when position is closed"
 
     def test_with_spread_and_slippage(self):
         config = EngineConfig(
@@ -187,6 +191,41 @@ class MyStrategy(StrategyBase):
 
         result = engine.run()
         assert result.final_value > 0
+
+    def test_short_rejected_when_margin_disabled(self):
+        """Short orders must be rejected when margin is disabled and allow_shorts_without_margin is False."""
+
+        class ShortOnFirstBar(StrategyBase):
+            def on_data(self, bar):
+                if self.bar_index == 50 and self.is_flat(bar.symbol):
+                    self.market_order(bar.symbol, -10)  # Open short
+
+        config = EngineConfig(initial_capital=10000, margin_enabled=False, allow_shorts_without_margin=False)
+        engine = Engine(config)
+        engine.add_data("AAPL", _generate_price_data(days=100))
+        engine.set_strategy(ShortOnFirstBar())
+        result = engine.run()
+        # No short position should exist - order was rejected
+        assert result.final_value == 10000  # No trades executed
+        assert result.total_return_pct == 0
+
+    def test_short_allowed_when_allow_shorts_without_margin(self):
+        """Short orders allowed when margin disabled but allow_shorts_without_margin=True (e.g. crypto)."""
+
+        class ShortOnFirstBar(StrategyBase):
+            def on_data(self, bar):
+                if self.bar_index == 50 and self.is_flat(bar.symbol):
+                    self.market_order(bar.symbol, -10)  # Open short
+                elif self.bar_index == 60 and self.is_short(bar.symbol):
+                    self.close_position(bar.symbol)
+
+        config = EngineConfig(initial_capital=10000, margin_enabled=False, allow_shorts_without_margin=True)
+        engine = Engine(config)
+        engine.add_data("AAPL", _generate_price_data(days=100))
+        engine.set_strategy(ShortOnFirstBar())
+        result = engine.run()
+        assert len(result.trades) >= 1
+        assert result.final_value != 10000  # Trades executed
 
     def test_risk_manager_halts_on_drawdown(self):
         """Strategy that always loses should trigger risk halt."""
@@ -337,6 +376,10 @@ class TestExchangeCalendar:
 
     def test_detect_futures(self):
         assert ExchangeCalendar.detect_market_type("ES=F") == MarketType.US_FUTURES
+
+    def test_detect_forex(self):
+        assert ExchangeCalendar.detect_market_type("EURUSD=X") == MarketType.FOREX
+        assert ExchangeCalendar.detect_market_type("GBPUSD=X") == MarketType.FOREX
 
 
 class TestPortfolioConstruction:

@@ -67,6 +67,12 @@ class FillModel:
         if not handler:
             return FillResult()
 
+        # No fill when bar has zero volume (market/MOO/MOC need liquidity)
+        if bar.volume <= 0 and order.order_type in (
+            OrderType.MARKET, OrderType.MARKET_ON_OPEN, OrderType.MARKET_ON_CLOSE
+        ):
+            return FillResult()
+
         result = handler(order, bar, avg_volume)
 
         # Apply volume-based partial fill constraint

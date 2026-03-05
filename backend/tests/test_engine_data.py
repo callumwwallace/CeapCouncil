@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from app.engine.data.storage import DataStore, CachedDataStore, TickData, DatasetVersion
 from app.engine.data.feed import DataFeed, BarData
-from app.engine.data.calendar import ExchangeCalendar, MarketType
+from app.engine.data.calendar import ExchangeCalendar, MarketType, filter_to_trading_days
 
 
 def _make_df(rows=50, start_price=100.0, seed=42):
@@ -179,3 +179,21 @@ class TestExchangeCalendarExtended:
         close = cal.session_close(dt)
         assert close.hour == 16
         assert close.minute == 0
+
+    def test_filter_to_trading_days_equity_excludes_weekends(self):
+        """Equity data: weekend bars should be filtered out."""
+        from datetime import date
+        # Include Sat Jan 4, Sun Jan 5, Mon Jan 6
+        dates = pd.DatetimeIndex([date(2025, 1, 4), date(2025, 1, 5), date(2025, 1, 6)])
+        df = pd.DataFrame({"Open": [100, 101, 102], "High": [101, 102, 103], "Low": [99, 100, 101], "Close": [100, 101, 102], "Volume": [1e6, 1e6, 1e6]}, index=dates)
+        out = filter_to_trading_days(df, "AAPL")
+        assert len(out) == 1
+        assert out.index[0].date() == date(2025, 1, 6)
+
+    def test_filter_to_trading_days_crypto_unchanged(self):
+        """Crypto: all bars kept (24/7) including weekends."""
+        from datetime import date
+        dates = pd.DatetimeIndex([date(2025, 1, 4), date(2025, 1, 5), date(2025, 1, 6)])  # Sat, Sun, Mon
+        df = pd.DataFrame({"Open": [100, 101, 102], "High": [101, 102, 103], "Low": [99, 100, 101], "Close": [100, 101, 102], "Volume": [1e6, 1e6, 1e6]}, index=dates)
+        out = filter_to_trading_days(df, "ETH-USD")
+        assert len(out) == 3

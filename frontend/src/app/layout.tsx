@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "QuantGuild - Backtest Your Trading Strategies",
-  description: "QuantGuild: build, backtest, and share trading strategies.",
+  title: "Ceap Council - Build, Backtest & Compete",
+  description: "Write Python strategies in the Playground, run backtests on real data, compete on the Leaderboard, and discuss in the Community.",
 };
 
 export default function RootLayout({
@@ -34,6 +34,15 @@ export default function RootLayout({
             <Navbar />
             <main className="flex-1 overflow-auto min-h-0">{children}</main>
           </div>
+          <div
+            id="portal-root"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 2147483647,
+              pointerEvents: 'none',
+            }}
+          />
         </Providers>
       </body>
     </html>

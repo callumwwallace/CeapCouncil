@@ -60,7 +60,7 @@ export default function RegisterPage() {
           <div className="w-10 h-10 bg-emerald-600 rounded-lg flex items-center justify-center">
             <BarChart3 className="h-6 w-6 text-white" />
           </div>
-          <span className="text-2xl font-bold text-gray-900">QuantGuild</span>
+          <span className="text-2xl font-bold text-gray-900">Ceap Council</span>
         </Link>
         <h2 className="mt-6 text-center text-3xl font-bold text-gray-900">
           Create your account
@@ -97,7 +97,7 @@ export default function RegisterPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-emerald-500 focus:border-emerald-500 sm:text-sm"
-                  placeholder="name@quantguild.com"
+                  placeholder="name@ceapcouncil.com"
                 />
               </div>
             </div>

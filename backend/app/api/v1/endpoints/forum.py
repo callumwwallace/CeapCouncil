@@ -1,0 +1,427 @@
+"""Forum API: topics, threads, posts."""
+
+import re
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, desc, or_, and_
+
+from app.core.database import get_db
+from app.api.deps import get_current_active_user, get_current_user_optional
+from app.models.user import User
+from app.models.forum import ForumTopic, ForumThread, ForumPost
+from app.models.notification import Notification
+from app.websocket.manager import manager
+from app.schemas.forum import (
+    ForumTopicResponse,
+    ForumThreadSummary,
+    ForumThreadCreate,
+    ForumThreadDetail,
+    ForumPostResponse,
+    ForumPostCreate,
+    ForumPostUpdate,
+    ForumSearchResult,
+)
+
+router = APIRouter()
+
+MENTION_RE = re.compile(r"@([a-zA-Z0-9_]+)")
+
+
+async def create_mention_notifications(
+    db,
+    content: str,
+    actor_id: int,
+    actor_username: str,
+    post_id: int,
+    topic_slug: str,
+    thread_id: int,
+):
+    """Parse @mentions and create notifications. Dedupes by username."""
+    usernames = set(MENTION_RE.findall(content))
+    usernames.discard(actor_username)
+    if not usernames:
+        return
+    link = f"/community/{topic_slug}/{thread_id}"
+    for username in usernames:
+        target = await db.scalar(select(User).where(User.username.ilike(username)))
+        if target and target.id != actor_id and getattr(target, "notify_on_mention", True):
+            n = Notification(
+                user_id=target.id,
+                actor_id=actor_id,
+                type="mention",
+                message=f"{actor_username} mentioned you in a post",
+                link=link,
+                post_id=post_id,
+            )
+            db.add(n)
+            await db.flush()
+            await manager.send_personal(target.id, {
+                "type": "notification",
+                "id": n.id,
+                "message": n.message,
+                "link": link,
+                "actor_username": actor_username,
+                "created_at": n.created_at.isoformat() if n.created_at else "",
+            })
+
+
+@router.get("/search", response_model=list[ForumSearchResult])
+async def search_threads(
+    q: str | None = Query(None, description="Keywords to search in thread title and post content"),
+    sections: str | None = Query(None, description="Comma-separated sections: official,community,competitions,education,support"),
+    date_from: str | None = Query(None, description="Start date (YYYY-MM-DD)"),
+    date_to: str | None = Query(None, description="End date (YYYY-MM-DD)"),
+    posted_by: str | None = Query(None, description="Filter by author username"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Advanced search for forum threads. All filters are optional."""
+    base = (
+        select(ForumThread, ForumTopic, User.username, func.count(ForumPost.id).label("post_count"))
+        .join(ForumTopic, ForumThread.topic_id == ForumTopic.id)
+        .join(User, ForumThread.author_id == User.id)
+        .outerjoin(ForumPost, ForumPost.thread_id == ForumThread.id)
+        .group_by(ForumThread.id, ForumTopic.id, User.username)
+    )
+
+    filters = []
+
+    if sections:
+        section_list = [s.strip().lower() for s in sections.split(",") if s.strip()]
+        if section_list:
+            filters.append(ForumTopic.section.in_(section_list))
+
+    if date_from:
+        try:
+            dt = datetime.strptime(date_from, "%Y-%m-%d")
+            filters.append(ForumThread.created_at >= dt)
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            dt = datetime.strptime(date_to, "%Y-%m-%d")
+            dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+            filters.append(ForumThread.created_at <= dt)
+        except ValueError:
+            pass
+
+    if posted_by and posted_by.strip():
+        match = f"%{posted_by.strip()}%"
+        subq_thread_author = (
+            select(ForumThread.id)
+            .join(User, ForumThread.author_id == User.id)
+            .where(User.username.ilike(match))
+        )
+        subq_post_author = (
+            select(ForumPost.thread_id)
+            .join(User, ForumPost.author_id == User.id)
+            .where(User.username.ilike(match))
+        )
+        filters.append(or_(ForumThread.id.in_(subq_thread_author), ForumThread.id.in_(subq_post_author)))
+
+    if q and q.strip():
+        kw = f"%{q.strip()}%"
+        subq_title = select(ForumThread.id).where(ForumThread.title.ilike(kw))
+        subq_content = (
+            select(ForumPost.thread_id).where(ForumPost.content.ilike(kw))
+        )
+        filters.append(or_(ForumThread.id.in_(subq_title), ForumThread.id.in_(subq_content)))
+
+    for f in filters:
+        base = base.where(f)
+
+    base = base.order_by(desc(ForumThread.updated_at)).offset(skip).limit(limit)
+    result = await db.execute(base)
+    rows = result.all()
+
+    return [
+        ForumSearchResult(
+            id=thr.id,
+            topic_id=thr.topic_id,
+            topic_slug=topic.slug,
+            topic_name=topic.name,
+            section=topic.section,
+            author_id=thr.author_id,
+            author_username=uname,
+            title=thr.title,
+            post_count=pc or 0,
+            created_at=thr.created_at,
+            updated_at=thr.updated_at,
+        )
+        for thr, topic, uname, pc in rows
+    ]
+
+
+@router.get("/topics", response_model=list[ForumTopicResponse])
+async def list_topics(db: AsyncSession = Depends(get_db)):
+    """List all forum topics with thread/post counts and latest thread."""
+    result = await db.execute(
+        select(ForumTopic).order_by(ForumTopic.sort_order, ForumTopic.id)
+    )
+    topics = result.scalars().all()
+
+    out = []
+    for t in topics:
+        thread_count = await db.scalar(
+            select(func.count(ForumThread.id)).where(ForumThread.topic_id == t.id)
+        )
+        post_count = await db.scalar(
+            select(func.count(ForumPost.id))
+            .join(ForumThread, ForumPost.thread_id == ForumThread.id)
+            .where(ForumThread.topic_id == t.id)
+        )
+        latest = await db.execute(
+            select(ForumThread, User.username)
+            .join(User, ForumThread.author_id == User.id)
+            .where(ForumThread.topic_id == t.id)
+            .order_by(desc(ForumThread.updated_at))
+            .limit(1)
+        )
+        row = latest.one_or_none()
+        latest_thread = None
+        if row:
+            thr, uname = row
+            post_cnt = await db.scalar(select(func.count(ForumPost.id)).where(ForumPost.thread_id == thr.id))
+            latest_thread = {
+                "id": thr.id,
+                "title": thr.title,
+                "author_username": uname,
+                "updated_at": thr.updated_at.isoformat() if thr.updated_at else None,
+                "post_count": post_cnt or 0,
+            }
+        out.append(ForumTopicResponse(
+            id=t.id,
+            slug=t.slug,
+            name=t.name,
+            description=t.description,
+            section=t.section,
+            sort_order=t.sort_order,
+            thread_count=thread_count or 0,
+            post_count=post_count or 0,
+            latest_thread=latest_thread,
+        ))
+    return out
+
+
+@router.get("/topics/{slug}/threads", response_model=list[ForumThreadSummary])
+async def list_threads(
+    slug: str,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """List threads in a topic, newest first."""
+    topic = await db.scalar(select(ForumTopic).where(ForumTopic.slug == slug))
+    if not topic:
+        raise HTTPException(404, "Topic not found")
+
+    result = await db.execute(
+        select(ForumThread, User.username, func.count(ForumPost.id).label("post_count"))
+        .join(User, ForumThread.author_id == User.id)
+        .outerjoin(ForumPost, ForumPost.thread_id == ForumThread.id)
+        .where(ForumThread.topic_id == topic.id)
+        .group_by(ForumThread.id, User.username)
+        .order_by(desc(ForumThread.updated_at))
+        .offset(skip)
+        .limit(limit)
+    )
+    rows = result.all()
+
+    return [
+        ForumThreadSummary(
+            id=thr.id,
+            topic_id=thr.topic_id,
+            author_id=thr.author_id,
+            author_username=uname,
+            title=thr.title,
+            post_count=pc or 0,
+            created_at=thr.created_at,
+            updated_at=thr.updated_at,
+        )
+        for thr, uname, pc in rows
+    ]
+
+
+@router.post("/topics/{slug}/threads", response_model=ForumThreadSummary, status_code=201)
+async def create_thread(
+    slug: str,
+    data: ForumThreadCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new thread (and its first post as the body)."""
+    topic = await db.scalar(select(ForumTopic).where(ForumTopic.slug == slug))
+    if not topic:
+        raise HTTPException(404, "Topic not found")
+
+    thread = ForumThread(
+        topic_id=topic.id,
+        author_id=current_user.id,
+        title=data.title,
+    )
+    db.add(thread)
+    await db.flush()
+
+    post = ForumPost(
+        thread_id=thread.id,
+        author_id=current_user.id,
+        content=data.body,
+    )
+    db.add(post)
+    await db.flush()
+    await db.refresh(post)
+    await db.refresh(thread)
+    await create_mention_notifications(
+        db, data.body, current_user.id, current_user.username,
+        post.id, topic.slug, thread.id,
+    )
+
+    return ForumThreadSummary(
+        id=thread.id,
+        topic_id=thread.topic_id,
+        author_id=thread.author_id,
+        author_username=current_user.username,
+        title=thread.title,
+        post_count=1,
+        created_at=thread.created_at,
+        updated_at=thread.updated_at,
+    )
+
+
+@router.get("/threads/{thread_id}", response_model=ForumThreadDetail)
+async def get_thread(
+    thread_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get thread with all posts."""
+    result = await db.execute(
+        select(ForumThread, User.username)
+        .join(User, ForumThread.author_id == User.id)
+        .where(ForumThread.id == thread_id)
+    )
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(404, "Thread not found")
+    thread, author_username = row
+
+    posts_result = await db.execute(
+        select(ForumPost, User.username)
+        .join(User, ForumPost.author_id == User.id)
+        .where(ForumPost.thread_id == thread_id)
+        .order_by(ForumPost.created_at)
+    )
+    posts = [
+        ForumPostResponse(
+            id=p.id,
+            thread_id=p.thread_id,
+            author_id=p.author_id,
+            author_username=uname,
+            content=p.content,
+            created_at=p.created_at,
+            updated_at=p.updated_at,
+        )
+        for p, uname in posts_result.all()
+    ]
+
+    return ForumThreadDetail(
+        id=thread.id,
+        topic_id=thread.topic_id,
+        author_id=thread.author_id,
+        author_username=author_username,
+        title=thread.title,
+        post_count=len(posts),
+        created_at=thread.created_at,
+        updated_at=thread.updated_at,
+        posts=posts,
+    )
+
+
+@router.post("/threads/{thread_id}/posts", response_model=ForumPostResponse, status_code=201)
+async def create_post(
+    thread_id: int,
+    data: ForumPostCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a reply to a thread."""
+    thread = await db.scalar(select(ForumThread).where(ForumThread.id == thread_id))
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+
+    post = ForumPost(
+        thread_id=thread_id,
+        author_id=current_user.id,
+        content=data.content,
+    )
+    db.add(post)
+    await db.flush()
+    await db.refresh(post)
+    topic = await db.scalar(select(ForumTopic).where(ForumTopic.id == thread.topic_id))
+    if topic:
+        await create_mention_notifications(
+            db, data.content, current_user.id, current_user.username,
+            post.id, topic.slug, thread_id,
+        )
+
+    return ForumPostResponse(
+        id=post.id,
+        thread_id=post.thread_id,
+        author_id=post.author_id,
+        author_username=current_user.username,
+        content=post.content,
+        created_at=post.created_at,
+        updated_at=post.updated_at,
+    )
+
+
+@router.patch("/posts/{post_id}", response_model=ForumPostResponse)
+async def update_post(
+    post_id: int,
+    data: ForumPostUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit own post."""
+    post = await db.scalar(select(ForumPost).where(ForumPost.id == post_id))
+    if not post:
+        raise HTTPException(404, "Post not found")
+    if post.author_id != current_user.id:
+        raise HTTPException(403, "Not authorized")
+    post.content = data.content
+    await db.flush()
+    await db.refresh(post)
+    return ForumPostResponse(
+        id=post.id,
+        thread_id=post.thread_id,
+        author_id=post.author_id,
+        author_username=current_user.username,
+        content=post.content,
+        created_at=post.created_at,
+        updated_at=post.updated_at,
+    )
+
+
+@router.delete("/posts/{post_id}", status_code=204)
+async def delete_post(
+    post_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete own reply. The main post cannot be deleted."""
+    post = await db.scalar(select(ForumPost).where(ForumPost.id == post_id))
+    if not post:
+        raise HTTPException(404, "Post not found")
+    if post.author_id != current_user.id:
+        raise HTTPException(403, "Not authorized")
+
+    first_post_id = await db.scalar(
+        select(func.min(ForumPost.id)).where(ForumPost.thread_id == post.thread_id)
+    )
+    if post.id == first_post_id:
+        raise HTTPException(403, "Cannot delete the main post")
+
+    await db.delete(post)
+    await db.flush()

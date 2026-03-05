@@ -18,6 +18,9 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
+    notify_on_mention: Mapped[bool] = mapped_column(Boolean, default=True)
+    email_on_mention: Mapped[bool] = mapped_column(Boolean, default=False)
+    email_marketing: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -26,3 +29,11 @@ class User(Base):
     backtests: Mapped[list["Backtest"]] = relationship("Backtest", back_populates="user")
     votes: Mapped[list["Vote"]] = relationship("Vote", back_populates="user")
     comments: Mapped[list["Comment"]] = relationship("Comment", back_populates="user")
+    badges: Mapped[list["Badge"]] = relationship("Badge", back_populates="user")
+    blog_posts: Mapped[list["BlogPost"]] = relationship("BlogPost", back_populates="author")
+    forum_threads: Mapped[list["ForumThread"]] = relationship(
+        "ForumThread", back_populates="author", cascade="all, delete-orphan"
+    )
+    forum_posts: Mapped[list["ForumPost"]] = relationship(
+        "ForumPost", back_populates="author", cascade="all, delete-orphan"
+    )

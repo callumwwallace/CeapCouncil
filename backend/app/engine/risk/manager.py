@@ -34,6 +34,9 @@ class RiskLimits:
     pdt_enabled: bool = False
     pdt_threshold: float = 25000.0   # PDT limit threshold
 
+    # Allow short positions when margin is disabled (e.g. crypto perps, some brokers)
+    allow_shorts_without_margin: bool = False
+
 
 @dataclass
 class DayTradeRecord:
@@ -73,21 +76,41 @@ class RiskManager:
     def check_order(self, order: Order, portfolio: Portfolio, current_price: float) -> tuple[bool, str]:
         """Pre-trade risk check. Returns (allowed, reason)."""
         if self._trading_halted:
+            # Allow orders that close or reduce positions (emergency exit / liquidation)
+            current_qty = portfolio.get_position_quantity(order.symbol)
+            is_closing = (order.is_buy and current_qty < 0) or (not order.is_buy and current_qty > 0)
+            if is_closing:
+                return True, ""
             return False, "Trading halted due to risk limit breach"
 
         equity = portfolio.equity
         if equity <= 0:
             return False, "Portfolio equity is zero or negative"
 
-        # Max order value check
+        # Closing/reducing orders: allow regardless of order size (we're reducing risk)
+        current_qty = portfolio.get_position_quantity(order.symbol)
+        is_closing = (order.is_buy and current_qty < 0) or (not order.is_buy and current_qty > 0)
+        if is_closing:
+            return True, ""
+
+        # Max order value check (only for opening/increasing orders)
         order_value = order.quantity * current_price
         order_pct = order_value / equity * 100
         if order_pct > self.limits.max_order_value_pct:
             return False, f"Order value ({order_pct:.1f}%) exceeds max ({self.limits.max_order_value_pct}%)"
 
-        # Max position check
+        # Short positions require margin unless allow_shorts_without_margin (e.g. crypto)
         current_qty = portfolio.get_position_quantity(order.symbol)
         new_qty = current_qty + (order.quantity if order.is_buy else -order.quantity)
+        if (
+            not portfolio.margin.enabled
+            and not self.limits.allow_shorts_without_margin
+            and not order.is_buy
+            and new_qty < -1e-9
+        ):
+            return False, "Margin must be enabled to open or increase short positions"
+
+        # Max position check
         new_value = abs(new_qty) * current_price
         position_pct = new_value / equity * 100
         if position_pct > self.limits.max_position_pct:

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   Play, 
   Save, 
@@ -19,7 +20,6 @@ import {
   FileCode,
   Percent,
   Scale,
-  PanelLeftClose,
   PanelRightClose,
   Copy,
   Pencil,
@@ -28,16 +28,38 @@ import {
   Plus,
   GitBranch,
   X,
+  AlertCircle,
+  Download,
+  Settings,
+  Shield,
+  LayoutDashboard,
+  ArrowLeftRight,
+  ListOrdered,
+  LineChart as LineChartIcon,
+  Sliders,
+  Shuffle,
+  BarChart2,
+  GitCompare,
+  Filter,
 } from 'lucide-react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useAuthStore } from '@/stores/authStore';
+import { useThemeStore } from '@/stores/themeStore';
 import CodeEditor from '@/components/playground/CodeEditor';
-import AssetChart, { TradeMarker } from '@/components/playground/AssetChart';
+import { TradeMarker } from '@/components/playground/AssetChart';
 import ErrorBoundary from '@/components/ErrorBoundary';
+
+const AssetChart = dynamic(() => import('@/components/playground/AssetChart').then((m) => m.default), {
+  ssr: false,
+  loading: () => <div className="h-full flex items-center justify-center text-gray-500 text-sm">Loading chart…</div>,
+});
 import TradeLog from '@/components/playground/TradeLog';
 import StatusBar from '@/components/playground/StatusBar';
 import AssetSelector from '@/components/playground/AssetSelector';
 import ConfigSelect from '@/components/playground/ConfigSelect';
+import ChartHeader from '@/components/playground/ChartHeader';
+import ResultsBar from '@/components/playground/ResultsBar';
 import api from '@/lib/api';
 import type { BacktestTrade, EquityCurvePoint, DrawdownPoint, Strategy } from '@/types';
 import {
@@ -55,12 +77,53 @@ import {
   Line,
 } from 'recharts';
 
+function applyDatePreset(preset: '1M' | '3M' | '6M' | '1Y' | '5Y'): { startDate: string; endDate: string } {
+  const end = new Date();
+  const start = new Date(end);
+  const months = { '1M': 1, '3M': 3, '6M': 6, '1Y': 12, '5Y': 60 };
+  start.setMonth(start.getMonth() - months[preset]);
+  return {
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+  };
+}
+
 function formatRelativeTime(ts: number): string {
   const sec = Math.floor((Date.now() - ts) / 1000);
   if (sec < 60) return 'just now';
   if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
   if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
   return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatCommitTime(iso: string | null): string {
+  if (!iso) return '';
+  const ts = new Date(iso).getTime();
+  const sec = Math.floor((Date.now() - ts) / 1000);
+  if (sec < 60) return 'just now';
+  if (sec < 3600) return `${Math.floor(sec / 60)} minutes ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)} hours ago`;
+  const days = Math.floor(sec / 86400);
+  if (days === 1) return '1 day ago';
+  if (days < 7) return `${days} days ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks === 1) return '1 week ago';
+  if (weeks < 4) return `${weeks} weeks ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+/** Extract user-friendly error message from API/axios errors (handles FastAPI detail format) */
+function extractApiError(err: unknown, fallback = 'Something went wrong'): string {
+  if (err instanceof Error && !('response' in err)) return err.message;
+  const ax = err as { response?: { data?: { detail?: string | Array<{ loc?: unknown[]; msg: string }> } } };
+  const d = ax.response?.data?.detail;
+  if (typeof d === 'string') return d;
+  if (Array.isArray(d) && d.length > 0) {
+    const first = d[0];
+    const msg = typeof first === 'object' && first !== null && 'msg' in first ? first.msg : String(first);
+    return msg;
+  }
+  return fallback;
 }
 
 // Strategy Templates
@@ -106,6 +169,45 @@ class MyStrategy(StrategyBase):
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if fast_prev >= slow_prev and fast_now < slow_now:
+                self.close_position(bar.symbol)
+`,
+  },
+  ma_50_200: {
+    name: 'MA 50/200 Crossover',
+    description: 'Long/short on 50/200 MA crosses (enable Margin in Engine Settings)',
+    code: `# MA 50/200 Crossover (Reddit strategy)
+
+class MyStrategy(StrategyBase):
+    def on_init(self):
+        self.short_period = 50
+        self.long_period = 200
+
+    def on_data(self, bar):
+        history = self.history(bar.symbol, self.long_period + 1)
+        if len(history) < self.long_period + 1:
+            return
+
+        closes = [b.close for b in history]
+        short_ma = sum(closes[-self.short_period:]) / self.short_period
+        long_ma = sum(closes[-self.long_period:]) / self.long_period
+        prev_short = sum(closes[-self.short_period - 1:-1]) / self.short_period
+        prev_long = sum(closes[-self.long_period - 1:-1]) / self.long_period
+
+        cross_up = prev_short <= prev_long and short_ma > long_ma
+        cross_down = prev_short >= prev_long and short_ma < long_ma
+
+        if self.is_flat(bar.symbol):
+            if cross_up:
+                qty = int(self.portfolio.cash * 0.95 / bar.close)
+                if qty > 0:
+                    self.market_order(bar.symbol, qty)
+            elif cross_down:
+                qty = int(self.portfolio.cash * 0.95 / bar.close)
+                if qty > 0:
+                    self.market_order(bar.symbol, -qty)
+        elif self.is_long(bar.symbol) and cross_down:
+            self.close_position(bar.symbol)
+        elif self.is_short(bar.symbol) and cross_up:
                 self.close_position(bar.symbol)
 `,
   },
@@ -802,6 +904,7 @@ const STRATEGY_PARAMS: Record<StrategyTemplateKey, { key: string; label: string;
     { key: 'fast', label: 'Fast MA Period', type: 'number', default: 10, min: 2, max: 200, step: 1 },
     { key: 'slow', label: 'Slow MA Period', type: 'number', default: 30, min: 5, max: 500, step: 1 },
   ],
+  ma_50_200: [],
   mean_reversion: [
     { key: 'period', label: 'BB Period', type: 'number', default: 20, min: 5, max: 100, step: 1 },
     { key: 'devfactor', label: 'Std Dev Factor', type: 'number', default: 2.0, min: 0.5, max: 4.0, step: 0.1 },
@@ -888,7 +991,26 @@ const SYMBOLS = [
   { value: 'TLT', label: 'Treasury Bond ETF' },
   { value: 'BTC-USD', label: 'Bitcoin' },
   { value: 'ETH-USD', label: 'Ethereum' },
+  // Forex (yfinance format: CURRENCYPAIR=X)
+  { value: 'EURUSD=X', label: 'EUR/USD' },
+  { value: 'GBPUSD=X', label: 'GBP/USD' },
+  { value: 'USDJPY=X', label: 'USD/JPY' },
+  { value: 'AUDUSD=X', label: 'AUD/USD' },
+  { value: 'USDCAD=X', label: 'USD/CAD' },
+  { value: 'USDCHF=X', label: 'USD/CHF' },
+  { value: 'NZDUSD=X', label: 'NZD/USD' },
 ];
+
+type BrokerPreset = 'custom' | 'robinhood' | 'ibkr' | 'alpaca' | 'etrade' | 'fidelity';
+
+const BROKER_PRESETS: Record<BrokerPreset, { commission: number; slippage: number; label: string }> = {
+  custom: { commission: 0.1, slippage: 0.1, label: 'Custom' },
+  robinhood: { commission: 0, slippage: 0.05, label: 'Robinhood (0% commission)' },
+  ibkr: { commission: 0.02, slippage: 0.08, label: 'IBKR (low commission)' },
+  alpaca: { commission: 0, slippage: 0.05, label: 'Alpaca (0% commission)' },
+  etrade: { commission: 0.1, slippage: 0.1, label: 'E*TRADE' },
+  fidelity: { commission: 0, slippage: 0.08, label: 'Fidelity (0% commission)' },
+};
 
 interface BacktestConfig {
   symbol: string;
@@ -897,6 +1019,7 @@ interface BacktestConfig {
   initialCapital: number;
   slippage: number; // percentage (e.g. 0.1 = 0.1%)
   commission: number; // percentage (e.g. 0.1 = 0.1%)
+  brokerPreset?: BrokerPreset;
   sizingMethod: 'full' | 'percent_equity' | 'fixed_shares' | 'fixed_dollar';
   sizingValue: number | null;
   stopLossPct: number | null;
@@ -905,8 +1028,9 @@ interface BacktestConfig {
   interval: '1d' | '1h' | '15m' | '5m' | '1m';
   // Advanced engine settings
   spreadModel: 'auto' | 'none' | 'volatility' | 'fixed_bps';
-  slippageModel: 'percentage' | 'volume_aware' | 'none';
+  slippageModel: 'percentage' | 'volume_aware' | 'auto' | 'none';
   marginEnabled: boolean;
+  allowShortsWithoutMargin: boolean;
   leverage: number;
   maxDrawdownPct: number;
   maxPositionPct: number;
@@ -968,7 +1092,7 @@ interface BacktestResult {
 }
 
 export default function PlaygroundPage() {
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, user } = useAuthStore();
   
   const [code, setCode] = useState(DEFAULT_CODE);
   const [selectedTemplate, setSelectedTemplate] = useState<StrategyTemplateKey>('sma_crossover');
@@ -995,11 +1119,13 @@ export default function PlaygroundPage() {
     spreadModel: 'auto',
     slippageModel: 'percentage',
     marginEnabled: false,
+    allowShortsWithoutMargin: false,
     leverage: 1,
-    maxDrawdownPct: 50,
+    maxDrawdownPct: 100,
     maxPositionPct: 100,
     warmupBars: 0,
     pdtEnabled: false,
+    brokerPreset: 'custom',
   });
   const [strategyParams, setStrategyParams] = useState<Record<string, number>>(() => {
     const defaultParams: Record<string, number> = {};
@@ -1009,14 +1135,26 @@ export default function PlaygroundPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [lastRunTime, setLastRunTime] = useState<string | null>(null);
-  const [activeResultsTab, setActiveResultsTab] = useState<'summary' | 'trades' | 'orders' | 'charts' | 'compare' | 'optimize' | 'walkforward' | 'montecarlo' | 'risk' | 'tca' | 'heatmap' | 'distribution'>('summary');
-  const [showCostsSection, setShowCostsSection] = useState(true);
+  const [activeResultsTab, setActiveResultsTab] = useState<'summary' | 'trades' | 'orders' | 'charts' | 'compare' | 'optimize' | 'walkforward' | 'oos' | 'montecarlo' | 'risk' | 'tca' | 'heatmap' | 'distribution'>('summary');
+  const [showCostsSection, setShowCostsSection] = useState(false);
   const [showSizingSection, setShowSizingSection] = useState(false);
   const [showRiskSection, setShowRiskSection] = useState(false);
   const [showEngineSection, setShowEngineSection] = useState(false);
+  const [showAdvancedSetupSection, setShowAdvancedSetupSection] = useState(false);
   const [additionalSymbols, setAdditionalSymbols] = useState<string[]>([]);
-  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
+  const [activeSetupPanel, setActiveSetupPanel] = useState<'strategy' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine' | null>(null);
+  const [setupPanelPosition, setSetupPanelPosition] = useState({ x: 70, y: 120 });
+  const [setupPanelSize, setSetupPanelSize] = useState({ w: 320, h: 400 });
+  const [isDraggingSetupPanel, setIsDraggingSetupPanel] = useState(false);
+  const [isResizingSetupPanel, setIsResizingSetupPanel] = useState(false);
+  const [canPortal, setCanPortal] = useState(false);
+  const setupPanelDragRef = useRef({ startX: 0, startY: 0, startLeft: 0, startTop: 0 });
+  const setupPanelResizeRef = useRef({ startX: 0, startY: 0, startW: 0, startH: 0 });
+  useEffect(() => {
+    setCanPortal(true);
+  }, []);
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
+  const [resultsBarExpanded, setResultsBarExpanded] = useState(false);
   const [resultsPanelWidth, setResultsPanelWidth] = useState(320);
   const [isResizingResults, setIsResizingResults] = useState(false);
   const resizeStartRef = useRef<{ x: number; w: number }>({ x: 0, w: 320 });
@@ -1035,6 +1173,25 @@ export default function PlaygroundPage() {
   
   const [isRunning, setIsRunning] = useState(false);
   const runCancelledRef = useRef(false);
+  const playgroundRef = useRef<HTMLDivElement>(null);
+  const chartAreaRef = useRef<HTMLDivElement>(null);
+  const theme = useThemeStore((s) => s.theme);
+  const [effectiveChartTheme, setEffectiveChartTheme] = useState<'light' | 'dark'>('dark');
+  useEffect(() => {
+    if (theme === 'light') {
+      setEffectiveChartTheme('light');
+      return;
+    }
+    if (theme === 'dark') {
+      setEffectiveChartTheme('dark');
+      return;
+    }
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const apply = () => setEffectiveChartTheme(mq.matches ? 'dark' : 'light');
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, [theme]);
   const [results, setResults] = useState<BacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [comparisonHistory, setComparisonHistory] = useState<(BacktestResult & { label: string; timestamp: number })[]>([]);
@@ -1048,6 +1205,11 @@ export default function PlaygroundPage() {
   const [optimizeMethod, setOptimizeMethod] = useState<'grid' | 'bayesian' | 'genetic' | 'multiobjective' | 'heatmap'>('grid');
   const [walkForwardResults, setWalkForwardResults] = useState<any>(null);
   const [walkForwardLoading, setWalkForwardLoading] = useState(false);
+  const [walkForwardPurgeBars, setWalkForwardPurgeBars] = useState(0);
+  const [walkForwardWindowMode, setWalkForwardWindowMode] = useState<'rolling' | 'anchored'>('rolling');
+  const [oosResults, setOosResults] = useState<any>(null);
+  const [oosLoading, setOosLoading] = useState(false);
+  const [oosNfolds, setOosNfolds] = useState(1);
   const [monteCarloResults, setMonteCarloResults] = useState<any>(null);
   const [monteCarloLoading, setMonteCarloLoading] = useState(false);
   const [lastBacktestId, setLastBacktestId] = useState<number | null>(null);
@@ -1063,10 +1225,10 @@ export default function PlaygroundPage() {
   const [versionList, setVersionList] = useState<Array<{id: number; version: number; commit_message: string | null; created_at: string | null; code_preview: string}>>([]);
   const [versionLoading, setVersionLoading] = useState(false);
   const [versionListHasMore, setVersionListHasMore] = useState(false);
-  const [commitMessageInput, setCommitMessageInput] = useState('');
+  const [commitTitleInput, setCommitTitleInput] = useState('');
+  const [commitDescriptionInput, setCommitDescriptionInput] = useState('');
   const [lastEditorSaveTime, setLastEditorSaveTime] = useState<number | null>(null);
   const [editorSaveStatus, setEditorSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const [selectedChart, setSelectedChart] = useState<'strategy_equity' | 'drawdown' | 'exposure' | 'benchmark' | 'asset_price'>('asset_price');
 
   // Clear "saved" feedback after a few seconds
   useEffect(() => {
@@ -1133,6 +1295,34 @@ export default function PlaygroundPage() {
     return null;
   };
 
+  const validationHints = useMemo(() => {
+    const hints: Record<string, string> = {};
+    const start = new Date(config.startDate);
+    const end = new Date(config.endDate);
+    const now = new Date();
+    if (end <= start) hints.dateRange = 'End must be after start';
+    else if (start > now) hints.dateRange = 'Start cannot be in future';
+    else {
+      const days = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
+      if (days > 3650) hints.dateRange = 'Max 10 years';
+      else if (days < 7) hints.dateRange = 'Min 7 days';
+    }
+    if (config.initialCapital < 100) hints.initialCapital = 'Min $100';
+    else if (config.initialCapital > 10000000) hints.initialCapital = 'Max $10M';
+    if (config.slippage < 0 || config.slippage > 10) hints.slippage = '0–10%';
+    if (config.commission < 0 || config.commission > 5) hints.commission = '0–5%';
+    if (!code.trim()) hints.code = 'Code cannot be empty';
+    else if (!code.includes('class MyStrategy')) hints.code = 'Must define class MyStrategy';
+    return hints;
+  }, [config.startDate, config.endDate, config.initialCapital, config.slippage, config.commission, code]);
+
+  // Clear validation errors when user fixes config
+  useEffect(() => {
+    if (error && !isRunning && validateConfig() === null && (strategyMode !== 'custom' || playgroundStrategyId)) {
+      setError(null);
+    }
+  }, [config, code, strategyMode, playgroundStrategyId, isRunning]); // eslint-disable-line react-hooks/exhaustive-deps -- error intentionally excluded to avoid loops
+
   const handleRunBacktest = useCallback(async () => {
     if (!isAuthenticated) {
       setError('Please sign in to run backtests');
@@ -1158,9 +1348,6 @@ export default function PlaygroundPage() {
     const startTime = Date.now();
 
     try {
-      // Pass code inline when using templates; strategy_id only when custom strategy selected
-      const useCustomStrategy = strategyMode === 'custom' && playgroundStrategyId;
-
       const backtestConfig = {
         symbol: config.symbol,
         symbols: additionalSymbols.length > 0 ? additionalSymbols : undefined,
@@ -1174,6 +1361,7 @@ export default function PlaygroundPage() {
           spread_model: config.spreadModel,
           slippage_model: config.slippageModel,
           margin_enabled: config.marginEnabled,
+          allow_shorts_without_margin: config.allowShortsWithoutMargin,
           leverage: config.leverage,
           max_drawdown_pct: config.maxDrawdownPct,
           max_position_pct: config.maxPositionPct,
@@ -1188,11 +1376,9 @@ export default function PlaygroundPage() {
         interval: config.interval,
       };
 
-      // Timeout createBacktest to prevent infinite hang (e.g. network/server issues)
+      // Always pass code from editor so Run uses current code (no Save required)
       const CREATE_TIMEOUT_MS = 30000; // 30 seconds
-      const createPromise = useCustomStrategy
-        ? api.createBacktest({ ...backtestConfig, strategy_id: playgroundStrategyId! })
-        : api.createBacktestWithCode({ ...backtestConfig, code });
+      const createPromise = api.createBacktestWithCode({ ...backtestConfig, code });
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Request timed out. Check your connection and try again.')), CREATE_TIMEOUT_MS)
       );
@@ -1278,8 +1464,8 @@ export default function PlaygroundPage() {
       if (attempts >= maxAttempts && !runCancelledRef.current) {
         setError('Backtest timed out (2 min). The server may be slow. You can retry.');
       }
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to run backtest');
+    } catch (err: unknown) {
+      setError(extractApiError(err, 'Failed to run backtest'));
     } finally {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       setLastRunTime(`${elapsed}s`);
@@ -1407,8 +1593,8 @@ export default function PlaygroundPage() {
         });
         await pollResult(task_id);
       }
-    } catch (err: any) {
-      setOptimizeResults({ error: err.message });
+    } catch (err: unknown) {
+      setOptimizeResults({ error: extractApiError(err, 'Optimization failed') });
     } finally {
       setOptimizeLoading(false);
     }
@@ -1430,6 +1616,8 @@ export default function PlaygroundPage() {
         slippage: config.slippage / 100,
         n_splits: 5,
         train_pct: 0.7,
+        purge_bars: walkForwardPurgeBars,
+        window_mode: walkForwardWindowMode,
         interval: config.interval,
       });
 
@@ -1444,12 +1632,50 @@ export default function PlaygroundPage() {
           break;
         }
       }
-    } catch (err: any) {
-      setWalkForwardResults({ error: err.message });
+    } catch (err: unknown) {
+      setWalkForwardResults({ error: extractApiError(err, 'Walk-forward failed') });
     } finally {
       setWalkForwardLoading(false);
     }
-  }, [playgroundStrategyId, strategyMode, code, config]);
+  }, [playgroundStrategyId, strategyMode, code, config, walkForwardPurgeBars, walkForwardWindowMode]);
+
+  const handleRunOos = useCallback(async () => {
+    const useCode = strategyMode === 'templates';
+    if (!playgroundStrategyId && !useCode) return;
+    setOosLoading(true);
+    setOosResults(null);
+    try {
+      const { task_id } = await api.runOosValidation({
+        ...(playgroundStrategyId ? { strategy_id: playgroundStrategyId } : { code }),
+        symbol: config.symbol,
+        start_date: config.startDate,
+        end_date: config.endDate,
+        initial_capital: config.initialCapital,
+        commission: config.commission / 100,
+        slippage: config.slippage / 100,
+        oos_ratio: 0.3,
+        n_folds: oosNfolds,
+        param_ranges: strategyMode === 'templates' ? { fast: { low: 5, high: 30, type: 'int' }, slow: { low: 20, high: 100, type: 'int' } } : undefined,
+        n_trials: 30,
+        interval: config.interval,
+      });
+      for (let i = 0; i < 120; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const res = await api.getOosResult(task_id);
+        if (res.status === 'completed') {
+          setOosResults(res);
+          break;
+        } else if (res.status === 'failed') {
+          setOosResults({ error: res.error });
+          break;
+        }
+      }
+    } catch (err: unknown) {
+      setOosResults({ error: extractApiError(err, 'OOS validation failed') });
+    } finally {
+      setOosLoading(false);
+    }
+  }, [playgroundStrategyId, strategyMode, code, config, oosNfolds]);
 
   const handleRunMonteCarlo = useCallback(async () => {
     if (!lastBacktestId) return;
@@ -1472,8 +1698,8 @@ export default function PlaygroundPage() {
           break;
         }
       }
-    } catch (err: any) {
-      setMonteCarloResults({ error: err.message });
+    } catch (err: unknown) {
+      setMonteCarloResults({ error: extractApiError(err, 'Monte Carlo failed') });
     } finally {
       setMonteCarloLoading(false);
     }
@@ -1537,8 +1763,8 @@ export default function PlaygroundPage() {
       setCode(strat.code);
       setStrategyParams({});
       setSelectedTemplate('custom');
-    } catch {
-      setError('Failed to create strategy');
+    } catch (err) {
+      setError(extractApiError(err, 'Failed to create strategy'));
     }
   }, [isAuthenticated]);
 
@@ -1587,25 +1813,29 @@ export default function PlaygroundPage() {
     } catch {}
   }, [playgroundStrategyId, code, strategyParams, displayedCustomStrategies, isAuthenticated]);
 
-  const handleDeleteStrategy = useCallback(async () => {
-    if (!playgroundStrategyId) return;
+  const handleDeleteStrategy = useCallback(async (strategyId?: number) => {
+    const idToDelete = strategyId ?? playgroundStrategyId;
+    if (!idToDelete) return;
     if (!confirm('Delete this strategy? This cannot be undone.')) return;
-    const idToDelete = playgroundStrategyId;
+    if (idToDelete === playgroundStrategyId) {
     setPlaygroundStrategyId(null);
     setCode(STRATEGY_TEMPLATES.custom.code);
     setResults(null);
+    }
     setCustomStrategies(prev => prev.filter(s => s.id !== idToDelete));
     try {
       await api.deleteStrategy(idToDelete);
-    } catch {
-      setError('Failed to delete strategy');
+    } catch (err) {
+      setError(extractApiError(err, 'Failed to delete strategy'));
+      refetchCustomStrategies();
     }
-  }, [playgroundStrategyId]);
+  }, [playgroundStrategyId, refetchCustomStrategies]);
 
-  const startRenameStrategy = useCallback(() => {
-    if (!playgroundStrategyId) return;
-    const current = displayedCustomStrategies.find(s => s.id === playgroundStrategyId);
-    setEditingRenameId(playgroundStrategyId);
+  const startRenameStrategy = useCallback((strategyId?: number) => {
+    const id = strategyId ?? playgroundStrategyId;
+    if (!id) return;
+    const current = displayedCustomStrategies.find(s => s.id === id);
+    setEditingRenameId(id);
     setRenameInputValue(current?.title ?? '');
   }, [playgroundStrategyId, displayedCustomStrategies]);
 
@@ -1722,7 +1952,7 @@ export default function PlaygroundPage() {
 
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Tear Sheet</title>
 <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;background:#0a0a0f;color:#e0e0e0;padding:24px}.c{max-width:1200px;margin:0 auto}h1{font-size:24px;color:#fff;margin-bottom:8px}h2{font-size:18px;color:#a0a0b0;margin:24px 0 12px;border-bottom:1px solid #1a1a2e;padding-bottom:8px}.g{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:24px}.m{background:#12121a;border:1px solid #1a1a2e;border-radius:8px;padding:14px}.ml{font-size:11px;color:#666;text-transform:uppercase}.mv{font-size:20px;font-weight:600;margin-top:4px}.pos{color:#10b981}.neg{color:#ef4444}.cc{background:#12121a;border:1px solid #1a1a2e;border-radius:8px;padding:16px;margin-bottom:16px}canvas{width:100%;height:200px}</style></head>
-<body><div class="c"><h1>Backtest Report: ${config.symbol}</h1><p style="color:#666;font-size:13px;margin-bottom:24px">${new Date().toISOString().split('T')[0]} · QuantGuild Engine v2</p>
+<body><div class="c"><h1>Backtest Report: ${config.symbol}</h1><p style="color:#666;font-size:13px;margin-bottom:24px">${new Date().toISOString().split('T')[0]} · Ceap Council Engine v2</p>
 <h2>Performance</h2><div class="g">
 <div class="m"><div class="ml">Return</div><div class="mv ${(r.total_return||0)>=0?'pos':'neg'}">${(r.total_return||0).toFixed(2)}%</div></div>
 <div class="m"><div class="ml">Sharpe</div><div class="mv">${(r.sharpe_ratio||0).toFixed(4)}</div></div>
@@ -1747,17 +1977,15 @@ hist('dist',${histData});
 
   const handleSave = useCallback(async () => {
     if (!isAuthenticated) return;
+    // Only save existing custom strategies - never create new ones
+    if (strategyMode !== 'custom' || !playgroundStrategyId) return;
     setIsSaving(true);
     setSaveMessage(null);
     try {
-      await api.createStrategy({
-        title: `${STRATEGY_TEMPLATES[selectedTemplate].name} - ${config.symbol}`,
-        description: `Playground strategy: ${STRATEGY_TEMPLATES[selectedTemplate].description}`,
-        code: code,
-        parameters: strategyParams,
-        is_public: false,
-      });
+      await api.updateStrategy(playgroundStrategyId, { code, parameters: strategyParams });
       setSaveMessage('Strategy saved!');
+      setLastEditorSaveTime(Date.now());
+      setEditorSaveStatus('saved');
       setTimeout(() => setSaveMessage(null), 3000);
     } catch (err: any) {
       setSaveMessage('Failed to save');
@@ -1765,7 +1993,7 @@ hist('dist',${histData});
     } finally {
       setIsSaving(false);
     }
-  }, [isAuthenticated, selectedTemplate, config.symbol, code, strategyParams]);
+  }, [isAuthenticated, strategyMode, playgroundStrategyId, code, strategyParams]);
 
   // Keyboard shortcut: Cmd/Ctrl + Enter to run backtest
   useEffect(() => {
@@ -1815,6 +2043,54 @@ hist('dist',${histData});
     };
   }, [isDragging, dragOffset]);
 
+  // Setup panel: drag and resize
+  const handleSetupPanelDragStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDraggingSetupPanel(true);
+    setupPanelDragRef.current = { startX: e.clientX, startY: e.clientY, startLeft: setupPanelPosition.x, startTop: setupPanelPosition.y };
+  };
+  const handleSetupPanelResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsResizingSetupPanel(true);
+    setupPanelResizeRef.current = { startX: e.clientX, startY: e.clientY, startW: setupPanelSize.w, startH: setupPanelSize.h };
+  };
+  useEffect(() => {
+    const handleMove = (e: MouseEvent) => {
+      if (isDraggingSetupPanel) {
+        const dx = e.clientX - setupPanelDragRef.current.startX;
+        const dy = e.clientY - setupPanelDragRef.current.startY;
+        setSetupPanelPosition({
+          x: Math.max(0, setupPanelDragRef.current.startLeft + dx),
+          y: Math.max(0, setupPanelDragRef.current.startTop + dy),
+        });
+      } else if (isResizingSetupPanel) {
+        const dx = e.clientX - setupPanelResizeRef.current.startX;
+        const dy = e.clientY - setupPanelResizeRef.current.startY;
+        setSetupPanelSize({
+          w: Math.max(260, Math.min(600, setupPanelResizeRef.current.startW + dx)),
+          h: Math.max(200, Math.min(window.innerHeight - 80, setupPanelResizeRef.current.startH + dy)),
+        });
+      }
+    };
+    const handleUp = () => {
+      setIsDraggingSetupPanel(false);
+      setIsResizingSetupPanel(false);
+    };
+    if (isDraggingSetupPanel || isResizingSetupPanel) {
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = isResizingSetupPanel ? 'nwse-resize' : 'move';
+      document.addEventListener('mousemove', handleMove);
+      document.addEventListener('mouseup', handleUp);
+    }
+    return () => {
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleUp);
+    };
+  }, [isDraggingSetupPanel, isResizingSetupPanel]);
+
   // Resize handle for results panel
   const handleResultsResizeStart = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -1846,1205 +2122,243 @@ hist('dist',${histData});
 
   const daysOfData = Math.round((new Date(config.endDate).getTime() - new Date(config.startDate).getTime()) / (1000 * 60 * 60 * 24));
 
+  const handleFullscreen = useCallback(() => {
+    if (!playgroundRef.current) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      playgroundRef.current.requestFullscreen();
+    }
+  }, []);
+
+  const handleScreenshot = useCallback(async () => {
+    if (!chartAreaRef.current) return;
+    try {
+      const { default: html2canvas } = await import('html2canvas');
+      const canvas = await html2canvas(chartAreaRef.current, {
+        backgroundColor: '#030712',
+        scale: window.devicePixelRatio || 2,
+        useCORS: true,
+      });
+      const link = document.createElement('a');
+      link.download = `chart-${config.symbol}-${new Date().toISOString().slice(0, 10)}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch {
+      // ignore
+    }
+  }, [config.symbol]);
+
   return (
-    <div className="h-full flex flex-col bg-gray-900 text-gray-100">
-      {/* Top Bar - Title + Run Controls */}
-      <div className="h-12 bg-gray-800 border-b border-gray-700 px-4 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-4">
-          <h1 className="text-sm font-bold text-gray-100">Strategy Playground</h1>
-          <span className="text-xs text-gray-500 border-l border-gray-700 pl-4">{config.symbol}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleReset}
-            className="pg-btn pg-btn-ghost"
-            title="Reset"
-          >
-            <RotateCcw className="h-4 w-4" />
-          </button>
-          {isAuthenticated && (
-            <div className="relative">
-              <button
-                onClick={handleSave}
-                disabled={isSaving}
-                className="pg-btn pg-btn-ghost"
-                title="Save Strategy"
-              >
-                {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              </button>
-              {saveMessage && (
-                <div className="absolute top-full right-0 mt-1 px-2 py-1 bg-gray-700 text-xs text-gray-200 rounded whitespace-nowrap">
-                  {saveMessage}
-                </div>
-              )}
-            </div>
-          )}
-          <div className="flex gap-2">
-            <button
-              onClick={handleRunBacktest}
-              disabled={isRunning || (strategyMode === 'custom' && !playgroundStrategyId)}
-              className="pg-btn pg-btn-primary"
-              title={strategyMode === 'custom' && !playgroundStrategyId ? 'Select a strategy to run' : undefined}
-            >
-              {isRunning ? (
-                <><Loader2 className="h-4 w-4 animate-spin" /> Running...</>
-              ) : (
-                <><Play className="h-4 w-4" /> Run <kbd className="ml-1 px-1 py-0.5 text-[10px] bg-emerald-500 rounded">⌘↵</kbd></>
-              )}
-            </button>
-            {isRunning && (
-              <button
-                onClick={handleCancelBacktest}
-                className="p-2 rounded-md text-gray-400 hover:text-amber-400 hover:bg-amber-900/30 transition-colors"
-                title="Cancel backtest"
-              >
-                <X className="h-4 w-4" strokeWidth={2.5} />
-              </button>
+    <div ref={playgroundRef} className="h-full flex flex-col bg-white text-gray-900">
+      {/* Chart Header - TradingView style: asset, interval, run, actions */}
+      <ChartHeader
+        symbol={config.symbol}
+        interval={config.interval}
+        symbolOptions={SYMBOLS.some(s => s.value === config.symbol) ? SYMBOLS : [{ value: config.symbol, label: config.symbol }, ...SYMBOLS]}
+        onSymbolChange={(s) => setConfig({ ...config, symbol: s })}
+        onIntervalChange={(i) => setConfig({ ...config, interval: i })}
+        onRun={handleRunBacktest}
+        onCancel={handleCancelBacktest}
+        isRunning={isRunning}
+        canRun={strategyMode !== 'custom' || !!playgroundStrategyId}
+        runDisabledReason={strategyMode === 'custom' && !playgroundStrategyId ? 'Select a strategy to run' : undefined}
+        onReset={handleReset}
+        onSave={strategyMode === 'custom' && !!playgroundStrategyId ? handleSave : undefined}
+        isSaving={isSaving}
+        saveMessage={saveMessage}
+        isAuthenticated={isAuthenticated}
+        onFullscreen={handleFullscreen}
+        onScreenshot={handleScreenshot}
+      />
+
+      {/* Error banner - visible when backtest/validation fails */}
+      {error && (
+        <div className="flex-shrink-0 flex items-center justify-between gap-3 px-3 py-2 bg-red-900/30 border-b border-red-800/60 text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertCircle className="h-4 w-4 text-red-400 shrink-0" />
+            <span className="text-red-200 truncate">{error}</span>
+                  </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {!isRunning && (
+              <button onClick={handleRetryBacktest} className="px-2.5 py-1 text-xs font-medium text-red-200 hover:text-white bg-red-800/50 hover:bg-red-800 rounded transition">
+                Retry
+                  </button>
             )}
-          </div>
-        </div>
-      </div>
-
-      {/* QuantConnect-style Metrics Bar (shown when results exist) */}
-      {results && (
-        <div className="flex-shrink-0 h-10 bg-gray-800/80 border-b border-gray-700 px-4 flex items-center gap-6 overflow-x-auto">
-          <MetricItem label="Equity" value={`$${results.final_value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} positive />
-          <MetricItem label="Return" value={`${results.total_return >= 0 ? '+' : ''}${results.total_return.toFixed(2)}%`} positive={results.total_return >= 0} />
-          <MetricItem label="Fees" value={`-$${((results.total_commission ?? 0) + (results.total_slippage ?? 0) + (results.total_spread_cost ?? 0)).toFixed(2)}`} positive={false} />
-          <MetricItem label="Holdings" value={`$${results.final_value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} positive />
-          <MetricItem label="Net Profit" value={`${(results.final_value - results.initial_capital) >= 0 ? '+' : ''}$${(results.final_value - results.initial_capital).toFixed(2)}`} positive={(results.final_value - results.initial_capital) >= 0} />
-          <MetricItem label="Sharpe" value={results.sharpe_ratio.toFixed(2)} positive={results.sharpe_ratio > 1} />
-          <MetricItem label="Drawdown" value={`${results.max_drawdown.toFixed(1)}%`} positive={results.max_drawdown > -20} />
-          <MetricItem label="Trades" value={String(results.total_trades)} />
-        </div>
-      )}
-
-      {/* Main Content Area */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Sidebar - Configuration */}
-        <div
-          className="flex flex-col bg-gray-800/95 border-r border-gray-700 transition-all duration-200 flex-shrink-0"
-          style={{ width: leftSidebarCollapsed ? 40 : 240, zoom: leftSidebarCollapsed ? 1 : uiScale }}
-        >
-          <div className="h-11 px-3 flex items-center justify-between border-b border-gray-700 bg-gray-800">
-            {!leftSidebarCollapsed && <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Configuration</span>}
-              <button
-                onClick={() => setLeftSidebarCollapsed(!leftSidebarCollapsed)}
-                className="pg-btn pg-btn-ghost"
-              >
-              <PanelLeftClose className={`h-4 w-4 transition-transform ${leftSidebarCollapsed ? 'rotate-180' : ''}`} />
-            </button>
-          </div>
-          {!leftSidebarCollapsed && (
-            <div className="flex-1 overflow-y-auto p-3 space-y-3">
-              {/* Asset Selector - Type then Symbol (QuantConnect style) */}
-              <div className="pg-card">
-                <div className="pg-section-header">Asset</div>
-                <AssetSelector
-                  value={config.symbol}
-                  onChange={(symbol) => setConfig({ ...config, symbol })}
-                />
-              </div>
-
-              {/* Strategy Template */}
-              <div className="pg-card">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="pg-section-header mb-0">Strategy Template</div>
-                  <div className="flex items-center gap-1">
-                    {strategyMode === 'custom' && playgroundStrategyId && (
-                      <button
-                        type="button"
-                        onClick={() => setStrategyBoxMinimised(!strategyBoxMinimised)}
-                        className="text-[10px] text-gray-500 hover:text-gray-300 flex items-center gap-0.5"
-                        title={strategyBoxMinimised ? 'Expand' : 'Minimise'}
-                      >
-                        {strategyBoxMinimised ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {/* Templates vs Custom switch */}
-                <div className="flex rounded-lg bg-gray-700/50 p-0.5 mb-2">
-                  <button
-                    type="button"
-                    onClick={() => { setStrategyMode('templates'); handleTemplateChange('sma_crossover'); }}
-                    className={`flex-1 py-1.5 text-[11px] font-medium rounded-md transition-all ${strategyMode === 'templates' ? 'bg-gray-700 text-emerald-400' : 'text-gray-400 hover:text-gray-200'}`}
-                  >
-                    Templates
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStrategyMode('custom')}
-                    className={`flex-1 py-1.5 text-[11px] font-medium rounded-md transition-all ${strategyMode === 'custom' ? 'bg-gray-700 text-emerald-400' : 'text-gray-400 hover:text-gray-200'}`}
-                  >
-                    Custom
-                  </button>
-                </div>
-                {strategyBoxMinimised && strategyMode === 'custom' && playgroundStrategyId ? (
-                  <div className="flex flex-col gap-2">
-                    <div className="text-xs text-emerald-400 truncate px-1">
-                      {displayedCustomStrategies.find(s => s.id === playgroundStrategyId)?.title ?? 'Strategy'}
-                    </div>
-                    <button
-                      onClick={() => setShowCodeEditor(true)}
-                      className="w-full pg-btn pg-btn-secondary justify-center text-xs py-2"
-                      title="Open editor"
-                    >
-                      <FileCode className="h-3.5 w-3.5" />
-                      Editor
-                    </button>
-                  </div>
-                ) : strategyMode === 'templates' ? (
-                  <ConfigSelect
-                    value={selectedTemplate}
-                    onChange={(v) => handleTemplateChange(v as StrategyTemplateKey)}
-                    options={Object.entries(STRATEGY_TEMPLATES)
-                      .filter(([k]) => k !== 'custom')
-                      .map(([key, t]) => ({ value: key, label: t.name }))}
-                  />
-                ) : (
-                  <div className="space-y-2">
-                    {customStrategiesLoading ? (
-                      <div className="text-[10px] text-gray-500 py-1">Loading...</div>
-                    ) : displayedCustomStrategies.length > 0 ? (
-                      <>
-                        <div className="overflow-y-auto overflow-x-hidden space-y-0.5 pr-0.5 shrink-0" style={{ height: 120, maxHeight: 120 }}>
-                          {displayedCustomStrategies.map(s => (
-                            <div
-                              key={s.id}
-                              className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs cursor-pointer transition-colors group ${playgroundStrategyId === s.id ? 'bg-gray-700 text-emerald-400' : 'text-gray-300 hover:bg-gray-700/60'}`}
-                              onClick={() => handleCustomStrategySelect(String(s.id))}
-                            >
-                              <span className="flex-1 truncate">{s.title}</span>
-                            </div>
-                          ))}
-                        </div>
-                        {displayedCustomStrategies.length > 3 && (
-                          <div className="text-[10px] text-gray-500 py-0.5">
-                            {displayedCustomStrategies.length} strategies
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="text-[10px] text-gray-500 py-1">No strategies yet</div>
-                    )}
-                    <div className="flex items-center gap-2 pt-2 border-t border-gray-700/80">
-                      <button
-                        type="button"
-                        onClick={handleCreateNewStrategy}
-                        disabled={!isAuthenticated || customStrategiesLoading}
-                        className="flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-[11px] font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 transition-colors"
-                        title="Create new strategy"
-                      >
-                        <Plus className="h-4 w-4 shrink-0" />
-                        New strategy
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => refetchCustomStrategies()}
-                        disabled={customStrategiesLoading}
-                        className="flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-md text-[11px] text-gray-400 hover:text-gray-200 hover:bg-gray-700/80 border border-gray-600/60 hover:border-gray-500 transition-colors disabled:opacity-50"
-                        title="Refresh strategy list"
-                      >
-                        <RefreshCw className={`h-3.5 w-3.5 shrink-0 ${customStrategiesLoading ? 'animate-spin' : ''}`} />
-                        Refresh
+            <button onClick={() => setError(null)} className="p-1 text-red-400 hover:text-white rounded transition" title="Dismiss">
+              <X className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
                 )}
-                {/* Actions - when a custom strategy is selected (hidden when minimised) */}
-                {(selectedTemplate === 'custom' || strategyMode === 'custom') && !(strategyBoxMinimised && strategyMode === 'custom' && playgroundStrategyId) && (
-                  <div className="mt-2 space-y-1.5">
-                    {playgroundStrategyId ? (
-                      <>
-                        <button
-                          onClick={() => setShowCodeEditor(true)}
-                          className="w-full pg-btn pg-btn-secondary justify-center text-xs py-2"
-                          title="Open editor"
-                        >
-                          <FileCode className="h-3.5 w-3.5" />
-                          Editor
-                        </button>
-                        <div className="flex gap-1">
-                          <button
-                            onClick={handleDuplicateStrategy}
-                            className="flex-1 pg-btn pg-btn-ghost justify-center py-1.5 text-[10px]"
-                            title="Duplicate"
-                          >
-                            <Copy className="h-3 w-3" />
-                          </button>
-                          <button
-                            onClick={startRenameStrategy}
-                            className="flex-1 pg-btn pg-btn-ghost justify-center py-1.5 text-[10px]"
-                            title="Rename"
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </button>
-                          <button
-                            onClick={handleDeleteStrategy}
-                            className="flex-1 pg-btn pg-btn-ghost justify-center py-1.5 text-[10px] text-red-400 hover:text-red-300"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="text-[10px] text-gray-500 py-1.5 text-center">
-                        Select a strategy or click New below
-                      </div>
-                    )}
-                    {editingRenameId && (
-                      <div className="mt-2 p-2 rounded-md bg-gray-700/50 space-y-1.5">
-                        <div className="text-[10px] text-gray-500">Rename strategy</div>
-                        <input
-                          type="text"
-                          value={renameInputValue}
-                          onChange={(e) => setRenameInputValue(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') saveRenameStrategy(); if (e.key === 'Escape') cancelRenameStrategy(); }}
-                          className="w-full pg-input text-xs py-1.5"
-                          placeholder="Strategy name"
-                          autoFocus
-                        />
-                        <div className="flex gap-1">
-                          <button onClick={saveRenameStrategy} className="flex-1 pg-btn pg-btn-primary py-1 text-[10px]">Save</button>
-                          <button onClick={cancelRenameStrategy} className="flex-1 pg-btn pg-btn-ghost py-1 text-[10px]">Cancel</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              
-              {/* Strategy Parameters - hidden for custom (user codes params in strategy) */}
-              {strategyMode !== 'custom' && STRATEGY_PARAMS[selectedTemplate].length > 0 && (
-                <div className="pg-card">
-                  <div className="pg-section-header">Strategy Parameters</div>
-                  <div className="space-y-2">
-                    {STRATEGY_PARAMS[selectedTemplate].map(param => (
-                      <div key={param.key}>
-                        <div className="flex justify-between text-xs text-gray-500 mb-0.5">
-                          <span>{param.label}</span>
-                          <span className="text-gray-400 font-mono">{strategyParams[param.key] ?? param.default}</span>
-                        </div>
-                        <input
-                          type="range"
-                          min={param.min}
-                          max={param.max}
-                          step={param.step}
-                          value={strategyParams[param.key] ?? param.default}
-                          onChange={(e) => {
-                            const newParams = { ...strategyParams, [param.key]: parseFloat(e.target.value) };
-                            setStrategyParams(newParams);
-                            setCode(updateCodeWithParams(selectedTemplate, newParams));
-                          }}
-                          className="pg-slider"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
 
-              {/* Date Range */}
-              <div className="pg-card">
-                <div className="pg-section-header">Date Range</div>
-                <div className="space-y-2">
-                  <input
-                    type="date"
-                    value={config.startDate}
-                    onChange={(e) => setConfig({ ...config, startDate: e.target.value })}
-                    className="pg-input"
-                  />
-                  <input
-                    type="date"
-                    value={config.endDate}
-                    onChange={(e) => setConfig({ ...config, endDate: e.target.value })}
-                    className="pg-input"
-                  />
-                </div>
-                <div className="text-[11px] text-gray-500 mt-2">{daysOfData} days</div>
-              </div>
-
-              {/* Initial Capital */}
-              <div className="pg-card">
-                <div className="pg-section-header">Initial Capital</div>
-                <div className="relative">
-                  <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
-                  <input
-                    type="number"
-                    value={config.initialCapital}
-                    onChange={(e) => setConfig({ ...config, initialCapital: parseFloat(e.target.value) || 10000 })}
-                    className="pg-input pl-8"
-                  />
-                </div>
-              </div>
-
-              {/* Interval */}
-              <div className="pg-card">
-                <div className="pg-section-header">Interval</div>
-                <ConfigSelect
-                  value={config.interval}
-                  onChange={(v) => setConfig({ ...config, interval: v as BacktestConfig['interval'] })}
-                  options={[
-                    { value: '1d', label: 'Daily' },
-                    { value: '1h', label: 'Hourly' },
-                    { value: '15m', label: '15 Minutes' },
-                    { value: '5m', label: '5 Minutes' },
-                    { value: '1m', label: '1 Minute' },
-                  ]}
-                />
-                {config.interval !== '1d' && (
-                  <div className="text-[11px] text-amber-400 mt-1">
-                    {config.interval === '1h' ? 'Max ~730 days' : config.interval === '1m' ? 'Max ~7 days' : 'Max ~60 days'}
-                  </div>
-                )}
-              </div>
-
-              {/* Benchmark */}
-              <div className="pg-card">
-                <div className="pg-section-header">Benchmark</div>
-                <ConfigSelect
-                  value={config.benchmarkSymbol || ''}
-                  onChange={(v) => setConfig({ ...config, benchmarkSymbol: v || null })}
-                  options={[
-                    { value: '', label: 'Same Symbol (Buy & Hold)' },
-                    { value: 'SPY', label: 'SPY - S&P 500' },
-                    { value: 'QQQ', label: 'QQQ - Nasdaq 100' },
-                    ...(config.symbol !== 'SPY' && config.symbol !== 'QQQ'
-                      ? [{ value: config.symbol, label: `${config.symbol} - Buy & Hold` }]
-                      : []),
-                  ]}
-                />
-              </div>
-
-              {/* Additional Symbols (Multi-Asset) */}
-              <div className="pg-card">
-                <div className="pg-section-header">Additional Symbols</div>
-                <div className="flex flex-wrap gap-1 mb-1">
-                  {additionalSymbols.map(s => (
-                    <span key={s} className="pg-chip">
-                      {s}
+      {/* Main Content Area - chart uses full width, icon bar overlays */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Icon toolbar - absolute overlay on left edge, no layout space */}
+        <div className="absolute left-0 top-0 bottom-0 z-30 flex flex-col bg-white border-r border-gray-200 w-12 items-center py-2 gap-0.5 overflow-visible shadow-sm">
+            {(['strategy', 'dates', 'capital', 'benchmark', 'costs', 'risk', 'engine'] as const).map((panel) => {
+              const labels = { strategy: 'Strategy', dates: 'Dates', capital: 'Capital', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine' };
+              const icons = { strategy: FileCode, dates: Calendar, capital: DollarSign, benchmark: TrendingUp, costs: Percent, risk: Shield, engine: Settings };
+              const Icon = icons[panel];
+              return (
+                <div key={panel} className="group relative">
                       <button
-                        onClick={() => setAdditionalSymbols(additionalSymbols.filter(x => x !== s))}
-                        className="text-gray-500 hover:text-red-400 transition-colors"
+                    onClick={() => setActiveSetupPanel(activeSetupPanel === panel ? null : panel)}
+                    className={`p-2 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100 ${activeSetupPanel === panel ? 'bg-gray-100 text-emerald-600' : ''}`}
                       >
-                        ×
+                    <Icon className="h-5 w-5" />
                       </button>
+                  <span className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-2 py-1 text-xs font-medium text-gray-900 bg-white border border-gray-200 rounded shadow-lg whitespace-nowrap opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 pointer-events-none">
+                    {labels[panel]}
                     </span>
-                  ))}
                 </div>
-                {additionalSymbols.length < 4 && (
-                  <ConfigSelect
-                    value=""
-                    onChange={(v) => {
-                      if (v && !additionalSymbols.includes(v) && v !== config.symbol) {
-                        setAdditionalSymbols([...additionalSymbols, v]);
-                      }
-                    }}
-                    placeholder="Add symbol..."
-                    options={SYMBOLS.filter(s => s.value !== config.symbol && !additionalSymbols.includes(s.value)).map(s => ({
-                      value: s.value,
-                      label: `${s.value} - ${s.label}`,
-                    }))}
-                  />
-                )}
-                <div className="text-[11px] text-gray-500 mt-2">For multi-asset strategies (max 4)</div>
+              );
+            })}
               </div>
 
-              {/* Costs Section */}
-              <div className="pg-collapse-card">
-                <button
-                  onClick={() => setShowCostsSection(!showCostsSection)}
-                  className="pg-collapse-card-header"
-                >
-                  <span>Trading Costs</span>
-                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showCostsSection ? '' : '-rotate-90'}`} />
-                </button>
-                {showCostsSection && (
-                  <div className="pg-collapse-card-body">
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Slippage (%)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={config.slippage}
-                        onChange={(e) => setConfig({ ...config, slippage: parseFloat(e.target.value) || 0 })}
-                        className="pg-input pg-input-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Commission (%)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={config.commission}
-                        onChange={(e) => setConfig({ ...config, commission: parseFloat(e.target.value) || 0 })}
-                        className="pg-input pg-input-sm"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Position Sizing - hidden for custom strategy (user codes sizing in strategy) */}
-              {strategyMode !== 'custom' && (
-              <div className="pg-collapse-card">
-                <button
-                  onClick={() => setShowSizingSection(!showSizingSection)}
-                  className="pg-collapse-card-header"
-                >
-                  <span>Position Sizing</span>
-                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showSizingSection ? '' : '-rotate-90'}`} />
-                </button>
-                {showSizingSection && (
-                  <div className="pg-collapse-card-body">
-                    <ConfigSelect
-                      value={config.sizingMethod}
-                      onChange={(v) => setConfig({ ...config, sizingMethod: v as BacktestConfig['sizingMethod'], sizingValue: null })}
-                      small
-                      options={[
-                        { value: 'full', label: 'Full Position' },
-                        { value: 'percent_equity', label: '% of Equity' },
-                        { value: 'fixed_shares', label: 'Fixed Shares' },
-                        { value: 'fixed_dollar', label: 'Fixed Dollar' },
-                      ]}
-                    />
-                    {config.sizingMethod !== 'full' && (
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">
-                          {config.sizingMethod === 'percent_equity' ? 'Percent (%)' :
-                           config.sizingMethod === 'fixed_shares' ? 'Shares' : 'Dollar Amount ($)'}
-                        </label>
-                        <input
-                          type="number"
-                          step={config.sizingMethod === 'percent_equity' ? '1' : '1'}
-                          value={config.sizingValue ?? ''}
-                          onChange={(e) => setConfig({ ...config, sizingValue: parseFloat(e.target.value) || null })}
-                          placeholder={config.sizingMethod === 'percent_equity' ? '10' : config.sizingMethod === 'fixed_shares' ? '100' : '1000'}
-                          className="pg-input pg-input-sm"
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              )}
-
-              {/* Risk Management - hidden for custom strategy (user codes risk in strategy) */}
-              {strategyMode !== 'custom' && (
-              <div className="pg-collapse-card">
-                <button
-                  onClick={() => setShowRiskSection(!showRiskSection)}
-                  className="pg-collapse-card-header"
-                >
-                  <span>Risk Management</span>
-                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showRiskSection ? '' : '-rotate-90'}`} />
-                </button>
-                {showRiskSection && (
-                  <div className="pg-collapse-card-body">
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Stop Loss (%)</label>
-                      <input
-                        type="number"
-                        step="0.5"
-                        value={config.stopLossPct ?? ''}
-                        onChange={(e) => setConfig({ ...config, stopLossPct: parseFloat(e.target.value) || null })}
-                        placeholder="e.g. 5"
-                        className="pg-input pg-input-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Take Profit (%)</label>
-                      <input
-                        type="number"
-                        step="0.5"
-                        value={config.takeProfitPct ?? ''}
-                        onChange={(e) => setConfig({ ...config, takeProfitPct: parseFloat(e.target.value) || null })}
-                        placeholder="e.g. 10"
-                        className="pg-input pg-input-sm"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-              )}
-
-              {/* Engine Settings - hidden for custom strategy (user codes engine needs in strategy) */}
-              {strategyMode !== 'custom' && (
-              <div className="pg-collapse-card">
-                <button
-                  onClick={() => setShowEngineSection(!showEngineSection)}
-                  className="pg-collapse-card-header"
-                >
-                  <span>Engine Settings</span>
-                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showEngineSection ? '' : '-rotate-90'}`} />
-                </button>
-                {showEngineSection && (
-                  <div className="pg-collapse-card-body space-y-3">
-                    {/* Spread Model */}
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Spread Model</label>
-                      <ConfigSelect
-                        value={config.spreadModel}
-                        onChange={(v) => setConfig({ ...config, spreadModel: v as BacktestConfig['spreadModel'] })}
-                        small
-                        options={[
-                          { value: 'auto', label: 'Auto (crypto = volatility)' },
-                          { value: 'none', label: 'None (zero spread)' },
-                          { value: 'volatility', label: 'Volatility-based' },
-                          { value: 'fixed_bps', label: 'Fixed (basis points)' },
-                        ]}
-                      />
-                      <p className="text-[10px] text-gray-600 mt-0.5">Simulates bid/ask spread on fills</p>
-                    </div>
-
-                    {/* Slippage Model */}
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Slippage Model</label>
-                      <ConfigSelect
-                        value={config.slippageModel}
-                        onChange={(v) => setConfig({ ...config, slippageModel: v as BacktestConfig['slippageModel'] })}
-                        small
-                        options={[
-                          { value: 'percentage', label: 'Percentage (fixed %)' },
-                          { value: 'volume_aware', label: 'Volume-Aware (realistic)' },
-                          { value: 'none', label: 'None (zero slippage)' },
-                        ]}
-                      />
-                      <p className="text-[10px] text-gray-600 mt-0.5">Volume-aware scales with order size vs bar volume</p>
-                    </div>
-
-                    {/* Warm-up Bars */}
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Warm-up Bars</label>
-                      <input
-                        type="number"
-                        min={0}
-                        value={config.warmupBars}
-                        onChange={(e) => setConfig({ ...config, warmupBars: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-                        placeholder="0"
-                        className="pg-input pg-input-sm"
-                      />
-                      <p className="text-[10px] text-gray-600 mt-0.5">Bars before strategy trades (indicator warm-up)</p>
-                    </div>
-
-                    {/* PDT (Pattern Day Trading) */}
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs text-gray-500">PDT Rules (US equities)</label>
-                      <button
-                        onClick={() => setConfig({ ...config, pdtEnabled: !config.pdtEnabled })}
-                        className={`pg-toggle ${config.pdtEnabled ? 'pg-toggle-on' : 'pg-toggle-off'}`}
-                      >
-                        <span className={`pg-toggle-thumb ${config.pdtEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-gray-600">Enforce 3 day-trades / 5 days when equity &lt; $25k</p>
-
-                    {/* Max Drawdown Limit */}
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Max Drawdown Limit (%)</label>
-                      <input
-                        type="number"
-                        step="5"
-                        min="5"
-                        max="100"
-                        value={config.maxDrawdownPct}
-                        onChange={(e) => setConfig({ ...config, maxDrawdownPct: parseFloat(e.target.value) || 50 })}
-                        className="pg-input pg-input-sm"
-                      />
-                      <p className="text-[10px] text-gray-600 mt-0.5">Auto-liquidates when portfolio drawdown hits this level</p>
-                    </div>
-
-                    {/* Max Position Size */}
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Max Position Size (%)</label>
-                      <input
-                        type="number"
-                        step="5"
-                        min="5"
-                        max="100"
-                        value={config.maxPositionPct}
-                        onChange={(e) => setConfig({ ...config, maxPositionPct: parseFloat(e.target.value) || 100 })}
-                        className="pg-input pg-input-sm"
-                      />
-                      <p className="text-[10px] text-gray-600 mt-0.5">Limits a single position to this % of portfolio</p>
-                    </div>
-
-                    {/* Margin / Leverage */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-xs text-gray-500">Margin Trading</label>
-                        <button
-                          onClick={() => setConfig({ ...config, marginEnabled: !config.marginEnabled, leverage: config.marginEnabled ? 1 : 2 })}
-                          className={`relative inline-flex h-4 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:ring-offset-2 focus:ring-offset-gray-900 ${config.marginEnabled ? 'bg-emerald-600' : 'bg-gray-600'}`}
-                        >
-                          <span className={`inline-block h-3 w-3 rounded-full bg-white shadow transform transition translate-x-0.5 ${config.marginEnabled ? 'translate-x-4' : ''}`} />
-                        </button>
-                      </div>
-                      {config.marginEnabled && (
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-1">Leverage ({config.leverage}x)</label>
-                          <input
-                            type="range"
-                            min="1"
-                            max="10"
-                            step="0.5"
-                            value={config.leverage}
-                            onChange={(e) => setConfig({ ...config, leverage: parseFloat(e.target.value) })}
-                            className="pg-slider"
-                          />
-                          <div className="flex justify-between text-[10px] text-gray-600 mt-0.5">
-                            <span>1x</span>
-                            <span>5x</span>
-                            <span>10x</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Main Content - Chart */}
-        <div className="flex-1 flex flex-col min-w-0">
-          <div className="h-full bg-gray-950 relative">
+        {/* Main Content - Chart + Results Bar - ml-12 reserves space for icon bar overlay */}
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden ml-12">
+          <div ref={chartAreaRef} className={`flex-1 min-h-[300px] relative flex flex-col overflow-hidden ${effectiveChartTheme === 'light' ? 'bg-gray-50' : 'bg-gray-950'}`}>
             <ErrorBoundary label="Chart">
-              {selectedChart === 'asset_price' ? (
                 <AssetChart 
                   symbol={config.symbol} 
                   startDate={config.startDate} 
                   endDate={config.endDate}
                   interval={config.interval}
                   trades={tradeMarkers}
-                />
-              ) : (selectedChart === 'strategy_equity' || selectedChart === 'drawdown' || selectedChart === 'benchmark') && results ? (
-                <div className="h-full w-full p-4">
-                  {selectedChart === 'strategy_equity' && equityCurveData.length > 0 && (
-                    <div className="h-full min-h-[200px] rounded-lg bg-gray-800/50 border border-gray-700 p-4">
-                      <div className="text-xs text-gray-400 mb-2">Strategy Equity</div>
-                      <div className="h-[calc(100%-28px)]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart data={equityCurveData} margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
-                            <defs>
-                              <linearGradient id="mainEqGrad" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#10b981" stopOpacity={0.4} />
-                                <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
-                              </linearGradient>
-                            </defs>
-                            <XAxis dataKey="date" stroke="#6b7280" fontSize={10} />
-                            <YAxis stroke="#6b7280" fontSize={10} domain={['dataMin - 100', 'dataMax + 100']} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                            <Tooltip
-                              content={({ active, payload }) => {
-                                if (active && payload?.[0]) {
-                                  const d = payload[0].payload;
-                                  return (
-                                    <div className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
-                                      <div className="text-emerald-400">${Number(d.equity).toLocaleString()}</div>
-                                      <div className="text-gray-500">{d.date}</div>
-                                    </div>
-                                  );
-                                }
-                                return null;
-                              }}
-                            />
-                            <Area type="monotone" dataKey="equity" stroke="#10b981" strokeWidth={2} fill="url(#mainEqGrad)" />
-                          </AreaChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </div>
-                  )}
-                  {selectedChart === 'drawdown' && drawdownData.length > 0 && (
-                    <div className="h-full min-h-[200px] rounded-lg bg-gray-800/50 border border-gray-700 p-4">
-                      <div className="text-xs text-gray-400 mb-2">Drawdown</div>
-                      <div className="h-[calc(100%-28px)]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart data={drawdownData.map(d => ({ ...d, dd: -d.drawdown_pct }))} margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
-                            <defs>
-                              <linearGradient id="mainDdGrad" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#ef4444" stopOpacity={0} />
-                                <stop offset="100%" stopColor="#ef4444" stopOpacity={0.4} />
-                              </linearGradient>
-                            </defs>
-                            <XAxis dataKey="date" stroke="#6b7280" fontSize={10} />
-                            <YAxis stroke="#6b7280" fontSize={10} domain={['dataMin - 1', 0]} tickFormatter={(v) => `${v}%`} />
-                            <Tooltip
-                              content={({ active, payload }) => {
-                                if (active && payload?.[0]) {
-                                  const d = payload[0].payload;
-                                  return (
-                                    <div className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
-                                      <div className="text-red-400">-{d.drawdown_pct.toFixed(2)}%</div>
-                                      <div className="text-gray-500">{d.date}</div>
-                                    </div>
-                                  );
-                                }
-                                return null;
-                              }}
-                            />
-                            <Area type="monotone" dataKey="dd" stroke="#ef4444" strokeWidth={2} fill="url(#mainDdGrad)" />
-                          </AreaChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </div>
-                  )}
-                  {selectedChart === 'benchmark' && equityCurveData.length > 0 && (
-                    <div className="h-full min-h-[200px] rounded-lg bg-gray-800/50 border border-gray-700 p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="text-xs text-gray-400">Strategy vs Benchmark</div>
-                        {results.benchmark_return != null && (
-                          <span className="text-[10px] text-gray-500">Benchmark: {results.benchmark_return >= 0 ? '+' : ''}{results.benchmark_return.toFixed(1)}%</span>
-                        )}
-                      </div>
-                      <div className="h-[calc(100%-28px)]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart
-                            data={equityCurveData.map((d, i) => ({
-                              ...d,
-                              benchmark: equityCurveData[0]?.equity
-                                ? equityCurveData[0].equity * (1 + (i / Math.max(equityCurveData.length - 1, 1)) * ((results?.benchmark_return ?? 0) / 100))
-                                : d.equity,
-                            }))}
-                            margin={{ top: 10, right: 10, left: 10, bottom: 10 }}
-                          >
-                            <defs>
-                              <linearGradient id="mainBenchEqGrad" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#10b981" stopOpacity={0.4} />
-                                <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
-                              </linearGradient>
-                            </defs>
-                            <XAxis dataKey="date" stroke="#6b7280" fontSize={10} />
-                            <YAxis stroke="#6b7280" fontSize={10} domain={['dataMin - 100', 'dataMax + 100']} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                            <Tooltip
-                              content={({ active, payload }) => {
-                                if (active && payload?.length) {
-                                  const d = payload[0]?.payload;
-                                  if (!d) return null;
-                                  return (
-                                    <div className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
-                                      <div className="text-emerald-400">Strategy: ${Number(d.equity).toLocaleString()}</div>
-                                      <div className="text-gray-500">Benchmark: ${Number(d.benchmark).toLocaleString()}</div>
-                                      <div className="text-gray-600">{d.date}</div>
-                                    </div>
-                                  );
-                                }
-                                return null;
-                              }}
-                            />
-                            <Area type="monotone" dataKey="equity" stroke="#10b981" strokeWidth={2} fill="url(#mainBenchEqGrad)" />
-                            <Line type="monotone" dataKey="benchmark" stroke="#6b7280" strokeWidth={1.5} strokeDasharray="4 2" dot={false} />
-                          </AreaChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </div>
-                  )}
-                  {((selectedChart === 'strategy_equity' && (!results || equityCurveData.length === 0)) ||
-                    (selectedChart === 'drawdown' && (!results || drawdownData.length === 0)) ||
-                    (selectedChart === 'benchmark' && (!results || equityCurveData.length === 0))) && (
-                    <div className="h-full flex items-center justify-center text-gray-500 text-sm">
-                      Run a backtest to see {selectedChart === 'strategy_equity' ? 'Strategy Equity' : selectedChart === 'drawdown' ? 'Drawdown' : 'Benchmark'} chart
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <AssetChart 
-                  symbol={config.symbol} 
-                  startDate={config.startDate} 
-                  endDate={config.endDate}
-                  interval={config.interval}
-                  trades={tradeMarkers}
-                />
-              )}
+                equityCurve={results?.equity_curve}
+                drawdownSeries={results?.drawdown_series}
+                benchmarkReturn={results?.benchmark_return ?? undefined}
+                chartTheme={effectiveChartTheme}
+              />
             </ErrorBoundary>
-          </div>
         </div>
 
-        {/* Right Sidebar - Results */}
-        <div
-          className="relative flex flex-col bg-gray-800/95 border-l border-gray-700 flex-shrink-0"
-          style={{
-            width: rightSidebarCollapsed ? 40 : resultsPanelWidth,
-            zoom: rightSidebarCollapsed ? 1 : uiScale,
-          }}
-        >
-          {!rightSidebarCollapsed && (
-            <div
-              role="separator"
-              aria-label="Resize results panel"
-              onMouseDown={handleResultsResizeStart}
-              className="absolute left-0 top-0 bottom-0 w-1.5 -ml-0.5 cursor-col-resize z-10 group flex items-center justify-center"
-            >
-              <span className="w-0.5 h-8 rounded-full bg-gray-600 group-hover:bg-emerald-400 group-active:bg-emerald-500 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-            </div>
-          )}
-          <div className="h-11 px-3 flex items-center justify-between border-b border-gray-700 bg-gray-800">
-            <button
-              onClick={() => setRightSidebarCollapsed(!rightSidebarCollapsed)}
-              className="pg-btn pg-btn-ghost"
-            >
-              <PanelRightClose className={`h-4 w-4 transition-transform ${rightSidebarCollapsed ? 'rotate-180' : ''}`} />
-            </button>
-            {!rightSidebarCollapsed && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-gray-400 uppercase">Results</span>
+          {/* Results Bar - under chart */}
                 {results && (
-                  <span className={`text-sm font-bold ${results.total_return >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {results.total_return >= 0 ? '+' : ''}{results.total_return.toFixed(2)}%
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-          {!rightSidebarCollapsed && (
-            <div className="flex-1 flex flex-col min-h-0">
-              {/* Chart selector - segmented buttons */}
-              <div className="p-2 border-b border-gray-700">
-                <div className="text-[10px] text-gray-500 mb-1.5 font-medium">Chart</div>
-                <div className="flex rounded-lg bg-gray-700/50 p-0.5 gap-0.5">
-                  {[
-                    { value: 'asset_price' as const, label: 'Price', icon: Activity },
-                    { value: 'strategy_equity' as const, label: 'Equity', icon: TrendingUp },
-                    { value: 'drawdown' as const, label: 'DD', icon: TrendingDown },
-                    { value: 'benchmark' as const, label: 'Bench', icon: BarChart3 },
-                  ].map(({ value, label, icon: Icon }) => (
-                    <button
-                      key={value}
-                      onClick={() => setSelectedChart(value)}
-                      className={`flex-1 min-w-0 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] font-medium transition-all ${
-                        selectedChart === value
-                          ? 'bg-gray-700 text-emerald-400 shadow'
-                          : 'text-gray-400 hover:text-gray-200 hover:bg-gray-600/50'
-                      }`}
-                    >
-                      <Icon className="h-3 w-3 shrink-0" />
-                      <span className="truncate">{label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Results tabs - single segmented container */}
-              <div className="p-2 border-b border-gray-700">
-                <div className="text-[10px] text-gray-500 font-medium mb-1.5">Results</div>
-                <div className="rounded-lg bg-gray-700/50 p-1 space-y-1">
-                  <div className="flex gap-0.5">
-                    {(['summary', 'trades', 'orders', 'charts'] as const).map((tab) => (
+            <ResultsBar
+              results={results}
+              expanded={resultsBarExpanded}
+              onToggle={() => setResultsBarExpanded((v) => !v)}
+              onExport={handleExportResults}
+              renderContent={() => (
+                <div className="p-3 pb-6">
+                  <div className="space-y-3 pb-3 border-b border-gray-200">
+                    <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Analysis</div>
+                    {/* Primary tabs */}
+                    <div className="flex gap-1 p-1 rounded-lg bg-gray-100 border border-gray-200">
+                      {(['summary', 'trades', 'orders', 'charts'] as const).map((tab) => {
+                        const primaryIcons = { summary: LayoutDashboard, trades: ArrowLeftRight, orders: ListOrdered, charts: LineChartIcon };
+                        const Icon = primaryIcons[tab];
+                        return (
                       <button
                         key={tab}
                         onClick={() => setActiveResultsTab(tab)}
-                        className={`flex-1 min-w-0 px-2 py-1.5 text-[11px] font-medium rounded-md transition-all ${
-                          activeResultsTab === tab ? 'bg-gray-700 text-emerald-400 shadow' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-600/50'
-                        }`}
-                      >
-                        {tab === 'summary' ? 'Summary' : tab === 'trades' ? 'Trades' : tab === 'orders' ? 'Orders' : 'Charts'}
+                            className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-2 text-[11px] font-medium rounded-md transition-all duration-150 ${
+                              activeResultsTab === tab
+                                ? 'bg-emerald-500/15 text-emerald-600 border border-emerald-500/40 shadow-sm'
+                                : 'text-gray-500 hover:text-gray-900 hover:bg-gray-200/80 border border-transparent'
+                            }`}
+                          >
+                            <Icon className="h-3.5 w-3.5 shrink-0" />
+                            <span className="truncate">{tab === 'summary' ? 'Summary' : tab === 'trades' ? 'Trades' : tab === 'orders' ? 'Orders' : 'Charts'}</span>
                       </button>
-                    ))}
+                        );
+                      })}
                   </div>
-                  <div className="flex gap-0.5 flex-wrap">
-                    {(['tca', 'optimize', 'walkforward', 'montecarlo', 'risk', 'heatmap', 'distribution', 'compare'] as const).map((tab) => (
+                    {/* Secondary / advanced tabs - 2 rows of 4 */}
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {(['tca', 'optimize', 'walkforward', 'oos', 'montecarlo', 'risk', 'heatmap', 'distribution', 'compare'] as const).map((tab) => {
+                        const secondaryIcons = { tca: Activity, optimize: Sliders, walkforward: GitBranch, oos: Filter, montecarlo: Shuffle, risk: Shield, heatmap: Calendar, distribution: BarChart2, compare: GitCompare };
+                        const Icon = secondaryIcons[tab];
+                        const label = ({ tca: 'TCA', optimize: 'Optimize', walkforward: 'Walk-Fwd', oos: 'OOS', montecarlo: 'Monte Carlo', risk: 'Risk', heatmap: 'Monthly', distribution: 'Dist.', compare: 'Compare' } as Record<string, string>)[tab];
+                        return (
                       <button
                         key={tab}
                         onClick={() => setActiveResultsTab(tab)}
-                        className={`px-2 py-1.5 text-[11px] font-medium rounded-md transition-all ${
-                          activeResultsTab === tab ? 'bg-gray-700 text-emerald-400 shadow' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-600/50'
-                        }`}
-                      >
-                        {({ tca: 'TCA', optimize: 'Optimize', walkforward: 'Walk-Fwd', montecarlo: 'Monte Carlo', risk: 'Risk', heatmap: 'Monthly', distribution: 'Dist.', compare: 'Compare' } as const)[tab]}
+                            className={`flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] font-medium rounded-md transition-all duration-150 ${
+                              activeResultsTab === tab
+                                ? 'bg-emerald-500/15 text-emerald-600 border border-emerald-500/30'
+                                : 'text-gray-500 hover:text-gray-900 hover:bg-gray-200/80 border border-gray-200 hover:border-gray-300'
+                            }`}
+                          >
+                            <Icon className="h-3 w-3 shrink-0 opacity-80" />
+                            <span className="truncate">{label}</span>
                       </button>
-                    ))}
+                        );
+                      })}
                   </div>
                 </div>
-              </div>
-
-              {/* Ranking & Research Guide (when results exist) */}
-              {results && (
-                <div className="p-2 border-b border-gray-700">
-                  <div className="flex gap-2">
-                    <div className="flex-1 pg-card py-2 px-2 min-w-0">
-                      <div className="text-[10px] text-gray-500 mb-1">Sharpe</div>
-                      <div className="flex items-center gap-2">
-                        <span className={`text-sm font-semibold shrink-0 ${results.sharpe_ratio > 1 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                          {results.sharpe_ratio.toFixed(2)}
-                        </span>
-                        <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden min-w-0">
-                          <div
-                            className="h-full bg-emerald-500 rounded-full"
-                            style={{ width: `${Math.min(100, Math.max(0, (results.sharpe_ratio + 2) * 25))}%` }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex-1 pg-card py-2 px-2 min-w-0">
-                      <div className="text-[10px] text-gray-500 mb-1">Guide</div>
-                      <div className="text-[10px] space-y-0.5">
-                        <div className="flex justify-between items-center">
-                          <span className="text-gray-400 truncate">Backtest</span>
-                          <span className="text-emerald-400 shrink-0">OK</span>
-                        </div>
-                        {results.total_trades < 30 && (
-                          <div className="flex justify-between items-center">
-                            <span className="text-gray-400 truncate">Sample</span>
-                            <span className="text-amber-400 shrink-0">Low</span>
-                          </div>
-                        )}
-                        {results.sharpe_ratio > 2 && (
-                          <div className="flex justify-between items-center">
-                            <span className="text-gray-400 truncate">Sharpe</span>
-                            <span className="text-amber-400 shrink-0">High</span>
-                          </div>
-                        )}
-                        {(!results.total_trades || results.sharpe_ratio <= 2) && results.total_trades >= 30 && (
-                          <div className="flex justify-between items-center">
-                            <span className="text-gray-400 truncate">Stats</span>
-                            <span className="text-emerald-400 shrink-0">OK</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              {/* Tab Content */}
-              <div className="flex-1 overflow-y-auto">
+                  <div className="pt-3 min-h-[200px] flex flex-col">
                 <ErrorBoundary label="Results">
-                {!isAuthenticated ? (
-                  <div className="h-full flex flex-col items-center justify-center p-6 text-center">
-                    <BarChart3 className="h-10 w-10 text-gray-600 mb-3" />
-                    <h3 className="font-semibold text-gray-200 mb-1">Sign in to run backtests</h3>
-                    <p className="text-xs text-gray-500 mb-3">Create a free account to test strategies</p>
-                    <Link href="/register" className="pg-btn pg-btn-primary">
-                      Get Started
-                    </Link>
-                  </div>
-                ) : isRunning ? (
-                  <div className="h-full flex flex-col items-center justify-center">
-                    <Loader2 className="h-8 w-8 text-emerald-500 animate-spin mb-3" />
-                    <p className="text-sm text-gray-300">Running backtest...</p>
-                  </div>
-                ) : error ? (
-                  <div className="h-full flex flex-col items-center justify-center p-6 text-center">
-                    <TrendingDown className="h-10 w-10 text-red-500 mb-3" />
-                    <h3 className="font-semibold text-gray-200 mb-1">Backtest Failed</h3>
-                    <pre className="text-xs text-gray-400 whitespace-pre-wrap text-left bg-gray-900/50 rounded p-2 max-h-40 overflow-y-auto w-full mt-1 mb-4">{error}</pre>
-                    <button
-                      onClick={handleRetryBacktest}
-                      className="pg-btn pg-btn-primary"
-                    >
-                      <Play className="h-4 w-4 mr-2" />
-                      Retry
-                    </button>
-                  </div>
-                ) : results ? (
-                  activeResultsTab === 'summary' ? (
-                    <div className="p-3 space-y-3">
-                      {/* Main Return */}
-                      <div className={`p-4 rounded-lg border ${results.total_return >= 0 ? 'bg-emerald-900/20 border-emerald-700/60' : 'bg-red-900/20 border-red-700/60'}`}>
-                        <div className="text-xs text-gray-400">Total Return</div>
-                        <div className={`text-2xl font-bold ${results.total_return >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {results.total_return >= 0 ? '+' : ''}{results.total_return.toFixed(2)}%
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          ${results.final_value.toLocaleString(undefined, { maximumFractionDigits: 0 })} final
-                        </div>
-                      </div>
-                      
-                      {/* Benchmark */}
-                      {results.benchmark_return !== undefined && (
-                        <div className="pg-card">
-                          <div className="flex justify-between text-xs mb-2">
-                            <span className="text-gray-400">vs Buy & Hold</span>
-                            <span className={results.total_return > results.benchmark_return ? 'text-emerald-400' : 'text-amber-400'}>
-                              Alpha: {(results.total_return - results.benchmark_return).toFixed(2)}%
-                            </span>
-                          </div>
-                          <div className="flex gap-4 text-sm">
-                            <div>
-                              <div className="text-gray-500 text-xs">Strategy</div>
-                              <div className={results.total_return >= 0 ? 'text-emerald-400' : 'text-red-400'}>{results.total_return.toFixed(1)}%</div>
-                            </div>
-                            <div>
-                              <div className="text-gray-500 text-xs">Benchmark</div>
-                              <div className="text-blue-400">{results.benchmark_return.toFixed(1)}%</div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                      
-                      {/* Metrics Grid */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="pg-metric-card">
-                          <div className="pg-metric-label">
-                            <Activity className="h-3 w-3" /> Sharpe
-                          </div>
-                          <div className={`pg-metric-value ${results.sharpe_ratio > 1 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                            {results.sharpe_ratio.toFixed(2)}
-                          </div>
-                        </div>
-                        <div className="pg-metric-card">
-                          <div className="pg-metric-label">
-                            <TrendingDown className="h-3 w-3" /> Drawdown
-                          </div>
-                          <div className={`pg-metric-value ${results.max_drawdown > -20 ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {results.max_drawdown.toFixed(1)}%
-                          </div>
-                        </div>
-                        <div className="pg-metric-card">
-                          <div className="pg-metric-label">
-                            <Target className="h-3 w-3" /> Win Rate
-                          </div>
-                          <div className={`pg-metric-value ${results.win_rate > 50 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                            {results.win_rate.toFixed(0)}%
-                          </div>
-                        </div>
-                        <div className="pg-metric-card">
-                          <div className="pg-metric-label">
-                            <BarChart3 className="h-3 w-3" /> Trades
-                          </div>
-                          <div className="pg-metric-value text-gray-200">
-                            {results.total_trades}
-                          </div>
-                        </div>
-                      </div>
-                      
-                      {/* Extended Metrics */}
-                      {(results.sortino_ratio !== undefined || results.profit_factor !== undefined || results.calmar_ratio !== undefined) && (
-                        <div className="grid grid-cols-2 gap-2">
-                          {results.sortino_ratio !== undefined && results.sortino_ratio !== null && (
-                            <div className="pg-metric-card">
-                              <div className="pg-metric-label"><Scale className="h-3 w-3" /> Sortino</div>
-                              <div className={`pg-metric-value ${results.sortino_ratio > 1 ? 'text-emerald-400' : 'text-amber-400'}`}>{results.sortino_ratio.toFixed(2)}</div>
-                            </div>
-                          )}
-                          {results.profit_factor !== undefined && results.profit_factor !== null && (
-                            <div className="pg-metric-card">
-                              <div className="pg-metric-label"><Percent className="h-3 w-3" /> Profit Factor</div>
-                              <div className={`pg-metric-value ${results.profit_factor > 1 ? 'text-emerald-400' : 'text-amber-400'}`}>{results.profit_factor.toFixed(2)}</div>
-                            </div>
-                          )}
-                          {results.calmar_ratio !== undefined && results.calmar_ratio !== null && (
-                            <div className="pg-metric-card">
-                              <div className="pg-metric-label"><Activity className="h-3 w-3" /> Calmar</div>
-                              <div className={`pg-metric-value ${results.calmar_ratio > 1 ? 'text-emerald-400' : 'text-amber-400'}`}>{results.calmar_ratio.toFixed(2)}</div>
-                            </div>
-                          )}
-                          {results.exposure_pct !== undefined && results.exposure_pct !== null && (
-                            <div className="pg-metric-card">
-                              <div className="pg-metric-label"><BarChart3 className="h-3 w-3" /> Exposure</div>
-                              <div className="pg-metric-value text-gray-200">{results.exposure_pct.toFixed(1)}%</div>
-                            </div>
-                          )}
-                          {results.avg_trade_duration !== undefined && results.avg_trade_duration !== null && (
-                            <div className="pg-metric-card">
-                              <div className="pg-metric-label"><Calendar className="h-3 w-3" /> Avg Duration</div>
-                              <div className="pg-metric-value text-gray-200">{results.avg_trade_duration.toFixed(1)}d</div>
-                            </div>
-                          )}
-                          {results.max_consecutive_losses !== undefined && results.max_consecutive_losses !== null && (
-                            <div className="pg-metric-card">
-                              <div className="pg-metric-label"><TrendingDown className="h-3 w-3" /> Max Consec. Losses</div>
-                              <div className={`pg-metric-value ${results.max_consecutive_losses <= 3 ? 'text-emerald-400' : 'text-red-400'}`}>{results.max_consecutive_losses}</div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Additional Metrics */}
-                      <div className="space-y-2">
-                          {/* Robustness Badge */}
-                          {results.robustness_score != null && (
-                            <div className={`p-3 rounded-lg border ${
-                              results.robustness_score >= 70 ? 'bg-emerald-900/20 border-emerald-800' :
-                              results.robustness_score >= 40 ? 'bg-amber-900/20 border-amber-800' :
-                              'bg-red-900/20 border-red-800'
-                            }`}>
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <div className="text-xs text-gray-400">Robustness Score</div>
-                                  <div className={`text-xl font-bold ${
-                                    results.robustness_score >= 70 ? 'text-emerald-400' :
-                                    results.robustness_score >= 40 ? 'text-amber-400' :
-                                    'text-red-400'
-                                  }`}>
-                                    {results.robustness_score.toFixed(0)}/100
-                                  </div>
-                                </div>
-                                <div className={`text-[10px] px-2 py-1 rounded-full font-medium ${
-                                  results.robustness_score >= 70 ? 'bg-emerald-900/50 text-emerald-400' :
-                                  results.robustness_score >= 40 ? 'bg-amber-900/50 text-amber-400' :
-                                  'bg-red-900/50 text-red-400'
-                                }`}>
-                                  {results.robustness_score >= 70 ? 'Robust' : results.robustness_score >= 40 ? 'Moderate' : 'Fragile'}
-                                </div>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Additional Metrics */}
+                      {activeResultsTab === 'summary' && (
+                        <div className="space-y-2">
                           <div className="grid grid-cols-2 gap-2">
-                            {results.expectancy != null && (
-                              <div className="pg-metric-card">
-                                <div className="pg-metric-label">Expectancy</div>
-                                <div className={`pg-metric-value ${(results.expectancy ?? 0) > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                  ${(results.expectancy ?? 0).toFixed(2)}
-                                </div>
-                              </div>
-                            )}
-                            {results.volatility_annual != null && (
-                              <div className="pg-metric-card">
-                                <div className="pg-metric-label">Annual Vol</div>
-                                <div className="pg-metric-value text-gray-200">{(results.volatility_annual ?? 0).toFixed(1)}%</div>
-                              </div>
-                            )}
-                            {results.beta != null && (
-                              <div className="pg-metric-card">
-                                <div className="pg-metric-label">Beta</div>
-                                <div className="pg-metric-value text-gray-200">{(results.beta ?? 0).toFixed(2)}</div>
-                              </div>
-                            )}
-                            {results.alpha != null && (
-                              <div className="pg-metric-card">
-                                <div className="pg-metric-label">Alpha</div>
-                                <div className={`pg-metric-value ${(results.alpha ?? 0) > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                  {(results.alpha ?? 0).toFixed(2)}%
-                                </div>
-                              </div>
-                            )}
-                            {results.deflated_sharpe_ratio != null && (
-                              <div className="pg-metric-card">
-                                <div className="pg-metric-label">Deflated Sharpe</div>
-                                <div className="pg-metric-value text-gray-200">{(results.deflated_sharpe_ratio ?? 0).toFixed(2)}</div>
-                              </div>
-                            )}
-                            {results.information_ratio != null && (
-                              <div className="pg-metric-card">
-                                <div className="pg-metric-label">Info Ratio</div>
-                                <div className="pg-metric-value text-gray-200">{(results.information_ratio ?? 0).toFixed(2)}</div>
-                              </div>
-                            )}
-                          </div>
-
+                            <div className={`p-3 rounded-lg border ${results.total_return >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                              <div className="text-[10px] text-gray-500 uppercase tracking-wide">Return</div>
+                              <div className={`text-xl font-bold ${results.total_return >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                {results.total_return >= 0 ? '+' : ''}{results.total_return.toFixed(2)}%
+                  </div>
+                  </div>
+                            <div className={`p-3 rounded-lg border ${(results.final_value - results.initial_capital) >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                              <div className="text-[10px] text-gray-500 uppercase tracking-wide">Net Profit</div>
+                              <div className={`text-xl font-bold ${(results.final_value - results.initial_capital) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                {(results.final_value - results.initial_capital) >= 0 ? '+' : ''}${(results.final_value - results.initial_capital).toFixed(0)}
+                  </div>
                         </div>
-                    </div>
-                  ) : activeResultsTab === 'trades' ? (
-                    <TradeLog
-                      trades={results.trades}
-                    />
-                  ) : activeResultsTab === 'orders' ? (
-                    <div className="p-3 space-y-2">
-                      {results.orders && results.orders.length > 0 ? (
-                        <>
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-semibold text-gray-400">{results.orders.length} Orders</span>
+                            <div className="p-3 rounded-lg border bg-gray-50 border-gray-200">
+                              <div className="text-[10px] text-gray-500 uppercase tracking-wide">Max Drawdown</div>
+                              <div className={`text-xl font-bold ${results.max_drawdown > -20 ? 'text-emerald-600' : 'text-red-500'}`}>{results.max_drawdown.toFixed(1)}%</div>
+                        </div>
+                            <div className="p-3 rounded-lg border bg-gray-50 border-gray-200">
+                              <div className="text-[10px] text-gray-500 uppercase tracking-wide">Trades</div>
+                              <div className="text-xl font-bold text-gray-900">{results.total_trades}</div>
+                      </div>
                           </div>
-                          <div className="overflow-x-auto">
+                      {results.benchmark_return !== undefined && (
+                            <div className="p-2 rounded-lg border border-gray-200 bg-gray-50 flex justify-between items-center">
+                              <span className="text-[11px] text-gray-500">vs Buy &amp; Hold</span>
+                              <span className={results.total_return > results.benchmark_return ? 'text-emerald-600' : 'text-amber-600'}>
+                                Alpha {(results.total_return - results.benchmark_return) >= 0 ? '+' : ''}{(results.total_return - results.benchmark_return).toFixed(1)}%
+                            </span>
+                        </div>
+                      )}
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <div className="p-2 rounded-lg border border-gray-200 bg-gray-50">
+                              <div className="flex items-center gap-1.5 text-[11px] text-gray-500 mb-1"><Activity className="h-3 w-3" /> Sharpe</div>
+                              <div className={`text-sm font-semibold ${results.sharpe_ratio > 1 ? 'text-emerald-600' : 'text-amber-600'}`}>{results.sharpe_ratio.toFixed(2)}</div>
+                          </div>
+                            <div className="p-2 rounded-lg border border-gray-200 bg-gray-50">
+                              <div className="flex items-center gap-1.5 text-[11px] text-gray-500 mb-1"><TrendingDown className="h-3 w-3" /> Drawdown</div>
+                              <div className={`text-sm font-semibold ${results.max_drawdown > -20 ? 'text-emerald-600' : 'text-red-500'}`}>{results.max_drawdown.toFixed(1)}%</div>
+                          </div>
+                            <div className="p-2 rounded-lg border border-gray-200 bg-gray-50">
+                              <div className="flex items-center gap-1.5 text-[11px] text-gray-500 mb-1"><Target className="h-3 w-3" /> Win Rate</div>
+                              <div className={`text-sm font-semibold ${results.win_rate && results.win_rate > 50 ? 'text-emerald-600' : 'text-amber-600'}`}>{results.win_rate?.toFixed(0) ?? 0}%</div>
+                        </div>
+                            <div className="p-2 rounded-lg border border-gray-200 bg-gray-50">
+                              <div className="flex items-center gap-1.5 text-[11px] text-gray-500 mb-1"><BarChart3 className="h-3 w-3" /> Trades</div>
+                              <div className="text-sm font-semibold text-gray-900">{results.total_trades}</div>
+                          </div>
+                          </div>
+                          {(results as { versioning?: { code_hash?: string; data_hash?: string; config_hash?: string } }).versioning && (
+                            <div className="p-2 rounded-lg border border-gray-200 bg-gray-50 text-[10px] text-gray-500" title="Reproducible run – config/code/data hashed for versioning">
+                              Reproducible run
+                            </div>
+                          )}
+                            </div>
+                          )}
+                      {activeResultsTab === 'trades' && (
+                        <div className="flex-1 min-h-0 flex flex-col rounded-lg border border-gray-200 overflow-hidden">
+                          <TradeLog trades={results.trades ?? []} />
+                            </div>
+                          )}
+                      {activeResultsTab === 'orders' && results.orders && results.orders.length > 0 && (
+                        <div className="space-y-2 overflow-x-auto">
+                          <div className="text-xs font-semibold text-gray-500 mb-2">{results.orders.length} Orders</div>
                             <table className="w-full text-xs">
                               <thead>
-                                <tr className="text-gray-500 border-b border-gray-700">
+                              <tr className="text-gray-500 border-b border-gray-200">
                                   <th className="text-left py-1 px-1">Side</th>
                                   <th className="text-left py-1 px-1">Type</th>
                                   <th className="text-right py-1 px-1">Qty</th>
@@ -3056,54 +2370,28 @@ hist('dist',${histData});
                               <tbody>
                                 {results.orders.slice(0, 100).map((order, i) => (
                                   <tr key={i} className="border-b border-gray-800 hover:bg-gray-700/30">
-                                    <td className={`py-1 px-1 ${order.side === 'buy' ? 'text-emerald-400' : 'text-red-400'}`}>
-                                      {order.side.toUpperCase()}
-                                    </td>
+                                  <td className={`py-1 px-1 ${order.side === 'buy' ? 'text-emerald-400' : 'text-red-400'}`}>{order.side.toUpperCase()}</td>
                                     <td className="py-1 px-1 text-gray-300">{order.order_type}</td>
                                     <td className="py-1 px-1 text-right text-gray-300">{order.filled_quantity}</td>
                                     <td className="py-1 px-1 text-right text-gray-200">${order.avg_fill_price.toFixed(2)}</td>
                                     <td className="py-1 px-1 text-right text-gray-400">${order.commission.toFixed(2)}</td>
-                                    <td className="py-1 px-1">
-                                      <span className={`text-[10px] px-1 py-0.5 rounded ${
-                                        order.status === 'filled' ? 'bg-emerald-900/50 text-emerald-400' :
-                                        order.status === 'cancelled' ? 'bg-amber-900/50 text-amber-400' :
-                                        'bg-red-900/50 text-red-400'
-                                      }`}>{order.status}</span>
-                                    </td>
+                                  <td className="py-1 px-1"><span className={`text-[10px] px-1 py-0.5 rounded ${order.status === 'filled' ? 'bg-emerald-900/50 text-emerald-400' : order.status === 'cancelled' ? 'bg-amber-900/50 text-amber-400' : 'bg-red-900/50 text-red-400'}`}>{order.status}</span></td>
                                   </tr>
                                 ))}
                               </tbody>
                             </table>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="text-center py-8 text-gray-500 text-xs">
-                          <p>Order history is shown above.</p>
-                          <p className="text-gray-600 mt-1">Order-level detail shows every submission, fill, and cancellation.</p>
                         </div>
                       )}
-                    </div>
-                  ) : activeResultsTab === 'charts' ? (
-                    <div className="p-3 space-y-3">
-                      {/* Equity Curve with Benchmark */}
-                      {equityCurveData.length > 0 && (
-                        <div className="rounded-lg bg-gray-700/50 p-3">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="text-xs text-gray-400">Equity Curve</div>
-                            <div className="flex items-center gap-2 text-[9px]">
-                              <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-emerald-400 inline-block rounded" />Strategy</span>
-                              <span className="flex items-center gap-1 text-gray-500"><span className="w-2 h-0.5 bg-gray-500 inline-block rounded" />Benchmark</span>
-                            </div>
-                          </div>
-                          <div className="h-28">
+                      {activeResultsTab === 'orders' && (!results.orders || results.orders.length === 0) && (
+                        <div className="text-center py-8 text-gray-500 text-xs">Order history shown above.</div>
+                      )}
+                      {activeResultsTab === 'charts' && (
+                        <div className="space-y-4">
+                          {results.equity_curve?.length ? (
+                            <div className="h-32">
+                              <div className="text-[10px] text-gray-500 mb-0.5">Equity curve</div>
                             <ResponsiveContainer width="100%" height="100%">
-                              <AreaChart
-                                data={equityCurveData.map((d, i) => ({
-                                  ...d,
-                                  benchmark: equityCurveData[0]?.equity ? (equityCurveData[0].equity * (1 + (i / Math.max(equityCurveData.length - 1, 1)) * ((results?.benchmark_return || 0) / 100))) : d.equity,
-                                }))}
-                                margin={{ top: 5, right: 5, left: 0, bottom: 5 }}
-                              >
+                                <AreaChart data={results.equity_curve.map(p => ({ ...p, value: p.equity }))} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                                 <defs>
                                   <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
                                     <stop offset="0%" stopColor="#10b981" stopOpacity={0.4} />
@@ -3111,999 +2399,425 @@ hist('dist',${histData});
                                   </linearGradient>
                                 </defs>
                                 <XAxis dataKey="date" hide />
-                                <YAxis hide domain={['dataMin - 100', 'dataMax + 100']} />
-                                <Tooltip
-                                  content={({ active, payload }) => {
-                                    if (active && payload?.[0]) {
-                                      const d = payload[0].payload;
-                                      return (
-                                        <div className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
-                                          <div className="text-emerald-400">Strategy: ${Number(d.equity).toLocaleString()}</div>
-                                          <div className="text-gray-500">Benchmark: ${Number(d.benchmark).toLocaleString()}</div>
-                                          <div className="text-gray-600">{d.date}</div>
-                                        </div>
-                                      );
-                                    }
-                                    return null;
-                                  }}
-                                />
-                                <Area type="monotone" dataKey="equity" stroke="#10b981" strokeWidth={1.5} fill="url(#eqGrad)" />
-                                <Area type="monotone" dataKey="benchmark" stroke="#6b7280" strokeWidth={1} strokeDasharray="4 2" fill="none" />
+                                  <YAxis hide domain={['auto', 'auto']} />
+                                  <Tooltip contentStyle={{ background: '#1f2937', border: '1px solid #374151', fontSize: 11 }} />
+                                  <Area type="monotone" dataKey="value" stroke="#10b981" fill="url(#eqGrad)" strokeWidth={1.5} />
                               </AreaChart>
                             </ResponsiveContainer>
                           </div>
-                        </div>
-                      )}
-                      
-                      {/* Drawdown Chart */}
-                      {drawdownData.length > 0 && (
-                        <div className="rounded-lg bg-gray-700/50 p-3">
-                          <div className="text-xs text-gray-400 mb-2">Drawdown</div>
-                          <div className="h-20">
+                          ) : null}
+                          {results.drawdown_series?.length ? (
+                            <div className="h-24">
+                              <div className="text-[10px] text-gray-500 mb-0.5">Drawdown</div>
                             <ResponsiveContainer width="100%" height="100%">
-                              <AreaChart
-                                data={drawdownData.map(d => ({ ...d, drawdown_neg: -d.drawdown_pct }))}
-                                margin={{ top: 5, right: 5, left: 0, bottom: 5 }}
-                              >
+                                <AreaChart data={results.drawdown_series} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                                 <defs>
                                   <linearGradient id="ddGrad" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="0%" stopColor="#ef4444" stopOpacity={0} />
-                                    <stop offset="100%" stopColor="#ef4444" stopOpacity={0.4} />
+                                      <stop offset="0%" stopColor="#ef4444" stopOpacity={0.4} />
+                                      <stop offset="100%" stopColor="#ef4444" stopOpacity={0} />
                                   </linearGradient>
                                 </defs>
                                 <XAxis dataKey="date" hide />
-                                <YAxis hide domain={['dataMin - 1', 0]} />
-                                <Tooltip
-                                  content={({ active, payload }) => {
-                                    if (active && payload?.[0]) {
-                                      const d = payload[0].payload;
-                                      return (
-                                        <div className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
-                                          <div className="text-red-400">-{d.drawdown_pct.toFixed(2)}%</div>
-                                          <div className="text-gray-500">{d.date}</div>
-                                        </div>
-                                      );
-                                    }
-                                    return null;
-                                  }}
-                                />
-                                <Area type="monotone" dataKey="drawdown_neg" stroke="#ef4444" strokeWidth={1.5} fill="url(#ddGrad)" />
+                                  <YAxis hide domain={['auto', 0]} />
+                                  <Area type="monotone" dataKey="drawdown_pct" stroke="#ef4444" fill="url(#ddGrad)" strokeWidth={1.5} />
                               </AreaChart>
                             </ResponsiveContainer>
                           </div>
+                          ) : null}
+                          {results.custom_charts && Object.keys(results.custom_charts).length > 0 ? (
+                            <div className="space-y-2">
+                              <div className="text-[10px] text-gray-500">Custom series</div>
+                              {Object.entries(results.custom_charts).map(([name, data]) => (
+                                data?.length ? (
+                                <div key={name} className="h-20">
+                                  <div className="text-[10px] text-gray-400 mb-0.5">{name}</div>
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={data} margin={{ top: 2, right: 2, bottom: 0, left: 0 }}>
+                                      <XAxis dataKey="date" hide />
+                                      <YAxis hide />
+                                      <Line type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={1.5} dot={false} />
+                                    </LineChart>
+                                  </ResponsiveContainer>
                         </div>
+                                ) : null
+                              ))}
+                            </div>
+                          ) : null}
+                          {(!results.equity_curve?.length && !results.drawdown_series?.length && (!results.custom_charts || Object.keys(results.custom_charts).length === 0)) && (
+                            <div className="text-center py-6 text-gray-500 text-xs">No chart data.</div>
                       )}
                     </div>
-                  ) : activeResultsTab === 'tca' ? (
-                    <div className="p-3 space-y-3">
-                      <>
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs font-semibold text-gray-400">Transaction Cost Analysis</span>
+                      )}
+                      {activeResultsTab === 'optimize' && (
+                        <div className="space-y-3">
+                          {strategyMode === 'templates' && STRATEGY_PARAMS[selectedTemplate].length > 0 ? (
+                            <>
+                              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+                                <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Configuration</div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <select value={optimizeMethod} onChange={(e) => setOptimizeMethod(e.target.value as typeof optimizeMethod)} className="px-2.5 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900">
+                                    <option value="grid">Grid</option>
+                                    <option value="bayesian">Bayesian</option>
+                                    <option value="genetic">Genetic</option>
+                                    <option value="multiobjective">Multi-objective</option>
+                                    <option value="heatmap">Heatmap</option>
+                                  </select>
+                                  {optimizeMethod === 'heatmap' && (
+                                    <>
+                                      <select value={heatmapParamX} onChange={(e) => setHeatmapParamX(e.target.value)} className="px-2.5 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900">
+                                        <option value="">Param X</option>
+                                        {STRATEGY_PARAMS[selectedTemplate].map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                                      </select>
+                                      <select value={heatmapParamY} onChange={(e) => setHeatmapParamY(e.target.value)} className="px-2.5 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900">
+                                        <option value="">Param Y</option>
+                                        {STRATEGY_PARAMS[selectedTemplate].map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                                      </select>
+                                    </>
+                                  )}
+                                  <button onClick={handleRunOptimization} disabled={optimizeLoading || (optimizeMethod === 'heatmap' && (!heatmapParamX || !heatmapParamY || heatmapParamX === heatmapParamY))} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-medium">
+                                    {optimizeLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Run
+                                  </button>
                           </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="p-2 rounded bg-gray-700/50">
-                              <div className="text-gray-500 text-xs mb-0.5">Commission</div>
-                              <div className="text-sm font-semibold text-amber-400">${(results.total_commission ?? 0).toFixed(2)}</div>
                             </div>
-                            <div className="p-2 rounded bg-gray-700/50">
-                              <div className="text-gray-500 text-xs mb-0.5">Slippage</div>
-                              <div className="text-sm font-semibold text-amber-400">${(results.total_slippage ?? 0).toFixed(2)}</div>
+                              {optimizeResults?.error && (
+                                <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs">{optimizeResults.error}</div>
+                              )}
+                              {optimizeResults && !optimizeResults.error && optimizeResults.results && (
+                                <div className="rounded-lg border border-gray-200 overflow-hidden">
+                                  <div className="overflow-x-auto max-h-48 overflow-y-auto">
+                                    <table className="w-full text-xs">
+                                      <thead className="bg-gray-50 sticky top-0">
+                                        <tr className="text-gray-500 border-b border-gray-200">
+                                          {Object.keys(optimizeResults.results[0]?.params || {}).map(k => <th key={k} className="text-left py-2 px-2 font-medium">{k}</th>)}
+                                          <th className="text-right py-2 px-2 font-medium">Sharpe</th>
+                                          <th className="text-right py-2 px-2 font-medium">Return</th>
+                                          <th className="text-right py-2 px-2 font-medium">Max DD</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {optimizeResults.results.slice(0, 20).map((r: { params: Record<string, number>; sharpe_ratio?: number; total_return?: number; max_drawdown?: number }, i: number) => (
+                                          <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                                            {Object.values(r.params || {}).map((v, j) => <td key={j} className="py-1.5 px-2 font-mono text-gray-700">{v}</td>)}
+                                            <td className="text-right py-1.5 px-2">{r.sharpe_ratio?.toFixed(2) ?? '-'}</td>
+                                            <td className="text-right py-1.5 px-2">{(r.total_return ?? 0).toFixed(1)}%</td>
+                                            <td className="text-right py-1.5 px-2">{(r.max_drawdown ?? 0).toFixed(1)}%</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
                             </div>
-                            <div className="p-2 rounded bg-gray-700/50">
-                              <div className="text-gray-500 text-xs mb-0.5">Spread Cost</div>
-                              <div className="text-sm font-semibold text-amber-400">${(results.total_spread_cost ?? 0).toFixed(2)}</div>
                             </div>
-                            <div className="p-2 rounded bg-gray-700/50">
-                              <div className="text-gray-500 text-xs mb-0.5">Cost % of P&L</div>
-                              <div className="text-sm font-semibold text-red-400">{(results.cost_as_pct_of_pnl ?? 0).toFixed(1)}%</div>
-                            </div>
-                          </div>
-                          <div className="p-2 rounded bg-gray-700/50">
-                            <div className="text-gray-500 text-xs mb-0.5">Total Cost</div>
-                            <div className="text-lg font-bold text-amber-400">
-                              ${((results.total_commission ?? 0) + (results.total_slippage ?? 0) + (results.total_spread_cost ?? 0)).toFixed(2)}
-                            </div>
-                          </div>
-                      </>
+                              )}
+                              {optimizeResults?.heatmap && (
+                                <div className="px-3 py-2 rounded-lg bg-gray-50 border border-gray-200 text-[11px] text-gray-500">Heatmap: use Setup panel for full 2D view.</div>
+                              )}
+                        </>
+                      ) : (
+                            <div className="text-center py-8 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 text-xs">Optimization requires a template strategy with parameters.</div>
+                          )}
+                        </div>
+                      )}
+                      {activeResultsTab === 'oos' && (
+                        <div className="space-y-3">
+                          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+                            <div className="text-[11px] font-medium text-gray-700 mb-1">Out-of-sample validation</div>
+                            <p className="text-[11px] text-gray-500 mb-2">Optimize params on in-sample data, then test on held-out OOS period to detect overfitting.</p>
+                            <div>
+                              <label className="text-[10px] text-gray-500 block mb-0.5">Folds</label>
+                              <select value={oosNfolds} onChange={(e) => setOosNfolds(parseInt(e.target.value, 10))} className="w-full px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900">
+                                <option value={1}>1 (single split)</option>
+                                <option value={3}>3 (k-fold)</option>
+                                <option value={5}>5 (k-fold)</option>
+                              </select>
                     </div>
-                  ) : activeResultsTab === 'optimize' ? (
-                    <div className="p-3 space-y-3">
-                      {/* Optimization Method Selector */}
-                      <div className="flex gap-1 p-1 bg-gray-800 rounded-lg mb-2 flex-wrap">
-                        {([
-                          { key: 'grid', label: 'Grid', color: 'bg-blue-600 hover:bg-blue-500' },
-                          { key: 'bayesian', label: 'Bayesian', color: 'bg-purple-600 hover:bg-purple-500' },
-                          { key: 'genetic', label: 'Genetic', color: 'bg-orange-600 hover:bg-orange-500' },
-                          { key: 'multiobjective', label: 'Multi-Obj', color: 'bg-cyan-600 hover:bg-cyan-500' },
-                          { key: 'heatmap', label: 'Heatmap', color: 'bg-rose-600 hover:bg-rose-500' },
-                        ] as const).map(m => (
-                          <button
-                            key={m.key}
-                            onClick={() => setOptimizeMethod(m.key)}
-                            className={`flex-1 py-1.5 px-2 text-xs font-medium rounded-md transition-all min-w-[60px] ${
-                              optimizeMethod === m.key ? `${m.color} text-white shadow-sm` : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
-                            }`}
-                          >
-                            {m.label}
+                            <button onClick={handleRunOos} disabled={oosLoading || (!playgroundStrategyId && strategyMode !== 'templates')} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition">
+                              {oosLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Run OOS Validation
                           </button>
-                        ))}
                       </div>
-
-                      {/* Heatmap param selectors */}
-                      {optimizeMethod === 'heatmap' && STRATEGY_PARAMS[selectedTemplate].length >= 2 && (
+                          {oosResults?.error && (
+                            <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs">{oosResults.error}</div>
+                          )}
+                          {oosResults && !oosResults.error && (oosResults.is_result || oosResults.n_folds > 1) && (
+                            <div className="space-y-2">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">IS vs OOS</div>
                         <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <label className="text-xs text-gray-500 mb-0.5 block">Param X</label>
-                            <ConfigSelect
-                              value={heatmapParamX}
-                              onChange={(v) => setHeatmapParamX(v)}
-                              small
-                              placeholder="Select..."
-                              buttonClassName="bg-gray-800 border-gray-600"
-                              options={STRATEGY_PARAMS[selectedTemplate].map(p => ({ value: p.key, label: p.key }))}
-                            />
+                                {oosResults.is_result ? (
+                                  <>
+                                    <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                      <div className="text-[10px] text-gray-500">In-sample</div>
+                                      <div className="text-xs font-mono text-gray-700">{oosResults.is_period}</div>
+                                      <div className="text-sm font-semibold text-gray-900">Sharpe {(oosResults.is_sharpe ?? 0).toFixed(2)} · Return {(oosResults.is_result?.total_return ?? 0).toFixed(1)}%</div>
                           </div>
-                          <div>
-                            <label className="text-xs text-gray-500 mb-0.5 block">Param Y</label>
-                            <ConfigSelect
-                              value={heatmapParamY}
-                              onChange={(v) => setHeatmapParamY(v)}
-                              small
-                              placeholder="Select..."
-                              buttonClassName="bg-gray-800 border-gray-600"
-                              options={STRATEGY_PARAMS[selectedTemplate].filter(p => p.key !== heatmapParamX).map(p => ({ value: p.key, label: p.key }))}
-                            />
+                                    <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                      <div className="text-[10px] text-gray-500">Out-of-sample</div>
+                                      <div className="text-xs font-mono text-gray-700">{oosResults.oos_period}</div>
+                                      <div className={`text-sm font-semibold ${(oosResults.oos_sharpe ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>Sharpe {(oosResults.oos_sharpe ?? 0).toFixed(2)} · Return {(oosResults.oos_result?.total_return ?? 0).toFixed(1)}%</div>
                           </div>
+                                  </>
+                                ) : oosResults.n_folds > 1 ? (
+                                  <div className="col-span-2 p-3 rounded-lg border border-gray-200 bg-white">
+                                    <div className="text-[10px] text-gray-500">K-fold cross-validation</div>
+                                    <div className="text-sm font-semibold text-gray-900">Sharpe {oosResults.oos_sharpe_mean?.toFixed(2)} ± {oosResults.oos_sharpe_std?.toFixed(2)} · Return {(oosResults.oos_return_mean ?? 0).toFixed(1)}% ± {(oosResults.oos_return_std ?? 0).toFixed(1)}%</div>
+                        </div>
+                                ) : null}
+                              </div>
+                              {oosResults.multiple_testing_note && (
+                                <div className="p-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-[11px]">{oosResults.multiple_testing_note}</div>
+                              )}
+                              {oosResults.overfit_score != null && (
+                                <div className={`p-2 rounded-lg border text-xs ${oosResults.overfit_score > 50 ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-gray-50 border-gray-200'}`}>
+                                  Overfit score: <span className="font-semibold">{oosResults.overfit_score}%</span> {oosResults.overfit_score > 50 ? '(high – strategy may be overfit)' : '(low – good generalization)'}
                         </div>
                       )}
-
-                      {/* Multi-Objective metric selectors */}
-                      {optimizeMethod === 'multiobjective' && (
-                        <div className="grid grid-cols-2 gap-2">
-                          {[0, 1].map(idx => (
-                            <div key={idx}>
-                              <label className="text-xs text-gray-500 mb-0.5 block">Objective {idx + 1}</label>
-                              <ConfigSelect
-                                value={multiObjMetrics[idx]}
-                                onChange={(v) => {
-                                  const next = [...multiObjMetrics] as [string, string];
-                                  next[idx] = v;
-                                  setMultiObjMetrics(next);
-                                }}
-                                small
-                                buttonClassName="bg-gray-800 border-gray-600"
-                                options={['sharpe_ratio', 'max_drawdown', 'total_return', 'win_rate', 'total_trades'].map(m => ({
-                                  value: m,
-                                  label: m.replace(/_/g, ' '),
-                                }))}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Constraints (collapsible) */}
-                      <div>
-                        <button onClick={() => setShowConstraints(!showConstraints)} className="text-xs text-gray-500 hover:text-gray-300 flex items-center gap-1">
-                          <ChevronDown className={`h-3 w-3 transition-transform ${showConstraints ? '' : '-rotate-90'}`} />
-                          Constraints
-                        </button>
-                        {showConstraints && (
-                          <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-                            <div>
-                              <label className="text-[10px] text-gray-500">Max DD %</label>
-                              <input type="number" placeholder="e.g. 20" value={optConstraints.max_drawdown ?? ''}
-                                onChange={e => setOptConstraints(prev => ({ ...prev, max_drawdown: e.target.value ? Number(e.target.value) : undefined }))}
-                                className="pg-input pg-input-sm bg-gray-800 border-gray-600" />
-                            </div>
-                            <div>
-                              <label className="text-[10px] text-gray-500">Min Trades</label>
-                              <input type="number" placeholder="e.g. 10" value={optConstraints.min_trades ?? ''}
-                                onChange={e => setOptConstraints(prev => ({ ...prev, min_trades: e.target.value ? Number(e.target.value) : undefined }))}
-                                className="pg-input pg-input-sm bg-gray-800 border-gray-600" />
-                            </div>
-                            <div>
-                              <label className="text-[10px] text-gray-500">Min Win %</label>
-                              <input type="number" placeholder="e.g. 30" value={optConstraints.min_win_rate ?? ''}
-                                onChange={e => setOptConstraints(prev => ({ ...prev, min_win_rate: e.target.value ? Number(e.target.value) : undefined }))}
-                                className="pg-input pg-input-sm bg-gray-800 border-gray-600" />
-                            </div>
+                              {oosResults.n_folds > 1 && !oosResults.is_result && (
+                                <div className="p-2 rounded-lg border border-gray-200 bg-gray-50 text-xs">
+                                  <span className="font-medium">K-fold ({oosResults.n_folds} folds):</span> Sharpe {oosResults.oos_sharpe_mean?.toFixed(2)} ± {oosResults.oos_sharpe_std?.toFixed(2)} · Return {(oosResults.oos_return_mean ?? 0).toFixed(1)}% ± {(oosResults.oos_return_std ?? 0).toFixed(1)}%
                           </div>
                         )}
+                              {Object.keys(oosResults.best_params || {}).length > 0 && (
+                                <div className="text-[10px] text-gray-500">Best params: {JSON.stringify(oosResults.best_params)}</div>
+                        )}
                       </div>
-
-                      <button
-                        onClick={handleRunOptimization}
-                        disabled={optimizeLoading || STRATEGY_PARAMS[selectedTemplate].length === 0}
-                        className={`w-full py-2.5 text-sm font-medium rounded-md transition-all ${
-                          ({ grid: 'bg-blue-600 hover:bg-blue-500', bayesian: 'bg-purple-600 hover:bg-purple-500', genetic: 'bg-orange-600 hover:bg-orange-500', multiobjective: 'bg-cyan-600 hover:bg-cyan-500', heatmap: 'bg-rose-600 hover:bg-rose-500' })[optimizeMethod]
-                        } disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white shadow-sm active:scale-[0.99]`}
-                      >
-                        {optimizeLoading ? 'Optimizing...' : ({
-                          grid: 'Run Grid Search',
-                          bayesian: 'Run Bayesian (TPE)',
-                          genetic: 'Run Genetic Algorithm',
-                          multiobjective: 'Run Multi-Objective',
-                          heatmap: 'Generate Heatmap',
-                        })[optimizeMethod]}
-                      </button>
-                      {strategyMode === 'custom' && !playgroundStrategyId && (
-                        <p className="text-xs text-gray-500">
-                          {results ? 'Select a custom strategy to optimize' : 'Run a backtest first, then optimize'}
-                        </p>
+                          )}
+                          {oosResults && !oosResults.error && !oosResults.is_result && oosResults.status === 'completed' && (
+                            <div className="px-3 py-4 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 text-xs text-center">No optimization – run with param_ranges for IS/OOS comparison.</div>
+                          )}
+                        </div>
                       )}
-                      {STRATEGY_PARAMS[selectedTemplate].length === 0 && (
-                        <p className="text-xs text-gray-500">Custom strategies cannot be optimized</p>
-                      )}
-                      {optimizeResults?.error && (
-                        <p className="text-xs text-red-400">{optimizeResults.error}</p>
-                      )}
-
-                      {/* Heatmap visualization */}
-                      {optimizeResults?.z_values && (
-                        <div className="space-y-2">
-                          <div className="text-xs text-gray-400">
-                            {optimizeResults.param_x} vs {optimizeResults.param_y}, colored by {optimizeResults.metric}
+                      {activeResultsTab === 'walkforward' && (
+                        <div className="space-y-3">
+                          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+                            <div className="text-[11px] font-medium text-gray-700 mb-1">Walk-forward analysis</div>
+                            <p className="text-[11px] text-gray-500 mb-2">Split data into train/test windows and evaluate out-of-sample performance.</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] text-gray-500 block mb-0.5">Purge bars</label>
+                                <input type="number" min={0} max={100} value={walkForwardPurgeBars} onChange={(e) => setWalkForwardPurgeBars(Math.max(0, parseInt(e.target.value, 10) || 0))} className="w-full px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" title="Gap between train and test to prevent leakage" />
                           </div>
-                          <div className="overflow-auto rounded bg-gray-800 p-1">
-                            <table className="text-[10px] border-collapse">
-                              <thead>
-                                <tr>
-                                  <th className="p-0.5 text-gray-500">{optimizeResults.param_y}\{optimizeResults.param_x}</th>
-                                  {(optimizeResults.x_values as number[]).map((x: number) => (
-                                    <th key={x} className="p-0.5 text-gray-500 font-normal">{typeof x === 'number' ? (Number.isInteger(x) ? x : x.toFixed(1)) : x}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {(optimizeResults.z_values as (number | null)[][]).map((row: (number | null)[], yi: number) => {
-                                  const allVals = (optimizeResults.z_values as (number | null)[][]).flat().filter((v: number | null): v is number => v !== null);
-                                  const minZ = Math.min(...allVals);
-                                  const maxZ = Math.max(...allVals);
-                                  const range = maxZ - minZ || 1;
-                                  return (
-                                    <tr key={yi}>
-                                      <td className="p-0.5 text-gray-500 font-medium">{typeof optimizeResults.y_values[yi] === 'number' ? (Number.isInteger(optimizeResults.y_values[yi]) ? optimizeResults.y_values[yi] : optimizeResults.y_values[yi].toFixed(1)) : optimizeResults.y_values[yi]}</td>
-                                      {row.map((val: number | null, xi: number) => {
-                                        if (val === null) return <td key={xi} className="p-0.5 w-6 h-6 text-center bg-gray-900 text-gray-600">-</td>;
-                                        const norm = (val - minZ) / range;
-                                        const r = Math.round(239 * (1 - norm) + 16 * norm);
-                                        const g = Math.round(68 * (1 - norm) + 185 * norm);
-                                        const b = Math.round(68 * (1 - norm) + 129 * norm);
-                                        return (
-                                          <td key={xi} className="p-0.5 w-6 h-6 text-center text-[9px] text-white font-medium"
-                                            style={{ backgroundColor: `rgb(${r},${g},${b})` }}
-                                            title={`${optimizeResults.param_x}=${optimizeResults.x_values[xi]}, ${optimizeResults.param_y}=${optimizeResults.y_values[yi]}: ${val.toFixed(2)}`}>
-                                            {val.toFixed(1)}
-                                          </td>
-                                        );
-                                      })}
-                                    </tr>
-                                  );
+                              <div>
+                                <label className="text-[10px] text-gray-500 block mb-0.5">Window mode</label>
+                                <select value={walkForwardWindowMode} onChange={(e) => setWalkForwardWindowMode(e.target.value as 'rolling' | 'anchored')} className="w-full px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900">
+                                  <option value="rolling">Rolling</option>
+                                  <option value="anchored">Anchored</option>
+                                </select>
+                          </div>
+                          </div>
+                            <button onClick={handleRunWalkForward} disabled={walkForwardLoading || (!playgroundStrategyId && strategyMode !== 'templates')} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition">
+                              {walkForwardLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Run Walk-Forward
+                            </button>
+                        </div>
+                          {walkForwardResults?.error && (
+                            <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs">{walkForwardResults.error}</div>
+                      )}
+                          {walkForwardResults && !walkForwardResults.error && (walkForwardResults.windows?.length || walkForwardResults.splits?.length) && (
+                        <div className="space-y-2">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Out-of-sample results</div>
+                              {walkForwardResults.avg_oos_return != null && (
+                                <div className="text-xs text-gray-700">Avg OOS return: <span className="font-semibold">{(walkForwardResults.avg_oos_return * 100).toFixed(1)}%</span></div>
+                              )}
+                              <div className="rounded-lg border border-gray-200 divide-y divide-gray-100 max-h-48 overflow-y-auto">
+                                {(walkForwardResults.windows ?? walkForwardResults.splits ?? []).map((w: { window?: number; train_period?: { start: string; end: string }; test_period?: { start: string; end: string }; train_start?: string; train_end?: string; test_start?: string; test_end?: string; test_sharpe?: number; test_return?: number; sharpe?: number; total_return?: number }, i: number) => {
+                                  const testStart = w.test_period?.start ?? w.test_start ?? '-';
+                                  const testEnd = w.test_period?.end ?? w.test_end ?? '-';
+                                  const sharpe = w.test_sharpe ?? w.sharpe;
+                                  const ret = w.test_return ?? w.total_return ?? 0;
+                                    return (
+                                    <div key={i} className="px-3 py-2 flex items-center justify-between text-xs hover:bg-gray-50">
+                                      <span className="text-gray-600 font-mono">{testStart} → {testEnd}</span>
+                                      <span className="text-gray-900">Sharpe {sharpe != null ? sharpe.toFixed(2) : '-'} · Return {(ret * 100).toFixed(1)}%</span>
+                                      </div>
+                                    );
                                 })}
-                              </tbody>
-                            </table>
-                          </div>
-                          <div className="flex justify-between text-[10px] text-gray-500">
-                            <span className="text-red-400">Low</span>
-                            <span>Color = {optimizeResults.metric}</span>
-                            <span className="text-emerald-400">High</span>
                           </div>
                         </div>
                       )}
-
-                      {/* Pareto front scatter (multi-objective) */}
-                      {optimizeResults?.pareto_front && optimizeResults.pareto_front.length > 0 && (
-                        <div className="space-y-2">
-                          <div className="text-xs text-gray-400">Pareto Front ({optimizeResults.pareto_front.length} solutions)</div>
-                          <div className="h-40 rounded bg-gray-800 p-2">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <ScatterChart margin={{ top: 5, right: 5, bottom: 20, left: 20 }}>
-                                <XAxis
-                                  type="number"
-                                  dataKey="x"
-                                  name={optimizeResults.objective_metrics?.[0] ?? 'obj1'}
-                                  tick={{ fontSize: 10, fill: '#9ca3af' }}
-                                  label={{ value: optimizeResults.objective_metrics?.[0]?.replace(/_/g, ' ') ?? '', position: 'bottom', fontSize: 10, fill: '#6b7280' }}
-                                />
-                                <YAxis
-                                  type="number"
-                                  dataKey="y"
-                                  name={optimizeResults.objective_metrics?.[1] ?? 'obj2'}
-                                  tick={{ fontSize: 10, fill: '#9ca3af' }}
-                                  label={{ value: optimizeResults.objective_metrics?.[1]?.replace(/_/g, ' ') ?? '', angle: -90, position: 'left', fontSize: 10, fill: '#6b7280' }}
-                                />
-                                <Tooltip content={({ active, payload }) => {
-                                  if (active && payload?.[0]) {
-                                    const d = payload[0].payload;
-                                    return (
-                                      <div className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
-                                        <div className="text-cyan-400">{d.label}</div>
-                                        <div className="text-gray-500">{d.params}</div>
-                                      </div>
-                                    );
-                                  }
-                                  return null;
-                                }} />
-                                <Scatter
-                                  data={optimizeResults.pareto_front.map((pf: any) => {
-                                    const m0 = optimizeResults.objective_metrics?.[0] ?? 'sharpe_ratio';
-                                    const m1 = optimizeResults.objective_metrics?.[1] ?? 'max_drawdown';
-                                    return {
-                                      x: pf.values?.[m0] ?? 0,
-                                      y: pf.values?.[m1] ?? 0,
-                                      label: `${m0}: ${(pf.values?.[m0] ?? 0).toFixed(2)}, ${m1}: ${(pf.values?.[m1] ?? 0).toFixed(2)}`,
-                                      params: pf.params ? Object.entries(pf.params).map(([k, v]) => `${k}=${v}`).join(', ') : '',
-                                    };
-                                  })}
-                                  fill="#06b6d4"
-                                />
-                              </ScatterChart>
-                            </ResponsiveContainer>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Genetic convergence chart */}
-                      {optimizeResults?.generation_history && optimizeResults.generation_history.length > 0 && (
-                        <div className="space-y-2">
-                          <div className="text-xs text-gray-400">Convergence ({optimizeResults.generations} generations, {optimizeResults.total_evaluations} evals)</div>
-                          <div className="h-28 rounded bg-gray-800 p-2">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <LineChart data={optimizeResults.generation_history} margin={{ top: 5, right: 5, bottom: 5, left: 0 }}>
-                                <XAxis dataKey="generation" tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                                <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                                <Tooltip content={({ active, payload }) => {
-                                  if (active && payload?.[0]) {
-                                    return (
-                                      <div className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
-                                        <div className="text-orange-400">Gen {payload[0].payload.generation}: {payload[0].payload.best_fitness?.toFixed(3) ?? 'N/A'}</div>
-                                      </div>
-                                    );
-                                  }
-                                  return null;
-                                }} />
-                                <Line type="monotone" dataKey="best_fitness" stroke="#f97316" strokeWidth={2} dot={false} />
-                              </LineChart>
-                            </ResponsiveContainer>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Standard results table (grid/bayesian/genetic) */}
-                      {optimizeResults?.results && !optimizeResults?.z_values && !optimizeResults?.pareto_front && (
-                        <>
-                          <div className="text-xs text-gray-400">
-                            {optimizeResults.method === 'bayesian'
-                              ? `${optimizeResults.total_trials} trials (Bayesian TPE)`
-                              : optimizeResults.method === 'genetic'
-                              ? `${optimizeResults.total_evaluations} evaluations (Genetic)`
-                              : `${optimizeResults.total_combinations ?? optimizeResults.total_trials} combinations tested`}
-                          </div>
-                          {optimizeResults.best && (
-                            <div className="p-2 rounded bg-emerald-900/30 border border-emerald-800">
-                              <div className="text-xs text-gray-400 mb-1">Best Combination</div>
-                              <div className="text-sm font-semibold text-emerald-400">
-                                {optimizeResults.best.total_return?.toFixed(2)}% return | Sharpe: {optimizeResults.best.sharpe_ratio?.toFixed(2) ?? 'N/A'}
-                              </div>
-                              <div className="text-xs text-gray-500 mt-1">
-                                {Object.entries(optimizeResults.best.params).map(([k, v]) => `${k}=${v}`).join(', ')}
-                              </div>
+                          {walkForwardResults && !walkForwardResults.error && !walkForwardResults.windows?.length && !walkForwardResults.splits?.length && (
+                            <div className="px-3 py-4 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 text-xs text-center">Run completed. No splits data returned.</div>
+                          )}
                             </div>
                           )}
-                          <div className="rounded bg-gray-700/50 overflow-hidden">
-                            <table className="w-full text-xs">
-                              <thead>
-                                <tr className="text-gray-500 border-b border-gray-600">
-                                  <th className="text-left p-1.5">Params</th>
-                                  <th className="text-right p-1.5">Return</th>
-                                  <th className="text-right p-1.5">Sharpe</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-gray-700">
-                                {optimizeResults.results.slice(0, 15).map((r: any, i: number) => (
-                                  <tr key={i} className={`${i === 0 ? 'bg-emerald-900/20' : ''} ${r.constraint_violated ? 'opacity-40' : ''}`}>
-                                    <td className="p-1.5 text-gray-400 truncate max-w-[120px]">
-                                      {r.params ? Object.entries(r.params).map(([k, v]) => `${k}=${v}`).join(', ') : ''}
-                                    </td>
-                                    <td className={`p-1.5 text-right ${(r.total_return ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                      {r.error ? <span className="text-gray-500">err</span> : `${r.total_return?.toFixed(1)}%`}
-                                    </td>
-                                    <td className="p-1.5 text-right text-gray-300">
-                                      {r.sharpe_ratio?.toFixed(2) ?? '-'}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                      {activeResultsTab === 'montecarlo' && (
+                        <div className="space-y-3">
+                          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                            <div className="text-[11px] font-medium text-gray-700 mb-2">Monte Carlo simulation</div>
+                            <p className="text-[11px] text-gray-500 mb-3">Run multiple simulated equity paths to assess strategy robustness.</p>
+                            <button onClick={handleRunMonteCarlo} disabled={monteCarloLoading || !lastBacktestId} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition" title={!lastBacktestId ? 'Run a backtest first' : ''}>
+                              {monteCarloLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Run Monte Carlo
+                            </button>
                           </div>
-                        </>
-                      )}
+                          {!lastBacktestId && (
+                            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs">
+                              <AlertCircle className="h-4 w-4 shrink-0" /> Run a backtest first to enable Monte Carlo.
                     </div>
-                  ) : activeResultsTab === 'walkforward' ? (
-                    <div className="p-3 space-y-3">
-                      <button
-                        onClick={handleRunWalkForward}
-                        disabled={walkForwardLoading || (!playgroundStrategyId && strategyMode !== 'templates')}
-                        className="w-full py-2.5 text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white rounded-md transition-all shadow-sm active:scale-[0.99]"
-                      >
-                        {walkForwardLoading ? 'Analyzing...' : 'Run Walk-Forward Analysis'}
-                      </button>
-                      {strategyMode === 'custom' && !playgroundStrategyId && (
-                        <p className="text-xs text-gray-500">
-                          {results ? 'Select a custom strategy for walk-forward analysis' : 'Run a backtest first'}
-                        </p>
-                      )}
-                      {walkForwardResults?.error && (
-                        <p className="text-xs text-red-400">{walkForwardResults.error}</p>
-                      )}
-                      {walkForwardResults?.windows && (
-                        <>
-                          {walkForwardResults.avg_oos_return != null ? (
-                            <div className="p-2 rounded bg-gray-700/50 border border-gray-600">
-                              <div className="text-xs text-gray-400">Avg Out-of-Sample Return</div>
-                              <div className={`text-lg font-bold ${walkForwardResults.avg_oos_return >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                {walkForwardResults.avg_oos_return.toFixed(2)}%
+                          )}
+                          {monteCarloResults?.error && (
+                            <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs">{monteCarloResults.error}</div>
+                          )}
+                          {monteCarloResults && !monteCarloResults.error && monteCarloResults.percentiles && (
+                            <div className="space-y-2">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Percentiles</div>
+                              <div className="grid grid-cols-2 gap-2">
+                                {Object.entries(monteCarloResults.percentiles).map(([p, v]: [string, unknown]) => (
+                                  <div key={p} className="p-2 rounded-lg border border-gray-200 bg-white">
+                                    <span className="text-[10px] text-gray-500">{p}</span>
+                                    <div className="text-sm font-semibold text-gray-900">{typeof v === 'number' ? v.toFixed(2) : String(v)}</div>
                               </div>
+                                ))}
+                          </div>
+                    </div>
+                          )}
+                          {monteCarloResults && !monteCarloResults.error && !monteCarloResults.percentiles && (
+                            <div className="px-3 py-4 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 text-xs text-center">Simulation completed. No percentile data returned.</div>
+                          )}
+                        </div>
+                      )}
+                      {activeResultsTab === 'risk' && (
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                              <div className="text-[11px] text-gray-500 mb-1">Max drawdown</div>
+                              <div className={`text-sm font-semibold ${(results.max_drawdown ?? 0) > -20 ? 'text-emerald-600' : 'text-red-500'}`}>{(results.max_drawdown ?? 0).toFixed(1)}%</div>
+                              </div>
+                            <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                              <div className="text-[11px] text-gray-500 mb-1">Sortino</div>
+                              <div className="text-sm font-semibold text-gray-900">{(results as { sortino_ratio?: number }).sortino_ratio?.toFixed(2) ?? '-'}</div>
+                            </div>
+                            <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                              <div className="text-[11px] text-gray-500 mb-1">Calmar</div>
+                              <div className="text-sm font-semibold text-gray-900">{(results as { calmar_ratio?: number }).calmar_ratio?.toFixed(2) ?? '-'}</div>
+                              </div>
+                            <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                              <div className="text-[11px] text-gray-500 mb-1">Max consec. losses</div>
+                              <div className="text-sm font-semibold text-gray-900">{(results as { max_consecutive_losses?: number }).max_consecutive_losses ?? '-'}</div>
+                            </div>
+                          </div>
+                          {(results as { risk_violations?: Array<{ rule: string; description: string }> }).risk_violations?.length ? (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-700 mb-2">Risk violations</div>
+                              <ul className="space-y-1.5">
+                                {(results as { risk_violations: Array<{ rule: string; description: string }> }).risk_violations.map((v, i) => (
+                                  <li key={i} className="text-xs text-amber-800 flex items-start gap-2">
+                                    <span className="text-amber-500 mt-0.5">•</span>
+                                    <span><span className="font-medium">{v.rule}:</span> {v.description}</span>
+                                  </li>
+                                ))}
+                              </ul>
                             </div>
                           ) : (
-                            <div className="p-2 rounded bg-amber-900/30 border border-amber-800">
-                              <p className="text-xs text-amber-400">
-                                Not enough data in test windows. Try a longer date range (2+ years) for more meaningful walk-forward results.
-                              </p>
-                            </div>
-                          )}
-                          <div className="rounded bg-gray-700/50 overflow-hidden">
-                            <table className="w-full text-xs">
-                              <thead>
-                                <tr className="text-gray-500 border-b border-gray-600">
-                                  <th className="text-left p-1.5">Window</th>
-                                  <th className="text-right p-1.5">Train</th>
-                                  <th className="text-right p-1.5">Test</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-gray-700">
-                                {walkForwardResults.windows.map((w: any) => (
-                                  <tr key={w.window}>
-                                    <td className="p-1.5 text-gray-400">#{w.window}</td>
-                                    <td className={`p-1.5 text-right ${w.train_error ? 'text-gray-500' : (w.train_return ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                      {w.train_error ? 'err' : w.train_return != null ? `${w.train_return.toFixed(1)}%` : 'N/A'}
-                                    </td>
-                                    <td className={`p-1.5 text-right font-medium ${w.test_error ? 'text-gray-500' : (w.test_return ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                      {w.test_error ? 'err' : w.test_return != null ? `${w.test_return.toFixed(1)}%` : 'N/A'}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </>
+                            <div className="rounded-lg border border-gray-200 bg-emerald-50/50 p-3 text-xs text-emerald-700">No risk violations.</div>
                       )}
                     </div>
-                  ) : activeResultsTab === 'montecarlo' ? (
-                    <div className="p-3 space-y-3">
-                      <button
-                        onClick={handleRunMonteCarlo}
-                        disabled={monteCarloLoading || !lastBacktestId}
-                        className="w-full py-2.5 text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white rounded-md transition-all shadow-sm active:scale-[0.99]"
-                      >
-                        {monteCarloLoading ? 'Simulating...' : 'Run Monte Carlo (1000 sims)'}
-                      </button>
-                      {!lastBacktestId && (
-                        <p className="text-xs text-gray-500">Run a backtest first</p>
                       )}
-                      {monteCarloResults?.error && (
-                        <p className="text-xs text-red-400">{monteCarloResults.error}</p>
-                      )}
-                      {monteCarloResults?.percentiles && monteCarloResults?.std_final === 0 && (
-                        <div className="p-2 rounded bg-amber-900/30 border border-amber-800">
-                          <p className="text-xs text-amber-400">
-                            Too few trades for meaningful Monte Carlo analysis. All simulations converge to the same final value.
-                            Try a longer date range or a more active strategy to generate more trades.
-                          </p>
-                        </div>
-                      )}
-                      {monteCarloResults?.percentiles && (
-                        <>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="p-2 rounded bg-gray-700/50">
-                              <div className="text-xs text-gray-500">Median Final Value</div>
-                              <div className="text-sm font-semibold text-gray-200">
-                                ${monteCarloResults.percentiles.p50.toLocaleString()}
-                              </div>
-                            </div>
-                            <div className="p-2 rounded bg-gray-700/50">
-                              <div className="text-xs text-gray-500">Prob. of Loss</div>
-                              <div className={`text-sm font-semibold ${monteCarloResults.probability_of_loss > 50 ? 'text-red-400' : 'text-emerald-400'}`}>
-                                {monteCarloResults.probability_of_loss.toFixed(1)}%
-                              </div>
-                            </div>
-                          </div>
-                          <div className="rounded bg-gray-700/50 p-3">
-                            <div className="text-xs text-gray-400 mb-2">Confidence Intervals</div>
-                            <div className="space-y-1.5">
-                              {[
-                                { label: '95th', value: monteCarloResults.percentiles.p95, color: 'text-emerald-400' },
-                                { label: '75th', value: monteCarloResults.percentiles.p75, color: 'text-emerald-300' },
-                                { label: '50th', value: monteCarloResults.percentiles.p50, color: 'text-gray-200' },
-                                { label: '25th', value: monteCarloResults.percentiles.p25, color: 'text-amber-400' },
-                                { label: '5th', value: monteCarloResults.percentiles.p5, color: 'text-red-400' },
-                              ].map(p => (
-                                <div key={p.label} className="flex justify-between text-xs">
-                                  <span className="text-gray-500">{p.label} percentile</span>
-                                  <span className={p.color}>${p.value.toLocaleString()}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                          <div className="rounded bg-gray-700/50 p-3">
-                            <div className="text-xs text-gray-400 mb-1">Statistics</div>
-                            <div className="flex justify-between text-xs">
-                              <span className="text-gray-500">Mean</span>
-                              <span className="text-gray-200">${monteCarloResults.mean_final.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between text-xs">
-                              <span className="text-gray-500">Std Dev</span>
-                              <span className="text-gray-200">${monteCarloResults.std_final.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between text-xs">
-                              <span className="text-gray-500">Simulations</span>
-                              <span className="text-gray-200">{monteCarloResults.n_simulations.toLocaleString()}</span>
-                            </div>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  ) : activeResultsTab === 'risk' ? (
-                    <div className="p-3 space-y-3">
-                      {results ? (
-                        (() => {
-                          // Compute risk metrics from equity curve
-                          const ec = results.equity_curve;
-                          if (!ec || ec.length < 2) return <p className="text-xs text-gray-500">Not enough data for risk analysis</p>;
-                          
-                          const returns: number[] = [];
-                          for (let i = 1; i < ec.length; i++) {
-                            returns.push((ec[i].equity - ec[i-1].equity) / ec[i-1].equity);
-                          }
-                          
-                          const sortedReturns = [...returns].sort((a, b) => a - b);
-                          const var95 = sortedReturns[Math.floor(sortedReturns.length * 0.05)] * 100;
-                          const var99 = sortedReturns[Math.floor(sortedReturns.length * 0.01)] * 100;
-                          
-                          // CVaR (Expected Shortfall)
-                          const var95Idx = Math.floor(sortedReturns.length * 0.05);
-                          const tailReturns = sortedReturns.slice(0, Math.max(var95Idx, 1));
-                          const cvar95 = (tailReturns.reduce((a, b) => a + b, 0) / tailReturns.length) * 100;
-                          
-                          // Return distribution buckets
-                          const buckets: Record<string, number> = { '< -3%': 0, '-3 to -1%': 0, '-1 to 0%': 0, '0 to 1%': 0, '1 to 3%': 0, '> 3%': 0 };
-                          for (const r of returns) {
-                            const pct = r * 100;
-                            if (pct < -3) buckets['< -3%']++;
-                            else if (pct < -1) buckets['-3 to -1%']++;
-                            else if (pct < 0) buckets['-1 to 0%']++;
-                            else if (pct < 1) buckets['0 to 1%']++;
-                            else if (pct < 3) buckets['1 to 3%']++;
-                            else buckets['> 3%']++;
-                          }
-                          
-                          const maxBucket = Math.max(...Object.values(buckets));
-                          
+                      {activeResultsTab === 'heatmap' && (() => {
+                        const trades = results.trades || [];
+                        const byMonth: Record<string, number> = {};
+                        for (const t of trades) {
+                          const m = t.exit_date?.slice(0, 7) || t.entry_date?.slice(0, 7);
+                          if (m) byMonth[m] = (byMonth[m] || 0) + (t.pnl ?? 0);
+                        }
+                        const months = Object.keys(byMonth).sort();
+                        if (months.length === 0) return <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center text-gray-500 text-xs">No trades for monthly P&amp;L heatmap.</div>;
                           return (
-                            <>
-                              {/* VaR / CVaR */}
-                              <div className="grid grid-cols-2 gap-2">
-                                <div className="p-2 rounded bg-gray-700/50">
-                                  <div className="text-xs text-gray-500 mb-0.5">VaR (95%)</div>
-                                  <div className="text-sm font-semibold text-red-400">{var95.toFixed(2)}%</div>
-                                </div>
-                                <div className="p-2 rounded bg-gray-700/50">
-                                  <div className="text-xs text-gray-500 mb-0.5">VaR (99%)</div>
-                                  <div className="text-sm font-semibold text-red-400">{var99.toFixed(2)}%</div>
-                                </div>
-                                <div className="p-2 rounded bg-gray-700/50">
-                                  <div className="text-xs text-gray-500 mb-0.5">CVaR (95%)</div>
-                                  <div className="text-sm font-semibold text-red-400">{cvar95.toFixed(2)}%</div>
-                                </div>
-                                <div className="p-2 rounded bg-gray-700/50">
-                                  <div className="text-xs text-gray-500 mb-0.5">Avg Daily Return</div>
-                                  <div className={`text-sm font-semibold ${returns.reduce((a, b) => a + b, 0) / returns.length >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                    {(returns.reduce((a, b) => a + b, 0) / returns.length * 100).toFixed(3)}%
-                                  </div>
-                                </div>
-                              </div>
-                              
-                              {/* Return Distribution */}
-                              <div className="rounded bg-gray-700/50 p-3">
-                                <div className="text-xs text-gray-400 mb-2">Return Distribution</div>
-                                <div className="space-y-1">
-                                  {Object.entries(buckets).map(([label, count]) => (
-                                    <div key={label} className="flex items-center gap-2 text-xs">
-                                      <span className="text-gray-500 w-20 text-right">{label}</span>
-                                      <div className="flex-1 bg-gray-800 rounded-full h-3 overflow-hidden">
-                                        <div
-                                          className={`h-full rounded-full ${label.includes('-') ? 'bg-red-500/60' : 'bg-emerald-500/60'}`}
-                                          style={{ width: `${maxBucket > 0 ? (count / maxBucket) * 100 : 0}%` }}
-                                        />
-                                      </div>
-                                      <span className="text-gray-400 w-8">{count}</span>
+                          <div className="space-y-2">
+                            <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Monthly P&amp;L ($)</div>
+                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                              {months.map(m => (
+                                <div key={m} className={`p-2.5 rounded-lg border text-center ${(byMonth[m] ?? 0) >= 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                                  <div className="text-[10px] text-gray-500">{m}</div>
+                                  <div className="text-sm font-semibold">${(byMonth[m] ?? 0).toFixed(0)}</div>
                                     </div>
                                   ))}
                                 </div>
-                              </div>
-
-                              {/* Underwater Chart */}
-                              {drawdownData.length > 0 && (
-                                <div className="rounded bg-gray-700/50 p-3">
-                                  <div className="text-xs text-gray-400 mb-2">Underwater (Time in Drawdown)</div>
-                                  <div className="h-20">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                      <AreaChart
-                                        data={drawdownData.map(d => ({ ...d, dd: -d.drawdown_pct }))}
-                                        margin={{ top: 5, right: 5, left: 0, bottom: 5 }}
-                                      >
-                                        <XAxis dataKey="date" hide />
-                                        <YAxis hide domain={['dataMin - 1', 0]} />
-                                        <Tooltip
-                                          content={({ active, payload }) => {
-                                            if (active && payload?.[0]) {
-                                              const d = payload[0].payload;
-                                              return (
-                                                <div className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
-                                                  <div className="text-red-400">-{d.drawdown_pct.toFixed(2)}%</div>
-                                                  <div className="text-gray-500">{d.date}</div>
                                                 </div>
                                               );
-                                            }
-                                            return null;
-                                          }}
-                                        />
-                                        <Area type="monotone" dataKey="dd" stroke="#ef4444" strokeWidth={1} fill="#ef444440" />
-                                      </AreaChart>
-                                    </ResponsiveContainer>
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Rolling Sharpe */}
-                              {results.rolling_sharpe && results.rolling_sharpe.length > 0 && (
-                                <div className="rounded-lg bg-gray-700/50 p-3">
-                                  <div className="text-xs text-gray-400 mb-2">Rolling Sharpe Ratio (63-day)</div>
-                                  <div className="h-24">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                      <AreaChart data={results.rolling_sharpe} margin={{ top: 5, right: 5, left: 0, bottom: 5 }}>
-                                        <defs>
-                                          <linearGradient id="rsGrad" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.4} />
-                                            <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
-                                          </linearGradient>
-                                        </defs>
-                                        <XAxis dataKey="date" hide />
-                                        <YAxis hide />
-                                        <Tooltip content={({ active, payload }) => {
-                                          if (active && payload?.[0]) {
-                                            const d = payload[0].payload;
-                                            return (<div className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
-                                              <div className="text-blue-400">Sharpe: {d.value.toFixed(2)}</div>
-                                              <div className="text-gray-500">{d.date}</div>
-                                            </div>);
-                                          }
-                                          return null;
-                                        }} />
-                                        <Area type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={1.5} fill="url(#rsGrad)" />
-                                      </AreaChart>
-                                    </ResponsiveContainer>
-                                  </div>
-                                </div>
-                              )}
-                            </>
-                          );
-                        })()
-                      ) : (
-                        <div className="text-center p-6">
-                          <p className="text-sm text-gray-400">Run a backtest to see risk metrics</p>
-                        </div>
-                      )}
-                    </div>
-                  ) : activeResultsTab === 'heatmap' ? (
-                    <div className="p-3 space-y-3">
-                      <div className="text-xs text-gray-400 font-medium mb-2">Monthly Returns Heatmap (%)</div>
-                      {results?.equity_curve?.length > 10 ? (() => {
-                        const ec = results.equity_curve;
-                        const monthlyMap: Record<string, Record<number, number>> = {};
-                        let prevEquity = ec[0]?.equity || 1;
-                        let prevMonth = -1;
-                        let prevYear = -1;
-                        let monthStart = prevEquity;
-                        for (const pt of ec) {
-                          const d = new Date(pt.date);
-                          const y = d.getFullYear();
-                          const m = d.getMonth();
-                          if (prevMonth !== -1 && (m !== prevMonth || y !== prevYear)) {
-                            const key = `${prevYear}`;
-                            if (!monthlyMap[key]) monthlyMap[key] = {};
-                            monthlyMap[key][prevMonth] = monthStart > 0 ? ((prevEquity / monthStart) - 1) * 100 : 0;
-                            monthStart = prevEquity;
-                          }
-                          prevEquity = pt.equity;
-                          prevMonth = m;
-                          prevYear = y;
+                      })()}
+                      {activeResultsTab === 'distribution' && (() => {
+                        const trades = results.trades || [];
+                        const pnls = trades.map(t => t.pnl ?? 0).filter(Boolean);
+                        if (pnls.length === 0) return <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center text-gray-500 text-xs">No trade P&amp;L data.</div>;
+                        const bins: Record<string, number> = {};
+                        const step = 50;
+                        for (const p of pnls) {
+                          const b = Math.floor(p / step) * step;
+                          bins[b] = (bins[b] ?? 0) + 1;
                         }
-                        if (prevMonth !== -1) {
-                          const key = `${prevYear}`;
-                          if (!monthlyMap[key]) monthlyMap[key] = {};
-                          monthlyMap[key][prevMonth] = monthStart > 0 ? ((prevEquity / monthStart) - 1) * 100 : 0;
-                        }
-                        const years = Object.keys(monthlyMap).sort();
-                        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                        const entries = Object.entries(bins).sort((a, b) => Number(a[0]) - Number(b[0]));
+                        const maxCount = Math.max(...entries.map(([, c]) => c), 1);
                         return (
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-[10px]">
-                              <thead>
-                                <tr>
-                                  <th className="text-left text-gray-500 py-1 pr-2">Year</th>
-                                  {months.map(m => <th key={m} className="text-center text-gray-500 py-1 px-0.5 w-[40px]">{m}</th>)}
-                                  <th className="text-right text-gray-500 py-1 pl-2">Total</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {years.map(year => {
-                                  const yearData = monthlyMap[year] || {};
-                                  const yearTotal = Object.values(yearData).reduce((a, b) => a + b, 0);
-                                  return (
-                                    <tr key={year}>
-                                      <td className="text-gray-400 py-0.5 pr-2 font-medium">{year}</td>
-                                      {Array.from({length: 12}, (_, i) => {
-                                        const val = yearData[i];
-                                        if (val === undefined) return <td key={i} className="text-center py-0.5 px-0.5"><span className="block w-full rounded" style={{background:'#1a1a2e'}}>-</span></td>;
-                                        const absVal = Math.abs(val);
-                                        const opacity = Math.min(absVal / 5, 1);
-                                        const bg = val >= 0 ? `rgba(16,185,129,${opacity * 0.6})` : `rgba(239,68,68,${opacity * 0.6})`;
-                                        return (
-                                          <td key={i} className="text-center py-0.5 px-0.5">
-                                            <span className="block w-full rounded py-0.5" style={{background: bg, color: val >= 0 ? '#10b981' : '#ef4444'}}>
-                                              {val.toFixed(1)}
-                                            </span>
-                                          </td>
-                                        );
-                                      })}
-                                      <td className={`text-right py-0.5 pl-2 font-medium ${yearTotal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                        {yearTotal.toFixed(1)}%
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
+                          <div className="space-y-2">
+                            <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">P&amp;L distribution</div>
+                            <div className="space-y-2">
+                              {entries.map(([bin, count]) => (
+                                <div key={bin} className="flex items-center gap-3">
+                                  <span className="w-14 text-xs text-gray-600 font-mono">${bin}</span>
+                                  <div className="flex-1 h-6 bg-gray-100 rounded-md overflow-hidden">
+                                    <div className={`h-full min-w-[2px] rounded-md ${Number(bin) >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`} style={{ width: `${Math.max((count / maxCount) * 100, 2)}%` }} />
                           </div>
-                        );
-                      })() : (
-                        <div className="text-center p-6">
-                          <Calendar className="h-8 w-8 text-gray-600 mx-auto mb-2" />
-                          <p className="text-sm text-gray-400">Need more data for monthly heatmap</p>
-                          <p className="text-xs text-gray-500 mt-1">Run a backtest spanning multiple months</p>
-                        </div>
-                      )}
-                    </div>
-                  ) : activeResultsTab === 'distribution' ? (
-                    <div className="p-3 space-y-3">
-                      <div className="text-xs text-gray-400 font-medium mb-2">Trade P&L Distribution</div>
-                      {results?.trades?.length > 2 ? (() => {
-                        const pnls = results.trades.map((t: any) => t.pnl || 0).sort((a: number, b: number) => a - b);
-                        const min = pnls[0];
-                        const max = pnls[pnls.length - 1];
-                        const bins = 15;
-                        const step = (max - min) / bins || 1;
-                        const histogram = Array.from({length: bins}, (_, i) => {
-                          const lo = min + i * step;
-                          const hi = lo + step;
-                          const count = pnls.filter((v: number) => v >= lo && (i === bins - 1 ? v <= hi : v < hi)).length;
-                          return { center: (lo + hi) / 2, count, label: `$${((lo + hi) / 2).toFixed(0)}` };
-                        });
-                        const maxCount = Math.max(...histogram.map(h => h.count));
-                        return (
-                          <div className="space-y-3">
-                            <div className="h-40 flex items-end gap-[2px]">
-                              {histogram.map((bin, i) => (
-                                <div key={i} className="flex-1 flex flex-col items-center" title={`${bin.label}: ${bin.count} trades`}>
-                                  <div
-                                    className={`w-full rounded-t ${bin.center >= 0 ? 'bg-emerald-500/60' : 'bg-red-500/60'}`}
-                                    style={{ height: `${maxCount > 0 ? (bin.count / maxCount) * 100 : 0}%`, minHeight: bin.count > 0 ? '2px' : '0' }}
-                                  />
+                                  <span className="text-xs text-gray-700 font-medium w-6 text-right">{count}</span>
                                 </div>
                               ))}
                             </div>
-                            <div className="flex justify-between text-[9px] text-gray-500">
-                              <span>${min.toFixed(0)}</span>
-                              <span>$0</span>
-                              <span>${max.toFixed(0)}</span>
-                            </div>
-                            {/* Stats */}
-                            <div className="grid grid-cols-3 gap-2 text-xs">
-                              <div className="bg-gray-700/50 rounded p-2 text-center">
-                                <div className="text-gray-500 text-[10px]">Avg Win</div>
-                                <div className="text-emerald-400 font-medium">
-                                  ${(pnls.filter((v: number) => v > 0).reduce((a: number, b: number) => a + b, 0) / Math.max(pnls.filter((v: number) => v > 0).length, 1)).toFixed(2)}
-                                </div>
-                              </div>
-                              <div className="bg-gray-700/50 rounded p-2 text-center">
-                                <div className="text-gray-500 text-[10px]">Avg Loss</div>
-                                <div className="text-red-400 font-medium">
-                                  ${(pnls.filter((v: number) => v < 0).reduce((a: number, b: number) => a + b, 0) / Math.max(pnls.filter((v: number) => v < 0).length, 1)).toFixed(2)}
-                                </div>
-                              </div>
-                              <div className="bg-gray-700/50 rounded p-2 text-center">
-                                <div className="text-gray-500 text-[10px]">Median</div>
-                                <div className="text-gray-200 font-medium">
-                                  ${pnls[Math.floor(pnls.length / 2)]?.toFixed(2) || '0'}
-                                </div>
-                              </div>
-                            </div>
-                            {/* Duration distribution */}
-                            {results.trades.some((t: any) => t.entry_date && t.exit_date) && (
-                              <div>
-                                <div className="text-xs text-gray-400 font-medium mb-1 mt-2">Trade Duration (days)</div>
-                                <div className="flex gap-1">
-                                  {(() => {
-                                    const durations = results.trades
-                                      .filter((t: any) => t.entry_date && t.exit_date)
-                                      .map((t: any) => Math.max(1, Math.round((new Date(t.exit_date).getTime() - new Date(t.entry_date).getTime()) / 86400000)));
-                                    const maxD = Math.max(...durations, 1);
-                                    const buckets = [1, 2, 3, 5, 10, 20, 50, 100].filter(b => b <= maxD * 1.5);
-                                    return buckets.map((b, i) => {
-                                      const lo = i === 0 ? 0 : buckets[i-1];
-                                      const cnt = durations.filter((d: number) => d > lo && d <= b).length;
-                                      const pct = durations.length > 0 ? (cnt / durations.length * 100) : 0;
-                                      return (
-                                        <div key={b} className="flex-1 text-center">
-                                          <div className="h-12 flex items-end justify-center">
-                                            <div className="w-full bg-blue-500/40 rounded-t" style={{height: `${pct}%`, minHeight: cnt > 0 ? '2px' : '0'}} />
-                                          </div>
-                                          <div className="text-[8px] text-gray-500 mt-0.5">{b}d</div>
                                         </div>
                                       );
-                                    });
                                   })()}
+                      {activeResultsTab === 'compare' && (
+                        <div className="space-y-3">
+                          {results.benchmark_return !== undefined ? (
+                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">vs Buy &amp; Hold</div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                  <div className="text-[11px] text-gray-500 mb-1">Strategy</div>
+                                  <div className={`text-sm font-semibold ${results.total_return >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{results.total_return.toFixed(1)}%</div>
                                 </div>
+                                <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                  <div className="text-[11px] text-gray-500 mb-1">Benchmark</div>
+                                  <div className={`text-sm font-semibold ${results.benchmark_return >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{results.benchmark_return.toFixed(1)}%</div>
                               </div>
-                            )}
                           </div>
-                        );
-                      })() : (
-                        <div className="text-center p-6">
-                          <BarChart3 className="h-8 w-8 text-gray-600 mx-auto mb-2" />
-                          <p className="text-sm text-gray-400">Need more trades for distribution</p>
+                              <div className="p-3 rounded-lg border border-emerald-200 bg-emerald-50">
+                                <div className="text-[11px] text-gray-600 mb-0.5">Alpha</div>
+                                <div className={`text-lg font-bold ${results.total_return > results.benchmark_return ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                  {(results.total_return - results.benchmark_return) >= 0 ? '+' : ''}{(results.total_return - results.benchmark_return).toFixed(1)}%
                         </div>
-                      )}
                     </div>
-                  ) : activeResultsTab === 'compare' ? (
-                    <div className="p-3 space-y-3">
-                      {comparisonHistory.length < 2 ? (
-                        <div className="text-center p-6">
-                          <BarChart3 className="h-8 w-8 text-gray-600 mx-auto mb-2" />
-                          <p className="text-sm text-gray-400">Run at least 2 backtests to compare</p>
-                          <p className="text-xs text-gray-500 mt-1">Results are saved automatically</p>
                         </div>
                       ) : (
-                        <>
-                          {/* Metric Comparison Table */}
-                          <div className="rounded-lg bg-gray-700/50 p-3">
-                            <div className="text-xs text-gray-400 mb-2">Metric Comparison</div>
-                            <table className="w-full text-xs">
-                              <thead>
-                                <tr className="text-gray-500 border-b border-gray-600">
-                                  <th className="text-left py-1.5 font-medium">Metric</th>
-                                  {comparisonHistory.slice(-3).map((r, i) => (
-                                    <th key={i} className="text-right py-1.5 font-medium truncate max-w-[80px]">
-                                      {r.label.length > 12 ? r.label.slice(0, 12) + '...' : r.label}
-                                    </th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-gray-700">
-                                {[
-                                  { key: 'total_return', label: 'Return', fmt: (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`, color: (v: number) => v >= 0 ? 'text-emerald-400' : 'text-red-400' },
-                                  { key: 'sharpe_ratio', label: 'Sharpe', fmt: (v: number) => v.toFixed(2), color: (v: number) => v > 1 ? 'text-emerald-400' : 'text-amber-400' },
-                                  { key: 'max_drawdown', label: 'Drawdown', fmt: (v: number) => `${v.toFixed(1)}%`, color: (v: number) => v > -20 ? 'text-emerald-400' : 'text-red-400' },
-                                  { key: 'win_rate', label: 'Win Rate', fmt: (v: number) => `${v.toFixed(0)}%`, color: (v: number) => v > 50 ? 'text-emerald-400' : 'text-amber-400' },
-                                  { key: 'total_trades', label: 'Trades', fmt: (v: number) => v.toString(), color: () => 'text-gray-200' },
-                                ].map(metric => (
-                                  <tr key={metric.key}>
-                                    <td className="py-1.5 text-gray-400">{metric.label}</td>
-                                    {comparisonHistory.slice(-3).map((r, i) => {
-                                      const val = (r as any)[metric.key] ?? 0;
-                                      return (
-                                        <td key={i} className={`py-1.5 text-right font-medium ${metric.color(val)}`}>
-                                          {metric.fmt(val)}
-                                        </td>
-                                      );
-                                    })}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-center">
+                              <div className="text-[11px] text-gray-500">Enable benchmark in Setup → Benchmark to compare strategy vs buy &amp; hold.</div>
                           </div>
-
-                          {/* Overlaid Equity Curves */}
-                          {comparisonHistory.some(r => r.equity_curve?.length > 0) && (
-                            <div className="rounded-lg bg-gray-700/50 p-3">
-                              <div className="text-xs text-gray-400 mb-2">Equity Curves (Normalized)</div>
-                              <div className="h-32">
-                                <ResponsiveContainer width="100%" height="100%">
-                                  <AreaChart margin={{ top: 5, right: 5, left: 0, bottom: 5 }}>
-                                    <XAxis dataKey="date" hide />
-                                    <YAxis hide />
-                                    <Tooltip
-                                      content={({ active, payload }) => {
-                                        if (active && payload?.length) {
-                                          return (
-                                            <div className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
-                                              {payload.map((p: any, i: number) => (
-                                                <div key={i} style={{ color: p.color }}>
-                                                  ${Number(p.value).toLocaleString()}
+                          )}
                                                 </div>
-                                              ))}
+                      )}
+                      {activeResultsTab === 'tca' && (
+                        <div className="space-y-3">
+                          {((results as { total_commission?: number }).total_commission || (results as { total_slippage?: number }).total_slippage) ? (
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                <div className="text-[11px] text-gray-500 mb-1">Total commission</div>
+                                <div className="text-sm font-semibold text-gray-900">${((results as { total_commission?: number }).total_commission ?? 0).toFixed(2)}</div>
                                             </div>
-                                          );
-                                        }
-                                        return null;
-                                      }}
-                                    />
-                                    {comparisonHistory.slice(-3).map((r, i) => {
-                                      const colors = ['#10b981', '#3b82f6', '#f59e0b'];
-                                      return (
-                                        <Area
-                                          key={i}
-                                          data={r.equity_curve}
-                                          type="monotone"
-                                          dataKey="equity"
-                                          stroke={colors[i % colors.length]}
-                                          strokeWidth={1.5}
-                                          fill="none"
-                                          name={r.label}
-                                        />
-                                      );
-                                    })}
-                                  </AreaChart>
-                                </ResponsiveContainer>
+                              <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                <div className="text-[11px] text-gray-500 mb-1">Total slippage</div>
+                                <div className="text-sm font-semibold text-gray-900">${((results as { total_slippage?: number }).total_slippage ?? 0).toFixed(2)}</div>
                               </div>
-                              {/* Legend */}
-                              <div className="flex flex-wrap gap-3 mt-2">
-                                {comparisonHistory.slice(-3).map((r, i) => {
-                                  const colors = ['#10b981', '#3b82f6', '#f59e0b'];
-                                  return (
-                                    <div key={i} className="flex items-center gap-1.5 text-xs">
-                                      <div className="w-3 h-0.5 rounded" style={{ backgroundColor: colors[i % colors.length] }} />
-                                      <span className="text-gray-400 truncate max-w-[100px]">{r.label}</span>
+                              <div className="p-3 rounded-lg border border-gray-200 bg-white col-span-2">
+                                <div className="text-[11px] text-gray-500 mb-1">Cost as % of P&amp;L</div>
+                                <div className="text-sm font-semibold text-gray-900">{((results as { cost_as_pct_of_pnl?: number }).cost_as_pct_of_pnl ?? 0).toFixed(2)}%</div>
                                     </div>
-                                  );
-                                })}
                               </div>
+                          ) : (
+                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-center">
+                              <div className="text-[11px] text-gray-500">Configure commission and slippage in Setup → Costs to see transaction cost analysis.</div>
                             </div>
                           )}
-
-                          {/* Clear History Button */}
-                          <button
-                            onClick={() => setComparisonHistory([])}
-                            className="w-full py-1.5 text-xs text-gray-500 hover:text-gray-300 transition"
-                          >
-                            Clear comparison history
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  ) : null
-                ) : (
-                  <div className="h-full flex flex-col items-center justify-center p-6 text-center">
-                    <Play className="h-10 w-10 text-gray-600 mb-3" />
-                    <h3 className="font-semibold text-gray-300 mb-1">Ready to backtest</h3>
-                    <p className="text-xs text-gray-500">Click Run to simulate your strategy</p>
                   </div>
                 )}
                 </ErrorBoundary>
               </div>
             </div>
+              )}
+            />
           )}
         </div>
       </div>
@@ -4119,6 +2833,7 @@ hist('dist',${histData});
         } : null}
         lastRunTime={lastRunTime || undefined}
         onExportReport={results ? () => {
+          if (!results) return;
           const html = generateLocalTearsheet(results);
           const blob = new Blob([html], { type: 'text/html' });
           const url = URL.createObjectURL(blob);
@@ -4132,6 +2847,213 @@ hist('dist',${histData});
         uiScale={uiScale}
         onUiScaleChange={setUiScale}
       />
+
+      {/* Floating Setup Panel - portal to body so it floats over chart, not inside result section */}
+      {activeSetupPanel && canPortal && typeof window !== 'undefined' && createPortal(
+        <div
+          className="bg-white border border-gray-200 rounded-lg shadow-2xl flex flex-col overflow-hidden relative"
+          style={{
+            position: 'fixed',
+            left: setupPanelPosition.x,
+            top: setupPanelPosition.y,
+            width: setupPanelSize.w,
+            height: setupPanelSize.h,
+            zIndex: 2147483647,
+            pointerEvents: 'auto',
+            transition: (isDraggingSetupPanel || isResizingSetupPanel) ? 'none' : 'box-shadow 0.15s',
+          }}
+        >
+          {/* Header - draggable */}
+          <div
+            className="h-9 px-3 flex items-center justify-between border-b border-gray-200 bg-gray-50 cursor-move select-none shrink-0"
+            onMouseDown={handleSetupPanelDragStart}
+          >
+            <span className="text-xs font-semibold text-gray-900">
+              {({ strategy: 'Strategy', dates: 'Dates', capital: 'Capital', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine' } as Record<string, string>)[activeSetupPanel]}
+            </span>
+            <button
+              onClick={() => setActiveSetupPanel(null)}
+              className="p-1 text-gray-500 hover:text-gray-900 rounded transition"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {/* Content - scrollable */}
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
+            {activeSetupPanel === 'strategy' && (
+              <div className="space-y-2">
+                <div className="flex rounded-lg bg-gray-100 p-0.5">
+                  <button type="button" onClick={() => { setStrategyMode('templates'); handleTemplateChange('sma_crossover'); }} className={`flex-1 py-1.5 text-[11px] font-medium rounded-md ${strategyMode === 'templates' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>Templates</button>
+                  <button type="button" onClick={() => setStrategyMode('custom')} className={`flex-1 py-1.5 text-[11px] font-medium rounded-md ${strategyMode === 'custom' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>Custom</button>
+                </div>
+                {strategyMode === 'templates' ? (
+                  <>
+                    <ConfigSelect value={selectedTemplate} onChange={(v) => handleTemplateChange(v as StrategyTemplateKey)} light options={Object.entries(STRATEGY_TEMPLATES).filter(([k]) => k !== 'custom').map(([key, t]) => ({ value: key, label: t.name }))} />
+                    {STRATEGY_PARAMS[selectedTemplate]?.length > 0 && (
+                      <div className="space-y-2 pt-2 border-t border-gray-200">
+                        <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Parameters</div>
+                        {STRATEGY_PARAMS[selectedTemplate].map((p) => (
+                          <div key={p.key}>
+                            <label className="block text-[10px] text-gray-500 mb-0.5">{p.label}</label>
+                            <input
+                              type="number"
+                              value={strategyParams[p.key] ?? p.default}
+                              onChange={(e) => setStrategyParams((prev) => ({ ...prev, [p.key]: parseFloat(e.target.value) || p.default }))}
+                              min={p.min}
+                              max={p.max}
+                              step={p.step ?? 1}
+                              className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900 focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="space-y-2">
+                    {customStrategiesLoading ? <div className="text-[10px] text-gray-500 py-1">Loading...</div> : displayedCustomStrategies.length > 0 ? (
+                      <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                        {displayedCustomStrategies.map(s => (
+                          <div
+                            key={s.id}
+                            className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs ${editingRenameId === s.id ? '' : 'cursor-pointer'} ${playgroundStrategyId === s.id && editingRenameId !== s.id ? 'bg-emerald-50 text-emerald-600' : 'text-gray-700 hover:bg-gray-50'}`}
+                            onClick={() => editingRenameId !== s.id && handleCustomStrategySelect(String(s.id))}
+                          >
+                            {editingRenameId === s.id ? (
+                              <input
+                                type="text"
+                                value={renameInputValue}
+                                onChange={(e) => setRenameInputValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') saveRenameStrategy();
+                                  if (e.key === 'Escape') cancelRenameStrategy();
+                                }}
+                                onBlur={() => saveRenameStrategy()}
+                                autoFocus
+                                className="flex-1 min-w-0 px-2 py-1 text-xs bg-white border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            ) : (
+                              <>
+                                <span className="flex-1 truncate min-w-0">{s.title}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); startRenameStrategy(s.id); }}
+                                  className="p-1 rounded text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 shrink-0"
+                                  title="Rename strategy"
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); handleDeleteStrategy(s.id); }}
+                                  className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 shrink-0"
+                                  title="Delete strategy"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : <div className="text-[10px] text-gray-500 py-1">No strategies</div>}
+                    <div className="flex gap-2 pt-2 border-t border-gray-200">
+                      <button type="button" onClick={handleCreateNewStrategy} disabled={!isAuthenticated || customStrategiesLoading} className="flex-1 py-2 text-[11px] font-medium text-emerald-600 hover:text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md">New</button>
+                      <button type="button" onClick={() => refetchCustomStrategies()} disabled={customStrategiesLoading} className="px-3 py-2 text-[11px] text-gray-500 hover:text-gray-900 bg-gray-100 rounded-md">Refresh</button>
+                    </div>
+                  </div>
+                )}
+                {playgroundStrategyId && <button onClick={() => setShowCodeEditor(true)} className="w-full py-2 text-[11px] text-emerald-600 border border-emerald-200 rounded-md mt-2 hover:bg-emerald-50">Open Editor</button>}
+              </div>
+            )}
+            {activeSetupPanel === 'dates' && (
+              <div className="space-y-2">
+                <div className="text-[10px] text-gray-500 uppercase tracking-wide">Start</div>
+                <input type="date" value={config.startDate} onChange={(e) => setConfig({ ...config, startDate: e.target.value })} className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900" />
+                <div className="text-[10px] text-gray-500 uppercase tracking-wide">End</div>
+                <input type="date" value={config.endDate} onChange={(e) => setConfig({ ...config, endDate: e.target.value })} className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900" />
+                <div className="text-[11px] text-gray-500">{daysOfData} days</div>
+              </div>
+            )}
+            {activeSetupPanel === 'capital' && (
+              <div>
+                <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-2">Initial Capital</div>
+                <div className="relative">
+                  <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+                  <input type="number" value={config.initialCapital} onChange={(e) => setConfig({ ...config, initialCapital: parseFloat(e.target.value) || 10000 })} className="w-full pl-8 px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900" />
+                </div>
+              </div>
+            )}
+            {activeSetupPanel === 'benchmark' && (
+              <div>
+                <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-2">Benchmark Symbol</div>
+                <input type="text" value={config.benchmarkSymbol ?? ''} onChange={(e) => setConfig({ ...config, benchmarkSymbol: e.target.value || null })} placeholder="e.g. SPY" className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900 placeholder-gray-400" />
+              </div>
+            )}
+            {activeSetupPanel === 'costs' && (
+              <div className="space-y-3">
+                <div>
+                  <div className="text-[10px] text-gray-500 uppercase mb-1">Broker preset</div>
+                  <select
+                    value={config.brokerPreset ?? 'custom'}
+                    onChange={(e) => {
+                      const preset = e.target.value as BrokerPreset;
+                      const p = BROKER_PRESETS[preset];
+                      setConfig({
+                        ...config,
+                        brokerPreset: preset,
+                        commission: p.commission,
+                        slippage: p.slippage,
+                      });
+                    }}
+                    className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded text-gray-900"
+                  >
+                    {(Object.keys(BROKER_PRESETS) as BrokerPreset[]).map((k) => (
+                      <option key={k} value={k}>{BROKER_PRESETS[k].label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div className="text-[10px] text-gray-500 uppercase mb-1">Slippage model</div>
+                  <select
+                    value={config.slippageModel}
+                    onChange={(e) => setConfig({ ...config, slippageModel: e.target.value as BacktestConfig['slippageModel'] })}
+                    className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded text-gray-900 mb-2"
+                  >
+                    <option value="percentage">Percentage (fixed)</option>
+                    <option value="auto">Auto (from symbol volume)</option>
+                    <option value="volume_aware">Volume-aware</option>
+                    <option value="none">None</option>
+                  </select>
+                </div>
+                <div><span className="text-[10px] text-gray-500 uppercase">Slippage %</span><input type="number" step={0.01} value={config.slippage} onChange={(e) => setConfig({ ...config, slippage: parseFloat(e.target.value) || 0, brokerPreset: 'custom' })} className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900 disabled:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-500" disabled={config.slippageModel === 'auto' || config.slippageModel === 'volume_aware' || (config.brokerPreset && config.brokerPreset !== 'custom')} title={config.slippageModel === 'auto' || config.slippageModel === 'volume_aware' ? 'Not used for volume-aware/auto models' : (config.brokerPreset && config.brokerPreset !== 'custom') ? 'Select Custom preset to edit' : undefined} /></div>
+                <div><span className="text-[10px] text-gray-500 uppercase">Commission %</span><input type="number" step={0.01} value={config.commission} onChange={(e) => setConfig({ ...config, commission: parseFloat(e.target.value) || 0, brokerPreset: 'custom' })} className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900 disabled:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-500" disabled={config.brokerPreset !== undefined && config.brokerPreset !== 'custom'} title={config.brokerPreset && config.brokerPreset !== 'custom' ? 'Select Custom preset to edit' : ''} /></div>
+              </div>
+            )}
+            {activeSetupPanel === 'risk' && (
+              <div className="space-y-2">
+                <div><span className="text-[10px] text-gray-500 uppercase">Stop Loss %</span><input type="number" step={0.1} value={config.stopLossPct ?? ''} onChange={(e) => setConfig({ ...config, stopLossPct: e.target.value ? parseFloat(e.target.value) : null })} placeholder="None" className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
+                <div><span className="text-[10px] text-gray-500 uppercase">Take Profit %</span><input type="number" step={0.1} value={config.takeProfitPct ?? ''} onChange={(e) => setConfig({ ...config, takeProfitPct: e.target.value ? parseFloat(e.target.value) : null })} placeholder="None" className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
+                <div><span className="text-[10px] text-gray-500 uppercase">Max Drawdown %</span><input type="number" value={config.maxDrawdownPct} onChange={(e) => setConfig({ ...config, maxDrawdownPct: parseFloat(e.target.value) || 50 })} className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
+              </div>
+            )}
+            {activeSetupPanel === 'engine' && (
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-xs text-gray-900"><input type="checkbox" checked={config.marginEnabled} onChange={(e) => setConfig({ ...config, marginEnabled: e.target.checked })} className="rounded" /> Margin</label>
+                <label className="flex items-center gap-2 text-xs text-gray-900"><input type="checkbox" checked={config.allowShortsWithoutMargin} onChange={(e) => setConfig({ ...config, allowShortsWithoutMargin: e.target.checked })} className="rounded" /> Allow shorts w/o margin</label>
+                <div><span className="text-[10px] text-gray-500 uppercase">Leverage</span><input type="number" min={1} max={10} value={config.leverage} onChange={(e) => setConfig({ ...config, leverage: parseFloat(e.target.value) || 1 })} className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
+                <div><span className="text-[10px] text-gray-500 uppercase">Warmup bars</span><input type="number" value={config.warmupBars} onChange={(e) => setConfig({ ...config, warmupBars: parseInt(e.target.value, 10) || 0 })} className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
+                <label className="flex items-center gap-2 text-xs text-gray-900"><input type="checkbox" checked={config.pdtEnabled} onChange={(e) => setConfig({ ...config, pdtEnabled: e.target.checked })} className="rounded" /> PDT rule</label>
+              </div>
+            )}
+          </div>
+          {/* Resize handle */}
+          <div className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize" onMouseDown={handleSetupPanelResizeStart} style={{ background: 'linear-gradient(135deg, transparent 50%, rgba(156,163,175,0.6) 50%)' }} title="Resize" />
+        </div>,
+        document.getElementById('portal-root') ?? document.body
+      )}
 
       {/* Floating Code Editor Panel - Draggable */}
       {showCodeEditor && (
@@ -4147,27 +3069,27 @@ hist('dist',${histData});
         >
           {/* Editor Header - Draggable */}
           <div 
-            className={`h-10 bg-gray-800 ${editorMinimized ? 'rounded-lg' : 'rounded-t-lg'} px-3 flex items-center justify-between border-b border-gray-700 cursor-move select-none shrink-0`}
+            className={`h-10 bg-white ${editorMinimized ? 'rounded-lg' : 'rounded-t-lg'} px-3 flex items-center justify-between border-b border-gray-200 cursor-move select-none shrink-0`}
             onMouseDown={handleMouseDown}
           >
             <div className="flex items-center gap-3 flex-1 min-w-0">
-              <FileCode className="h-4 w-4 text-emerald-500 shrink-0" />
-              <span className="text-sm text-gray-200 font-medium truncate">
+              <FileCode className="h-4 w-4 text-emerald-600 shrink-0" />
+              <span className="text-sm text-gray-900 font-medium truncate">
                 {playgroundStrategyId ? displayedCustomStrategies.find(s => s.id === playgroundStrategyId)?.title ?? 'strategy.py' : 'strategy.py'}
               </span>
               {!editorMinimized && strategyMode === 'custom' && playgroundStrategyId && (
-                <div className="flex items-center gap-0.5 bg-gray-700/60 rounded-md p-0.5">
+                <div className="flex items-center gap-0.5 bg-gray-100 rounded-md p-0.5">
                   <button
                     onClick={(e) => { e.stopPropagation(); setEditorTab('code'); }}
                     onMouseDown={(e) => e.stopPropagation()}
-                    className={`px-2.5 py-1 text-[11px] rounded transition ${editorTab === 'code' ? 'bg-gray-600 text-gray-100' : 'text-gray-400 hover:text-gray-200'}`}
+                    className={`px-2.5 py-1 text-[11px] rounded transition ${editorTab === 'code' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
                   >
                     Code
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); setEditorTab('version-control'); }}
                     onMouseDown={(e) => e.stopPropagation()}
-                    className={`px-2.5 py-1 text-[11px] rounded transition ${editorTab === 'version-control' ? 'bg-gray-600 text-gray-100' : 'text-gray-400 hover:text-gray-200'}`}
+                    className={`px-2.5 py-1 text-[11px] rounded transition ${editorTab === 'version-control' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
                   >
                     Version control
                   </button>
@@ -4201,12 +3123,12 @@ hist('dist',${histData});
                     onMouseDown={(e) => e.stopPropagation()}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
                       editorSaveStatus === 'saved'
-                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                        ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
                         : editorSaveStatus === 'saving'
-                        ? 'bg-gray-600/50 text-gray-400 border border-gray-600 cursor-wait'
+                        ? 'bg-gray-100 text-gray-500 border border-gray-200 cursor-wait'
                         : editorSaveStatus === 'error'
-                        ? 'bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/15'
-                        : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 hover:border-emerald-500/50'
+                        ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'
+                        : 'bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300'
                     }`}
                     title="Save strategy (without committing)"
                   >
@@ -4224,7 +3146,7 @@ hist('dist',${histData});
               <button
                 onClick={(e) => { e.stopPropagation(); setEditorMinimized(!editorMinimized); }}
                 onMouseDown={(e) => e.stopPropagation()}
-                className="p-1 text-gray-400 hover:text-gray-200 hover:bg-gray-700 rounded transition"
+                className="p-1 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded transition"
                 title={editorMinimized ? 'Expand' : 'Minimize'}
               >
                 <ChevronDown className={`h-3.5 w-3.5 transition-transform ${editorMinimized ? 'rotate-180' : ''}`} />
@@ -4232,7 +3154,7 @@ hist('dist',${histData});
               <button
                 onClick={(e) => { e.stopPropagation(); setShowCodeEditor(false); }}
                 onMouseDown={(e) => e.stopPropagation()}
-                className="p-1 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition"
+                className="p-1 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded transition"
                 title="Close"
               >
                 <span className="text-sm leading-none">×</span>
@@ -4250,25 +3172,43 @@ hist('dist',${histData});
                   </ErrorBoundary>
                 </div>
               ) : strategyMode === 'custom' && playgroundStrategyId ? (
-                /* Version Control tab - GitHub Desktop style */
-                <div className="flex flex-col flex-1 min-h-0 bg-gray-800/50 overflow-hidden">
-                  {/* Commit input bar */}
-                  <div className="p-3 border-b border-gray-700/80 shrink-0">
+                /* Version Control tab - GitHub-style, theme-aware (light/dark) */
+                <div className={`flex flex-col flex-1 min-h-0 overflow-hidden ${
+                  effectiveChartTheme === 'light' ? 'bg-gray-100 border-t border-gray-200' : 'bg-gray-800/50'
+                }`}>
+                  <div className={`px-3 py-2 border-b shrink-0 ${
+                    effectiveChartTheme === 'light' ? 'border-gray-200 text-gray-600' : 'border-gray-700/80'
+                  }`}>
+                    <p className={`text-[11px] ${effectiveChartTheme === 'light' ? 'text-gray-600' : 'text-gray-400'}`}>
+                      <strong className={effectiveChartTheme === 'light' ? 'text-gray-800' : 'text-gray-300'}>Save</strong> persists your working copy. <strong className={effectiveChartTheme === 'light' ? 'text-gray-800' : 'text-gray-300'}>Commit</strong> creates a version in history (like git commit).
+                    </p>
+                  </div>
+                  {/* Commit input bar - Title + optional Description */}
+                  <div className={`p-3 border-b shrink-0 space-y-2 ${
+                    effectiveChartTheme === 'light' ? 'border-gray-200' : 'border-gray-700/80'
+                  }`}>
                     <div className="flex gap-2">
                       <input
                         type="text"
-                        value={commitMessageInput}
-                        onChange={(e) => setCommitMessageInput(e.target.value)}
-                        placeholder="Summary (required)"
-                        className="flex-1 px-3 py-2 text-sm bg-gray-700/80 border border-gray-600 rounded-md text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50"
-                        maxLength={500}
+                        value={commitTitleInput}
+                        onChange={(e) => setCommitTitleInput(e.target.value)}
+                        placeholder="Commit title (required)"
+                        className={`flex-1 px-3 py-2 text-sm rounded-md focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50 ${
+                          effectiveChartTheme === 'light'
+                            ? 'bg-white border border-gray-300 text-gray-900 placeholder-gray-500'
+                            : 'bg-gray-700/80 border border-gray-600 text-gray-200 placeholder-gray-500'
+                        }`}
+                        maxLength={72}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            if (!playgroundStrategyId) return;
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            if (!playgroundStrategyId || !commitTitleInput.trim()) return;
+                            const msg = commitTitleInput.trim() + (commitDescriptionInput.trim() ? '\n\n' + commitDescriptionInput.trim() : '');
                             api.updateStrategy(playgroundStrategyId, { code, parameters: strategyParams })
-                              .then(() => api.createVersion(playgroundStrategyId!, commitMessageInput.trim() || undefined))
+                              .then(() => api.createVersion(playgroundStrategyId!, msg))
                               .then(() => {
-                                setCommitMessageInput('');
+                                setCommitTitleInput('');
+                                setCommitDescriptionInput('');
                                 return api.listVersions(playgroundStrategyId!, 0, 10);
                               })
                               .then((v) => { setVersionList(v); setVersionListHasMore(v.length >= 10); })
@@ -4278,65 +3218,113 @@ hist('dist',${histData});
                       />
                       <button
                         onClick={async () => {
-                          if (!playgroundStrategyId) return;
+                          if (!playgroundStrategyId || !commitTitleInput.trim()) return;
                           try {
+                            const msg = commitTitleInput.trim() + (commitDescriptionInput.trim() ? '\n\n' + commitDescriptionInput.trim() : '');
                             await api.updateStrategy(playgroundStrategyId, { code, parameters: strategyParams });
-                            await api.createVersion(playgroundStrategyId, commitMessageInput.trim() || undefined);
-                            setCommitMessageInput('');
+                            await api.createVersion(playgroundStrategyId, msg);
+                            setCommitTitleInput('');
+                            setCommitDescriptionInput('');
                             const versions = await api.listVersions(playgroundStrategyId, 0, 10);
                             setVersionList(versions);
                             setVersionListHasMore(versions.length >= 10);
                           } catch {}
                         }}
-                        disabled={!commitMessageInput.trim()}
-                        className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-md transition-colors flex items-center gap-2"
+                        disabled={!commitTitleInput.trim()}
+                        className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-md transition-colors flex items-center gap-2 shrink-0"
                         title="Commit changes"
                       >
                         <GitBranch className="h-4 w-4" />
                         Commit
                       </button>
                     </div>
+                    <textarea
+                      value={commitDescriptionInput}
+                      onChange={(e) => setCommitDescriptionInput(e.target.value)}
+                      placeholder="Description (optional)"
+                      rows={2}
+                      className={`w-full px-3 py-2 text-sm rounded-md resize-none focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50 ${
+                        effectiveChartTheme === 'light'
+                          ? 'bg-white border border-gray-300 text-gray-900 placeholder-gray-500'
+                          : 'bg-gray-700/80 border border-gray-600 text-gray-200 placeholder-gray-500'
+                      }`}
+                      maxLength={500}
+                    />
                   </div>
-                  {/* Commit history - GitHub Desktop style */}
+                  {/* Commit history - GitHub-style, theme-aware */}
                   <div className="flex-1 overflow-y-auto p-3">
-                    <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider mb-2">History</div>
+                    <div className={`text-[10px] font-medium uppercase tracking-wider mb-2 ${
+                      effectiveChartTheme === 'light' ? 'text-gray-500' : 'text-gray-500'
+                    }`}>History</div>
                     {versionLoading ? (
-                      <div className="text-xs text-gray-500 py-4">Loading...</div>
+                      <div className={`text-xs py-4 ${effectiveChartTheme === 'light' ? 'text-gray-500' : 'text-gray-500'}`}>Loading...</div>
                     ) : versionList.length === 0 ? (
-                      <div className="text-xs text-gray-500 py-6 text-center">No commits yet. Add a summary above and commit.</div>
+                      <div className={`text-xs py-6 text-center ${effectiveChartTheme === 'light' ? 'text-gray-500' : 'text-gray-500'}`}>No commits yet. Add a message above and commit.</div>
                     ) : (
-                      <div className="relative">
-                        {/* Timeline line */}
-                        <div className="absolute left-[11px] top-2 bottom-2 w-px bg-gray-600/60" />
-                        <div className="space-y-0">
-                          {versionList.map((v, i) => (
-                            <div key={v.id} className="relative flex gap-3 pl-8 py-2 group">
-                              <div className="absolute left-0 top-5 w-3 h-3 rounded-full bg-emerald-500/80 border-2 border-gray-800 shrink-0" />
-                              <div className="flex-1 min-w-0 rounded-lg bg-gray-700/40 hover:bg-gray-700/60 border border-gray-600/40 p-3 transition-colors">
-                                <div className="flex items-start justify-between gap-2">
+                      <>
+                      <div className={`divide-y ${
+                        effectiveChartTheme === 'light' ? 'divide-gray-200' : 'divide-gray-600/50'
+                      }`}>
+                        {versionList.map((v, i) => {
+                          const isLatest = i === 0;
+                          const fullMsg = (v.commit_message || '').trim() || null;
+                          const title = fullMsg ? fullMsg.split('\n')[0] : null;
+                          const isLight = effectiveChartTheme === 'light';
+                          return (
+                            <div
+                              key={v.id}
+                              className={`flex items-center gap-3 py-3 group transition-colors -mx-1 px-3 rounded-md ${
+                                isLatest
+                                  ? isLight ? 'bg-emerald-50 border border-emerald-200/60' : 'bg-gray-700/60'
+                                  : isLight ? 'hover:bg-gray-100' : 'hover:bg-gray-700/30'
+                              }`}
+                            >
                                   <div className="flex-1 min-w-0">
-                                    <p className="text-sm text-gray-200 font-medium truncate">
-                                      {v.commit_message || <span className="italic text-gray-500">No message</span>}
-                                    </p>
-                                    <p className="text-[11px] text-gray-500 mt-0.5">
-                                      {v.created_at ? new Date(v.created_at).toLocaleString() : ''}
-                                      <span className="ml-2 text-gray-600">• v{v.version}</span>
-                                    </p>
+                                <p
+                                  className={`text-sm font-medium truncate ${
+                                    isLatest ? (isLight ? 'text-gray-900' : 'text-gray-100') : (isLight ? 'text-gray-800' : 'text-gray-200')
+                                  }`}
+                                  title={fullMsg || undefined}
+                                >
+                                  {title || <span className={isLight ? 'italic text-gray-500' : 'italic text-gray-500'}>No message</span>}
+                                </p>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
+                                    isLight ? 'bg-emerald-600/80' : 'bg-gray-500/80'
+                                  }`}>
+                                    <span className="text-[10px] font-medium text-white">
+                                      {(user?.username || '?')[0].toUpperCase()}
+                                    </span>
                                   </div>
-                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                  <span className={`text-[11px] truncate ${isLight ? 'text-gray-600' : 'text-gray-400'}`}>{user?.username || 'You'}</span>
+                                  <span className={isLight ? 'text-gray-400' : 'text-gray-600'}>•</span>
+                                  <span className={`text-[11px] ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>{formatCommitTime(v.created_at)}</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
                                     <button
                                       onClick={async () => {
                                         if (!playgroundStrategyId) return;
                                         try {
                                           const data = await api.restoreVersion(playgroundStrategyId, v.version);
                                           setCode(data.code);
+                                      setStrategyParams((data.parameters as Record<string, number>) ?? {});
                                           setEditorTab('code');
+                                      setLastEditorSaveTime(null);
                                         } catch {}
                                       }}
-                                      className="px-2 py-1 text-[11px] text-blue-400 hover:text-blue-300 hover:bg-gray-600 rounded"
-                                      title="Revert to this commit"
-                                    >
-                                      Revert
+                                  className={`p-2 rounded-full transition-colors ${
+                                    isLatest
+                                      ? isLight
+                                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                        : 'bg-emerald-600/80 hover:bg-emerald-500/90 text-white'
+                                      : isLight
+                                        ? 'text-gray-500 hover:text-emerald-600 hover:bg-gray-200'
+                                        : 'text-gray-400 hover:text-emerald-400 hover:bg-gray-600/60'
+                                  }`}
+                                  title="Revert to this version (working copy only, no new commit)"
+                                >
+                                  <RotateCcw className="h-3.5 w-3.5" />
                                     </button>
                                     <button
                                       onClick={async () => {
@@ -4346,16 +3334,19 @@ hist('dist',${histData});
                                           setVersionList(prev => prev.filter(x => x.id !== v.id));
                                         } catch {}
                                       }}
-                                      className="p-1 text-red-400 hover:text-red-300 hover:bg-gray-600 rounded"
+                                  className={`p-2 rounded-full transition-colors ${
+                                    isLatest
+                                      ? isLight ? 'text-gray-600 hover:text-red-600 hover:bg-red-50' : 'text-gray-400 hover:text-red-300 hover:bg-red-500/20'
+                                      : isLight ? 'text-gray-500 hover:text-red-600 hover:bg-gray-200' : 'text-gray-500 hover:text-red-400 hover:bg-gray-600/60'
+                                  }`}
                                       title="Delete commit"
                                     >
                                       <Trash2 className="h-3.5 w-3.5" />
                                     </button>
                                   </div>
                                 </div>
-                              </div>
-                            </div>
-                          ))}
+                          );
+                        })}
                         </div>
                         {versionListHasMore && (
                           <button
@@ -4370,12 +3361,16 @@ hist('dist',${histData});
                               } catch {}
                               setVersionLoading(false);
                             }}
-                            className="w-full mt-2 py-2 text-[11px] text-gray-500 hover:text-gray-300 border border-dashed border-gray-600 rounded-lg hover:border-gray-500 transition-colors"
+                            className={`w-full mt-2 py-2 text-[11px] rounded-lg border border-dashed transition-colors ${
+                              effectiveChartTheme === 'light'
+                                ? 'text-gray-500 hover:text-gray-700 border-gray-300 hover:border-gray-400'
+                                : 'text-gray-500 hover:text-gray-300 border-gray-600 hover:border-gray-500'
+                            }`}
                           >
                             Load more
                           </button>
                         )}
-                      </div>
+                      </>
                     )}
                   </div>
                 </div>

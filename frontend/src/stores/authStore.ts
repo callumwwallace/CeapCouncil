@@ -105,11 +105,12 @@ export const useAuthStore = create<AuthState>()(
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
         isAuthenticated: !!state.accessToken,
+        user: state.user,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
           state.hydrate();
-          if (state.accessToken && !state.user) {
+          if (state.accessToken) {
             useAuthStore.getState().fetchUser();
           }
         }

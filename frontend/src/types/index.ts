@@ -8,7 +8,16 @@ export interface User {
   avatar_url: string | null;
   is_active: boolean;
   is_verified: boolean;
+  notify_on_mention?: boolean;
+  email_on_mention?: boolean;
+  email_marketing?: boolean;
   created_at: string;
+}
+
+export interface NotificationPreferences {
+  notify_on_mention: boolean;
+  email_on_mention: boolean;
+  email_marketing: boolean;
 }
 
 // Strategy types
@@ -161,6 +170,92 @@ export interface BacktestCreate {
   interval?: string;
 }
 
+// Competition types
+export interface CompetitionSummary {
+  id: number;
+  title: string;
+  description: string | null;
+  symbol: string;
+  status: string;
+  ranking_metric: string;
+  ranking_metrics?: string[] | null;
+  start_date: string;
+  end_date: string;
+  backtest_start: string;
+  backtest_end: string;
+  initial_capital: number;
+  max_entries: number | null;
+  entry_count: number;
+  created_at: string;
+}
+
+export interface CompetitionDetail extends CompetitionSummary {
+  rules: Record<string, unknown> | null;
+}
+
+export interface CompetitionCreate {
+  title: string;
+  description?: string;
+  symbol: string;
+  backtest_start: string;
+  backtest_end: string;
+  initial_capital?: number;
+  ranking_metric?: string;
+  ranking_metrics?: string[] | null;
+  start_date: string;
+  end_date: string;
+  max_entries?: number;
+  rules?: Record<string, unknown>;
+}
+
+export interface LeaderboardEntry {
+  rank: number;
+  user_id: number;
+  username: string;
+  strategy_id: number;
+  strategy_title: string;
+  score: number | null;
+  total_return: number | null;
+  sharpe_ratio: number | null;
+  max_drawdown: number | null;
+  win_rate: number | null;
+  sortino_ratio: number | null;
+  total_trades: number | null;
+  evaluated_at: string | null;
+  submitted_at: string | null;
+}
+
+export interface LeaderboardResponse {
+  competition_id: number;
+  title: string;
+  ranking_metric: string;
+  ranking_metrics?: string[] | null;
+  leaderboard: LeaderboardEntry[];
+}
+
+export interface Badge {
+  id: number;
+  competition_title: string;
+  badge_tier: string;
+  rank: number | null;
+  earned_at: string | null;
+}
+
+export interface CompetitionHistoryEntry {
+  id: number;
+  competition_id: number;
+  competition_title: string;
+  competition_status: string;
+  strategy_id: number;
+  strategy_title: string;
+  rank: number | null;
+  score: number | null;
+  total_return: number | null;
+  sharpe_ratio: number | null;
+  submitted_at: string | null;
+  evaluated_at: string | null;
+}
+
 // Social types
 export interface Vote {
   id: number;
@@ -177,6 +272,109 @@ export interface Comment {
   content: string;
   parent_id: number | null;
   created_at: string;
+  updated_at: string;
+}
+
+// Forum types
+export interface ForumTopicResponse {
+  id: number;
+  slug: string;
+  name: string;
+  description: string | null;
+  section: string;
+  sort_order: number;
+  thread_count: number;
+  post_count: number;
+  latest_thread: {
+    id: number;
+    title: string;
+    author_username: string;
+    updated_at: string | null;
+    post_count: number;
+  } | null;
+}
+
+export interface ForumThreadSummary {
+  id: number;
+  topic_id: number;
+  author_id: number;
+  author_username: string;
+  title: string;
+  post_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ForumThreadDetail {
+  id: number;
+  topic_id: number;
+  author_id: number;
+  author_username: string;
+  title: string;
+  post_count: number;
+  created_at: string;
+  updated_at: string;
+  posts: ForumPostResponse[];
+}
+
+export interface ForumPostResponse {
+  id: number;
+  thread_id: number;
+  author_id: number;
+  author_username: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ForumSearchResult {
+  id: number;
+  topic_id: number;
+  topic_slug: string;
+  topic_name: string;
+  section: string;
+  author_id: number;
+  author_username: string;
+  title: string;
+  post_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NotificationResponse {
+  id: number;
+  type: string;
+  message: string;
+  link: string;
+  actor_username: string;
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface ForumActivityItem {
+  type: 'thread' | 'post';
+  id: number;
+  topic_slug?: string;
+  thread_id?: number;
+  thread_title?: string;
+  title?: string;
+  content_preview?: string;
+  created_at: string | null;
+}
+
+// Blog types
+export interface BlogPostSummary {
+  id: number;
+  title: string;
+  slug: string;
+  excerpt: string | null;
+  author: { id: number; username: string };
+  published_at: string | null;
+  created_at: string;
+}
+
+export interface BlogPostDetail extends BlogPostSummary {
+  content: string;
   updated_at: string;
 }
 

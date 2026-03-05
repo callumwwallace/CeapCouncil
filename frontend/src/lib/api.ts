@@ -9,6 +9,21 @@ import {
   Token,
   LoginCredentials,
   RegisterData,
+  CompetitionSummary,
+  CompetitionDetail,
+  CompetitionCreate,
+  LeaderboardResponse,
+  Badge,
+  CompetitionHistoryEntry,
+  BlogPostSummary,
+  BlogPostDetail,
+  ForumTopicResponse,
+  ForumThreadSummary,
+  ForumThreadDetail,
+  ForumPostResponse,
+  ForumActivityItem,
+  ForumSearchResult,
+  NotificationResponse,
 } from '@/types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
@@ -130,6 +145,47 @@ class ApiClient {
 
   async getUserByUsername(username: string): Promise<User> {
     const response = await this.client.get<User>(`/users/${username}`);
+    return response.data;
+  }
+
+  async updateCurrentUser(data: { full_name?: string; bio?: string; avatar_url?: string }): Promise<User> {
+    const response = await this.client.patch<User>('/users/me', data);
+    return response.data;
+  }
+
+  async changeEmail(newEmail: string, currentPassword: string): Promise<User> {
+    const response = await this.client.patch<User>('/users/me/email', {
+      new_email: newEmail,
+      current_password: currentPassword,
+    });
+    return response.data;
+  }
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<{ message: string }> {
+    const response = await this.client.patch<{ message: string }>('/users/me/password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    });
+    return response.data;
+  }
+
+  async updateNotificationPreferences(data: { notify_on_mention?: boolean; email_on_mention?: boolean; email_marketing?: boolean }): Promise<User> {
+    const response = await this.client.patch<User>('/users/me/notification-preferences', data);
+    return response.data;
+  }
+
+  async getUserStrategyCount(username: string): Promise<{ count: number }> {
+    const response = await this.client.get<{ count: number }>(`/users/${username}/strategy-count`);
+    return response.data;
+  }
+
+  async getUserRep(username: string): Promise<{ score: number; your_vote: number | null }> {
+    const response = await this.client.get<{ score: number; your_vote: number | null }>(`/users/${username}/rep`);
+    return response.data;
+  }
+
+  async giveRep(username: string, value: 1 | -1): Promise<{ score: number; your_vote: number }> {
+    const response = await this.client.post<{ score: number; your_vote: number }>(`/users/${username}/rep`, { value });
     return response.data;
   }
 
@@ -272,8 +328,8 @@ class ApiClient {
     return response.data;
   }
 
-  async restoreVersion(strategyId: number, version: number): Promise<{message: string; code: string}> {
-    const response = await this.client.post(`/strategies/${strategyId}/versions/${version}/restore`);
+  async restoreVersion(strategyId: number, version: number): Promise<Strategy> {
+    const response = await this.client.post<Strategy>(`/strategies/${strategyId}/versions/${version}/restore`);
     return response.data;
   }
 
@@ -298,11 +354,16 @@ class ApiClient {
 
   // Out-of-sample validation
   async runOosValidation(data: {
-    strategy_id: number; symbol: string; start_date: string; end_date: string;
+    strategy_id?: number; code?: string; symbol: string; start_date: string; end_date: string;
     initial_capital: number; commission: number; slippage: number;
-    oos_ratio?: number; param_ranges?: Record<string, unknown>; n_trials?: number; interval?: string;
+    oos_ratio?: number; n_folds?: number; param_ranges?: Record<string, unknown>; n_trials?: number; interval?: string;
   }): Promise<{ task_id: string }> {
     const response = await this.client.post('/backtests/oos-validate', data);
+    return response.data;
+  }
+
+  async getOosResult(taskId: string): Promise<any> {
+    const response = await this.client.get(`/backtests/oos-validate/${taskId}`);
     return response.data;
   }
 
@@ -315,7 +376,8 @@ class ApiClient {
   async runWalkForward(data: {
     strategy_id?: number; code?: string; symbol: string; start_date: string; end_date: string;
     initial_capital: number; commission: number; slippage: number;
-    n_splits?: number; train_pct?: number; interval?: string;
+    n_splits?: number; train_pct?: number; purge_bars?: number; window_mode?: 'rolling' | 'anchored';
+    interval?: string;
   }): Promise<{ task_id: string }> {
     const response = await this.client.post('/backtests/walk-forward', data);
     return response.data;
@@ -334,6 +396,163 @@ class ApiClient {
 
   async getMonteCarloResult(taskId: string): Promise<any> {
     const response = await this.client.get(`/backtests/monte-carlo/${taskId}`);
+    return response.data;
+  }
+
+  // Competitions / Leaderboard
+  async listCompetitions(status?: string): Promise<CompetitionSummary[]> {
+    const response = await this.client.get<CompetitionSummary[]>('/competitions', { params: status ? { status } : {} });
+    return response.data;
+  }
+
+  async getCompetition(id: number): Promise<CompetitionDetail> {
+    const response = await this.client.get<CompetitionDetail>(`/competitions/${id}`);
+    return response.data;
+  }
+
+  async getLeaderboard(competitionId: number): Promise<LeaderboardResponse> {
+    const response = await this.client.get<LeaderboardResponse>(`/competitions/${competitionId}/leaderboard`);
+    return response.data;
+  }
+
+  async enterCompetition(competitionId: number, strategyId: number): Promise<{ id: number; status: string; message?: string }> {
+    const response = await this.client.post(`/competitions/${competitionId}/enter`, { strategy_id: strategyId });
+    return response.data;
+  }
+
+  async createCompetition(data: CompetitionCreate): Promise<{ id: number; title: string; status: string }> {
+    const response = await this.client.post('/competitions', data);
+    return response.data;
+  }
+
+  async updateCompetitionStatus(competitionId: number, status: string): Promise<{ status: string }> {
+    const response = await this.client.patch(`/competitions/${competitionId}/status`, { status });
+    return response.data;
+  }
+
+  async getMyBadges(): Promise<Badge[]> {
+    const response = await this.client.get<Badge[]>('/users/me/badges');
+    return response.data;
+  }
+
+  async getUserBadges(username: string): Promise<Badge[]> {
+    const response = await this.client.get<Badge[]>(`/users/${username}/badges`);
+    return response.data;
+  }
+
+  async getUserForumStats(username: string): Promise<{ thread_count: number; post_count: number }> {
+    const response = await this.client.get<{ thread_count: number; post_count: number }>(
+      `/users/${username}/forum-stats`
+    );
+    return response.data;
+  }
+
+  async getUserForumActivity(username: string, limit?: number): Promise<ForumActivityItem[]> {
+    const response = await this.client.get<ForumActivityItem[]>(`/users/${username}/forum-activity`, {
+      params: { limit: limit ?? 10 },
+    });
+    return response.data;
+  }
+
+  async getUserCompetitionHistory(username: string): Promise<CompetitionHistoryEntry[]> {
+    const response = await this.client.get<CompetitionHistoryEntry[]>(`/users/${username}/competition-history`);
+    return response.data;
+  }
+
+  // Forum
+  async searchForumThreads(params: {
+    q?: string;
+    sections?: string[];
+    date_from?: string;
+    date_to?: string;
+    posted_by?: string;
+    skip?: number;
+    limit?: number;
+  }): Promise<ForumSearchResult[]> {
+    const searchParams: Record<string, string | number | undefined> = {};
+    if (params.q) searchParams.q = params.q;
+    if (params.sections?.length) searchParams.sections = params.sections.join(',');
+    if (params.date_from) searchParams.date_from = params.date_from;
+    if (params.date_to) searchParams.date_to = params.date_to;
+    if (params.posted_by) searchParams.posted_by = params.posted_by;
+    if (params.skip != null) searchParams.skip = params.skip;
+    if (params.limit != null) searchParams.limit = params.limit;
+    const response = await this.client.get<ForumSearchResult[]>('/forum/search', { params: searchParams });
+    return response.data;
+  }
+
+  async listForumTopics(): Promise<ForumTopicResponse[]> {
+    const response = await this.client.get<ForumTopicResponse[]>('/forum/topics');
+    return response.data;
+  }
+
+  async listForumThreads(slug: string, skip?: number, limit?: number): Promise<ForumThreadSummary[]> {
+    const response = await this.client.get<ForumThreadSummary[]>('/forum/topics/' + encodeURIComponent(slug) + '/threads', {
+      params: { skip: skip ?? 0, limit: limit ?? 50 },
+    });
+    return response.data;
+  }
+
+  async createForumThread(slug: string, title: string, body: string): Promise<ForumThreadSummary> {
+    const response = await this.client.post<ForumThreadSummary>('/forum/topics/' + encodeURIComponent(slug) + '/threads', {
+      title,
+      body,
+    });
+    return response.data;
+  }
+
+  async getForumThread(threadId: number): Promise<ForumThreadDetail> {
+    const response = await this.client.get<ForumThreadDetail>(`/forum/threads/${threadId}`);
+    return response.data;
+  }
+
+  async createForumPost(threadId: number, content: string): Promise<ForumPostResponse> {
+    const response = await this.client.post<ForumPostResponse>(`/forum/threads/${threadId}/posts`, { content });
+    return response.data;
+  }
+
+  async updateForumPost(postId: number, content: string): Promise<ForumPostResponse> {
+    const response = await this.client.patch<ForumPostResponse>(`/forum/posts/${postId}`, { content });
+    return response.data;
+  }
+
+  async deleteForumPost(postId: number): Promise<void> {
+    await this.client.delete(`/forum/posts/${postId}`);
+  }
+
+  // Notifications
+  async getNotifications(params?: { unread_only?: boolean; skip?: number; limit?: number }): Promise<NotificationResponse[]> {
+    const response = await this.client.get<NotificationResponse[]>('/notifications', { params: params ?? {} });
+    return response.data;
+  }
+
+  async getUnreadNotificationCount(): Promise<number> {
+    const response = await this.client.get<{ count: number }>('/notifications/unread-count');
+    return response.data.count;
+  }
+
+  async markNotificationRead(id: number): Promise<void> {
+    await this.client.post(`/notifications/${id}/read`);
+  }
+
+  async markAllNotificationsRead(): Promise<void> {
+    await this.client.post('/notifications/read-all');
+  }
+
+  async clearAllNotifications(): Promise<void> {
+    await this.client.delete('/notifications/clear');
+  }
+
+  // Blog
+  async listBlogPosts(limit?: number, offset?: number): Promise<BlogPostSummary[]> {
+    const response = await this.client.get<BlogPostSummary[]>('/blog', {
+      params: { limit: limit ?? 20, offset: offset ?? 0 },
+    });
+    return response.data;
+  }
+
+  async getBlogPost(slug: string): Promise<BlogPostDetail> {
+    const response = await this.client.get<BlogPostDetail>(`/blog/${slug}`);
     return response.data;
   }
 
@@ -378,36 +597,11 @@ class ApiClient {
     return response.data;
   }
 
-  // Competitions
-  async listCompetitions(status?: string): Promise<any[]> {
-    const response = await this.client.get('/competitions', { params: status ? { status } : {} });
-    return response.data;
-  }
-
-  async getCompetition(id: number): Promise<any> {
-    const response = await this.client.get(`/competitions/${id}`);
-    return response.data;
-  }
-
-  async createCompetition(data: any): Promise<any> {
-    const response = await this.client.post('/competitions', data);
-    return response.data;
-  }
-
-  async enterCompetition(competitionId: number, strategyId: number): Promise<any> {
-    const response = await this.client.post(`/competitions/${competitionId}/enter`, { strategy_id: strategyId });
-    return response.data;
-  }
-
-  async getLeaderboard(competitionId: number): Promise<any> {
-    const response = await this.client.get(`/competitions/${competitionId}/leaderboard`);
-    return response.data;
-  }
-
   // Market Data
   async getMarketData(symbol: string, start: string, end: string, interval: string = '1d'): Promise<{
     symbol: string;
     data: { date: string; open: number; high: number; low: number; close: number; volume: number }[];
+    effective_interval?: string;
   }> {
     const response = await this.client.get('/market-data/ohlcv', {
       params: { symbol, start, end, interval },

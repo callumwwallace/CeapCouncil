@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.database import engine, Base
 from app.core.limiter import limiter
 from app.api.v1.router import api_router
+from app.websocket.notifications import router as ws_router
 
 
 @asynccontextmanager
@@ -46,6 +47,9 @@ app.add_middleware(
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+# WebSocket for real-time notifications (no /api/v1 prefix)
+app.include_router(ws_router)
 
 
 @app.get("/health")

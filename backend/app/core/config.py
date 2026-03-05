@@ -4,7 +4,7 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # App
-    APP_NAME: str = "QuantGuild"
+    APP_NAME: str = "Ceap Council"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = True
     

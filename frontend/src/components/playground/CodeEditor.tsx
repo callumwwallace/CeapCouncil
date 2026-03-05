@@ -97,7 +97,8 @@ export default function CodeEditor({ value, onChange }: CodeEditorProps) {
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     // Register completion provider for Python
     monaco.languages.registerCompletionItemProvider('python', {
-      provideCompletionItems: (model, position) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      provideCompletionItems: (model: any, position: any) => {
         const word = model.getWordUntilPosition(position);
         const range = {
           startLineNumber: position.lineNumber,
@@ -131,7 +132,7 @@ export default function CodeEditor({ value, onChange }: CodeEditorProps) {
     });
 
     // Add custom theme overrides for better contrast
-    monaco.editor.defineTheme('quantguild-dark', {
+    monaco.editor.defineTheme('ceapcouncil-dark', {
       base: 'vs-dark',
       inherit: true,
       rules: [
@@ -148,7 +149,7 @@ export default function CodeEditor({ value, onChange }: CodeEditorProps) {
         'editor.selectionBackground': '#264f78',
       },
     });
-    monaco.editor.setTheme('quantguild-dark');
+    monaco.editor.setTheme('ceapcouncil-dark');
   }, []);
 
   return (

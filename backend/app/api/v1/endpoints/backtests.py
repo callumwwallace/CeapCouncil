@@ -124,6 +124,8 @@ class WalkForwardRequest(BaseModel):
     slippage: float = 0.001
     n_splits: int = Field(default=5, ge=2, le=20)
     train_pct: float = Field(default=0.7, ge=0.5, le=0.9)
+    purge_bars: int = Field(default=0, ge=0, le=100)
+    window_mode: str = Field(default="rolling", pattern=r"^(rolling|anchored)$")
     interval: str = "1d"
 
 
@@ -213,10 +215,15 @@ async def _create_backtest_impl(
     await db.flush()
     await db.refresh(backtest)
 
+    # Commit before queuing so the Celery worker can see the backtest (it uses
+    # a separate DB connection; without commit, the worker often runs before
+    # get_db commits and returns "Backtest not found").
+    await db.commit()
+
     # Queue Celery task
     task = run_backtest_task.delay(backtest.id)
     backtest.celery_task_id = task.id
-    await db.flush()
+    await db.commit()
 
     return backtest
 
@@ -469,6 +476,8 @@ async def walk_forward_analysis(
         slippage=body.slippage,
         n_splits=body.n_splits,
         train_pct=body.train_pct,
+        purge_bars=body.purge_bars,
+        window_mode=body.window_mode,
         interval=body.interval,
     )
     return {"task_id": task.id, "status": "queued"}
@@ -580,7 +589,8 @@ async def batch_run(
 # ---------------------------------------------------------------------------
 
 class OosRequest(BaseModel):
-    strategy_id: int
+    strategy_id: int | None = None
+    code: str | None = None
     symbol: str
     start_date: str
     end_date: str
@@ -588,6 +598,7 @@ class OosRequest(BaseModel):
     commission: float = 0.001
     slippage: float = 0.001
     oos_ratio: float = Field(default=0.3, ge=0.1, le=0.5)
+    n_folds: int = Field(default=1, ge=1, le=10)
     param_ranges: dict | None = None
     n_trials: int = 30
     interval: str = "1d"
@@ -602,24 +613,37 @@ async def oos_validate(
     db: AsyncSession = Depends(get_db),
 ):
     """Run out-of-sample validation to detect overfitting."""
-    result = await db.execute(select(Strategy).where(Strategy.id == body.strategy_id))
-    strategy = result.scalar_one_or_none()
-    if not strategy:
-        raise HTTPException(status_code=404, detail="Strategy not found")
-    if not strategy.is_public and strategy.author_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    code = await _resolve_code(body.strategy_id, body.code, current_user, db)
 
     task = run_oos_validation_task.delay(
-        code=strategy.code, symbol=body.symbol,
+        code=code, symbol=body.symbol,
         start_date=body.start_date, end_date=body.end_date,
         initial_capital=body.initial_capital,
         commission=body.commission, slippage=body.slippage,
         oos_ratio=body.oos_ratio,
+        n_folds=body.n_folds,
         param_ranges=body.param_ranges,
         n_trials=body.n_trials,
         interval=body.interval,
     )
     return {"task_id": task.id, "status": "queued"}
+
+
+@router.get("/oos-validate/{task_id}")
+async def get_oos_result(
+    task_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Poll out-of-sample validation task result."""
+    from celery.result import AsyncResult
+    result = AsyncResult(task_id)
+    if result.state == "PROGRESS":
+        return {"status": "running", "progress": result.info}
+    elif result.state == "SUCCESS":
+        return {"status": "completed", **result.result}
+    elif result.state == "FAILURE":
+        return {"status": "failed", "error": str(result.result)}
+    return {"status": result.state.lower()}
 
 
 # ---------------------------------------------------------------------------
