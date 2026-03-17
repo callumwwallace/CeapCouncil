@@ -300,7 +300,9 @@ class Engine:
 
         # Main event loop : iterate through all bars
         bar_index = 0
+        last_bar_group: list[MarketDataEvent] = []
         for bar_group in self._data_feed.iterate():
+            last_bar_group = bar_group
             timestamp = bar_group[0].timestamp
             self._clock.advance(timestamp)
             ctx.current_time = timestamp
@@ -398,7 +400,30 @@ class Engine:
 
             bar_index += 1
 
-        # Finalize
+        last_timestamp = self._clock.now
+        for symbol, pos in list(self._portfolio._positions.items()):
+            if not pos.is_flat:
+                from app.engine.broker.order import Order as _Order, OrderSide as _Side, OrderType as _OType
+                side = _Side.SELL if pos.is_long else _Side.BUY
+                order = _Order(
+                    symbol=symbol,
+                    side=side,
+                    order_type=_OType.MARKET,
+                    quantity=abs(pos.quantity),
+                )
+                self._broker.submit_order(order, last_timestamp)
+                for event in last_bar_group:
+                    if event.symbol == symbol:
+                        bar = BarData(
+                            symbol=event.symbol,
+                            timestamp=event.timestamp,
+                            open=event.open, high=event.high,
+                            low=event.low, close=event.close,
+                            volume=event.volume, bar_index=event.bar_index,
+                        )
+                        self._broker.process_bar(bar, last_timestamp)
+                        break
+
         self._strategy.on_end()
         elapsed = (time.monotonic() - start_time) * 1000
 

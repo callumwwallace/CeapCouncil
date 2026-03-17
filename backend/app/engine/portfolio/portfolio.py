@@ -72,8 +72,12 @@ class Portfolio:
 
     @property
     def equity(self) -> float:
-        """Total portfolio value = cash + unrealized P&L."""
-        return self.cash + self.unrealized_pnl
+        total = self.cash
+        for symbol, pos in self._positions.items():
+            if not pos.is_flat:
+                price = self._current_prices.get(symbol, pos.avg_cost)
+                total += abs(pos.quantity) * price
+        return total
 
     @property
     def unrealized_pnl(self) -> float:
