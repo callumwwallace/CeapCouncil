@@ -39,6 +39,12 @@ class MetricsResult:
     r_squared: float | None = None
     turnover_rate: float | None = None
 
+    # VaR / CVaR (95% and 99% confidence, daily)
+    var_95: float | None = None
+    cvar_95: float | None = None
+    var_99: float | None = None
+    cvar_99: float | None = None
+
     # Adverse/Favorable excursion
     avg_adverse_excursion: float | None = None
     avg_favorable_excursion: float | None = None
@@ -131,6 +137,24 @@ def compute_metrics(
     # Downside deviation
     if len(downside) > 0:
         result.downside_deviation = round(float(np.std(downside) * math.sqrt(252)) * 100, 4)
+
+    # VaR / CVaR (historical simulation method)
+    if len(returns) >= 10:
+        sorted_returns = np.sort(returns)
+        # 95% VaR: the 5th-percentile loss
+        var_95_val = float(np.percentile(sorted_returns, 5))
+        result.var_95 = round(var_95_val * 100, 4)
+        # CVaR Expected Shortfall, mean of returns below the VaR threshold
+        tail_95 = sorted_returns[sorted_returns <= var_95_val]
+        if len(tail_95) > 0:
+            result.cvar_95 = round(float(np.mean(tail_95)) * 100, 4)
+
+        # 99% VaR / CVaR
+        var_99_val = float(np.percentile(sorted_returns, 1))
+        result.var_99 = round(var_99_val * 100, 4)
+        tail_99 = sorted_returns[sorted_returns <= var_99_val]
+        if len(tail_99) > 0:
+            result.cvar_99 = round(float(np.mean(tail_99)) * 100, 4)
 
     # Max Drawdown
     peak = np.maximum.accumulate(equities)

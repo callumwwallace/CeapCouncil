@@ -1084,6 +1084,10 @@ interface BacktestResult {
   cost_as_pct_of_pnl?: number;
   rolling_sharpe?: Array<{date: string; value: number}>;
   rolling_sortino?: Array<{date: string; value: number}>;
+  var_95?: number;
+  cvar_95?: number;
+  var_99?: number;
+  cvar_99?: number;
   deflated_sharpe_ratio?: number;
   robustness_score?: number;
   risk_violations?: Array<{timestamp: string; rule: string; description: string; action: string}>;
@@ -1437,6 +1441,10 @@ export default function PlaygroundPage() {
             cost_as_pct_of_pnl: r?.cost_as_pct_of_pnl ?? undefined,
             rolling_sharpe: r?.rolling_sharpe ?? undefined,
             rolling_sortino: r?.rolling_sortino ?? undefined,
+            var_95: r?.var_95 ?? undefined,
+            cvar_95: r?.cvar_95 ?? undefined,
+            var_99: r?.var_99 ?? undefined,
+            cvar_99: r?.cvar_99 ?? undefined,
             deflated_sharpe_ratio: r?.deflated_sharpe_ratio ?? undefined,
             robustness_score: r?.robustness_score ?? undefined,
             risk_violations: r?.risk_violations ?? undefined,
@@ -1882,6 +1890,10 @@ export default function PlaygroundPage() {
       `Final Value,$${results.final_value.toFixed(2)}`,
       results.sortino_ratio !== undefined ? `Sortino Ratio,${results.sortino_ratio.toFixed(2)}` : '',
       results.profit_factor !== undefined ? `Profit Factor,${results.profit_factor.toFixed(2)}` : '',
+      results.var_95 != null ? `VaR 95%,${results.var_95.toFixed(2)}%` : '',
+      results.cvar_95 != null ? `CVaR 95%,${results.cvar_95.toFixed(2)}%` : '',
+      results.var_99 != null ? `VaR 99%,${results.var_99.toFixed(2)}%` : '',
+      results.cvar_99 != null ? `CVaR 99%,${results.cvar_99.toFixed(2)}%` : '',
       results.benchmark_return !== undefined ? `Benchmark Return,${results.benchmark_return.toFixed(2)}%` : '',
       results.benchmark_return !== undefined ? `Alpha,${(results.total_return - results.benchmark_return).toFixed(2)}%` : '',
       '',
@@ -1962,6 +1974,10 @@ export default function PlaygroundPage() {
 <div class="m"><div class="ml">Trades</div><div class="mv">${r.total_trades||0}</div></div>
 <div class="m"><div class="ml">Profit Factor</div><div class="mv">${(r.profit_factor||0).toFixed(2)}</div></div>
 <div class="m"><div class="ml">Final Value</div><div class="mv">$${(r.final_value||0).toLocaleString()}</div></div>
+<div class="m"><div class="ml">VaR 95%</div><div class="mv neg">${(r.var_95||0).toFixed(2)}%</div></div>
+<div class="m"><div class="ml">CVaR 95%</div><div class="mv neg">${(r.cvar_95||0).toFixed(2)}%</div></div>
+<div class="m"><div class="ml">VaR 99%</div><div class="mv neg">${(r.var_99||0).toFixed(2)}%</div></div>
+<div class="m"><div class="ml">CVaR 99%</div><div class="mv neg">${(r.cvar_99||0).toFixed(2)}%</div></div>
 </div>
 <h2>Equity Curve</h2><div class="cc"><canvas id="eq"></canvas></div>
 <h2>Drawdown</h2><div class="cc"><canvas id="dd"></canvas></div>
@@ -2689,6 +2705,22 @@ hist('dist',${histData});
                             <div className="p-3 rounded-lg border border-gray-200 bg-white">
                               <div className="text-[11px] text-gray-500 mb-1">Max consec. losses</div>
                               <div className="text-sm font-semibold text-gray-900">{(results as { max_consecutive_losses?: number }).max_consecutive_losses ?? '-'}</div>
+                            </div>
+                            <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                              <div className="text-[11px] text-gray-500 mb-1">VaR 95%</div>
+                              <div className="text-sm font-semibold text-red-500">{results.var_95 != null ? `${results.var_95.toFixed(2)}%` : '-'}</div>
+                            </div>
+                            <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                              <div className="text-[11px] text-gray-500 mb-1">CVaR 95%</div>
+                              <div className="text-sm font-semibold text-red-500">{results.cvar_95 != null ? `${results.cvar_95.toFixed(2)}%` : '-'}</div>
+                            </div>
+                            <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                              <div className="text-[11px] text-gray-500 mb-1">VaR 99%</div>
+                              <div className="text-sm font-semibold text-red-500">{results.var_99 != null ? `${results.var_99.toFixed(2)}%` : '-'}</div>
+                            </div>
+                            <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                              <div className="text-[11px] text-gray-500 mb-1">CVaR 99%</div>
+                              <div className="text-sm font-semibold text-red-500">{results.cvar_99 != null ? `${results.cvar_99.toFixed(2)}%` : '-'}</div>
                             </div>
                           </div>
                           {(results as { risk_violations?: Array<{ rule: string; description: string }> }).risk_violations?.length ? (

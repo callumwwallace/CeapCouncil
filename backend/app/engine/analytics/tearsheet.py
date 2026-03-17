@@ -217,6 +217,10 @@ def _format_metrics(results: dict) -> str:
         ("Beta", f"{results.get('beta', 0) or 0:.4f}", None),
         ("Alpha", f"{results.get('alpha', 0) or 0:.4f}%", (results.get('alpha') or 0) > 0),
         ("Final Value", f"${results.get('final_value', 0):,.2f}", None),
+        ("VaR 95%", f"{results.get('var_95', 0) or 0:.2f}%", False if (results.get('var_95') or 0) < 0 else None),
+        ("CVaR 95%", f"{results.get('cvar_95', 0) or 0:.2f}%", False if (results.get('cvar_95') or 0) < 0 else None),
+        ("VaR 99%", f"{results.get('var_99', 0) or 0:.2f}%", False if (results.get('var_99') or 0) < 0 else None),
+        ("CVaR 99%", f"{results.get('cvar_99', 0) or 0:.2f}%", False if (results.get('cvar_99') or 0) < 0 else None),
     ]
     html = ""
     for label, value, is_positive in items:

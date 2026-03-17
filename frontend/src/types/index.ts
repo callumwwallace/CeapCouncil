@@ -144,6 +144,10 @@ export interface BacktestResults {
   rolling_sharpe?: Array<{date: string; value: number}> | null;
   rolling_sortino?: Array<{date: string; value: number}> | null;
   rolling_beta?: Array<{date: string; value: number}> | null;
+  var_95?: number | null;
+  cvar_95?: number | null;
+  var_99?: number | null;
+  cvar_99?: number | null;
   deflated_sharpe_ratio?: number | null;
   robustness_score?: number | null;
   risk_violations?: Array<{timestamp: string; rule: string; description: string; action: string}>;
