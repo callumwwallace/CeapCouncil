@@ -1,6 +1,9 @@
+import ast
+import resource
+import signal
 import traceback
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -19,23 +22,73 @@ from app.engine.broker.slippage import auto_detect_tier
 from app.engine.data.calendar import filter_to_trading_days
 from app.engine.strategy.compiler import compile_strategy, extract_user_error as extract_strategy_error
 
-# Sync engine for Celery tasks
 sync_engine = create_engine(settings.DATABASE_URL.replace("+asyncpg", ""))
 SessionLocal = sessionmaker(bind=sync_engine)
 
-# ---------------------------------------------------------------------------
-# Allowed imports / builtins for user strategy code
-# ---------------------------------------------------------------------------
 _ALLOWED_IMPORTS = {"backtrader", "bt", "math", "numpy", "np", "pandas", "pd"}
 _BLOCKED_BUILTINS = {
     "exec", "eval", "compile", "__import__", "open",
     "input", "exit", "quit", "breakpoint", "globals", "locals",
     "getattr", "setattr", "delattr", "vars", "dir",
+    "type", "super",
+}
+
+_BLOCKED_DUNDER_ATTRS = {
+    "__subclasses__", "__bases__", "__mro__", "__base__",
+    "__class__", "__dict__", "__globals__", "__code__",
+    "__func__", "__self__", "__module__", "__import__",
+    "__builtins__", "__qualname__", "__wrapped__",
+    "__loader__", "__spec__", "__path__", "__file__",
+    "__reduce__", "__reduce_ex__", "__getstate__",
 }
 
 
+def _validate_no_dunder_access(code: str) -> None:
+    tree = ast.parse(code)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            if node.attr in _BLOCKED_DUNDER_ATTRS:
+                raise ValueError(
+                    f"Access to '{node.attr}' is not allowed "
+                    f"(line {getattr(node, 'lineno', '?')})"
+                )
+        if isinstance(node, ast.Subscript):
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                if node.slice.value in _BLOCKED_DUNDER_ATTRS:
+                    raise ValueError(
+                        f"Access to '{node.slice.value}' is not allowed "
+                        f"(line {getattr(node, 'lineno', '?')})"
+                    )
+
+
+class BacktestTimeout(Exception):
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise BacktestTimeout("Backtest exceeded maximum execution time")
+
+
+def _set_resource_limits():
+    timeout = settings.BACKTEST_TIMEOUT_SECONDS
+    mem_bytes = settings.BACKTEST_MAX_MEMORY_MB * 1024 * 1024
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(timeout)
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+    except (ValueError, resource.error):
+        pass
+
+
+def _clear_resource_limits():
+    signal.alarm(0)
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+    except (ValueError, resource.error):
+        pass
+
+
 def _build_safe_builtins() -> dict:
-    """Return a restricted __builtins__ dict for user strategy execution."""
     if isinstance(__builtins__, dict):
         src = __builtins__
     else:
@@ -82,17 +135,8 @@ def _extract_user_error(exc: Exception, code: str) -> str:
 
 
 def create_user_strategy(code: str) -> type:
-    """Safely compile user strategy code into a Backtrader Strategy class.
+    _validate_no_dunder_access(code)
 
-    The user code **must** define a class named ``MyStrategy`` that extends
-    ``bt.Strategy``.  Only a restricted set of builtins and imports is
-    available inside the executed code.
-
-    Strategy parameters are baked into the code string by the
-    frontend (via ``updateCodeWithParams``), so no runtime param injection is
-    needed.  Attempting to mutate ``strategy_cls.params`` after class creation
-    breaks Backtrader's metaclass machinery.
-    """
     safe_globals: dict = {
         "__builtins__": _build_safe_builtins(),
         "bt": bt,
@@ -100,7 +144,7 @@ def create_user_strategy(code: str) -> type:
 
     try:
         compiled = compile(code, "<string>", "exec")
-        exec(compiled, safe_globals)  # noqa: S102 – intentional; sandboxed
+        exec(compiled, safe_globals)
     except SyntaxError as e:
         line_info = f" (line {e.lineno})" if e.lineno else ""
         raise ValueError(f"SyntaxError{line_info}: {e.msg}") from e
@@ -279,7 +323,6 @@ def _compute_exposure_pct(trades: list[dict], total_bars: int) -> float | None:
     """Percentage of trading days with an open position."""
     if not trades or total_bars <= 0:
         return None
-    # Build set of dates that fall within any trade's holding period
     held_dates: set[str] = set()
     for t in trades:
         try:
@@ -287,7 +330,8 @@ def _compute_exposure_pct(trades: list[dict], total_bars: int) -> float | None:
             exit_ = datetime.strptime(t["exit_date"], "%Y-%m-%d")
             d = entry
             while d <= exit_:
-                held_dates.add(d.strftime("%Y-%m-%d"))
+                if d.weekday() < 5:
+                    held_dates.add(d.strftime("%Y-%m-%d"))
                 d += timedelta(days=1)
         except (ValueError, KeyError):
             continue
@@ -441,7 +485,7 @@ def _translate_bt_to_engine(code: str) -> str:
 # Celery task
 # ---------------------------------------------------------------------------
 
-@celery_app.task(bind=True, time_limit=300, soft_time_limit=240, autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 2})
+@celery_app.task(bind=True, time_limit=300, soft_time_limit=240)
 def run_backtest_task(self, backtest_id: int):
     """Execute a backtest for a given strategy."""
     db = SessionLocal()
@@ -453,8 +497,10 @@ def run_backtest_task(self, backtest_id: int):
             return {"error": "Backtest not found"}
 
         backtest.status = BacktestStatus.RUNNING
-        backtest.started_at = datetime.utcnow()
+        backtest.started_at = datetime.now()
         db.commit()
+
+        _set_resource_limits()
 
         # Get strategy code: inline or from saved strategy
         if backtest.code and backtest.code.strip():
@@ -496,7 +542,7 @@ def run_backtest_task(self, backtest_id: int):
         except (ValueError, Exception) as e:
             backtest.status = BacktestStatus.FAILED
             backtest.error_message = str(e)[:1000]
-            backtest.completed_at = datetime.utcnow()
+            backtest.completed_at = datetime.now(timezone.utc)
             db.commit()
             return {"status": "failed", "error": str(e)}
 
@@ -623,7 +669,7 @@ def run_backtest_task(self, backtest_id: int):
             return val
 
         backtest.status = BacktestStatus.COMPLETED
-        backtest.completed_at = datetime.utcnow()
+        backtest.completed_at = datetime.now(timezone.utc)
         backtest.total_return = _safe(results_dict.get("total_return_pct"), 0.0)
         backtest.sharpe_ratio = _safe(results_dict.get("sharpe_ratio"))
         backtest.max_drawdown = _safe(results_dict.get("max_drawdown_pct"), 0.0)
@@ -645,11 +691,12 @@ def run_backtest_task(self, backtest_id: int):
         if backtest:
             backtest.status = BacktestStatus.FAILED
             backtest.error_message = str(e)[:1000]
-            backtest.completed_at = datetime.utcnow()
+            backtest.completed_at = datetime.now(timezone.utc)
             db.commit()
         return {"status": "failed", "error": str(e), "traceback": traceback.format_exc()}
 
     finally:
+        _clear_resource_limits()
         db.close()
 
 

@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.security import is_token_blocked
 from app.models.user import User
 from app.schemas.token import TokenPayload
 
@@ -22,23 +23,26 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         token_data = TokenPayload(**payload)
-        
+
         if token_data.type != "access":
             raise credentials_exception
-            
+
+        if await is_token_blocked(payload):
+            raise credentials_exception
+
     except JWTError:
         raise credentials_exception
-    
+
     result = await db.execute(select(User).where(User.id == int(token_data.sub)))
     user = result.scalar_one_or_none()
-    
-    if user is None:
+
+    if user is None or not user.is_active:
         raise credentials_exception
-    
+
     return user
 
 
@@ -46,13 +50,14 @@ async def get_current_user_optional(
     db: AsyncSession = Depends(get_db),
     token: str | None = Depends(oauth2_scheme_optional),
 ) -> User | None:
-    """Return current user if valid token provided, else None. Does not raise."""
     if not token:
         return None
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         token_data = TokenPayload(**payload)
         if token_data.type != "access":
+            return None
+        if await is_token_blocked(payload):
             return None
         result = await db.execute(select(User).where(User.id == int(token_data.sub)))
         user = result.scalar_one_or_none()

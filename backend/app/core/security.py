@@ -1,30 +1,57 @@
-from datetime import datetime, timedelta
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from jose import jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
+from app.core.redis import redis_client
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+_TOKEN_BLOCKLIST_PREFIX = "token:blocked:"
+_TOKEN_BLOCKLIST_TTL = timedelta(days=8)
 
 
 def create_access_token(subject: str | Any, expires_delta: timedelta | None = None) -> str:
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    
-    to_encode = {"exp": expire, "sub": str(subject), "type": "access"}
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    return encoded_jwt
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+
+    jti = secrets.token_urlsafe(16)
+    to_encode = {"exp": expire, "sub": str(subject), "type": "access", "jti": jti}
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
 def create_refresh_token(subject: str | Any) -> str:
-    expire = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode = {"exp": expire, "sub": str(subject), "type": "refresh"}
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    return encoded_jwt
+    expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    jti = secrets.token_urlsafe(16)
+    to_encode = {"exp": expire, "sub": str(subject), "type": "refresh", "jti": jti}
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+async def blocklist_token(token: str) -> None:
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        jti = payload.get("jti")
+        if jti:
+            await redis_client.setex(
+                f"{_TOKEN_BLOCKLIST_PREFIX}{jti}",
+                int(_TOKEN_BLOCKLIST_TTL.total_seconds()),
+                "1",
+            )
+    except Exception:
+        pass
+
+
+async def is_token_blocked(payload: dict) -> bool:
+    jti = payload.get("jti")
+    if not jti:
+        return False
+    result = await redis_client.get(f"{_TOKEN_BLOCKLIST_PREFIX}{jti}")
+    return result is not None
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:

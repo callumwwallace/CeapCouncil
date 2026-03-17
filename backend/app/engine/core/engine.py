@@ -83,9 +83,11 @@ class EngineConfig:
     benchmark_symbol: str | None = None
     streaming: bool = False  # Use StreamingDataFeed for lower memory usage
 
+    _NON_DETERMINISTIC_FIELDS = {"streaming"}
+
     def to_hash(self) -> str:
         """Deterministic hash for reproducibility."""
-        d = {k: v for k, v in self.__dict__.items() if v is not None}
+        d = {k: v for k, v in self.__dict__.items() if v is not None and k not in self._NON_DETERMINISTIC_FIELDS}
         return hashlib.sha256(json.dumps(d, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
@@ -385,14 +387,14 @@ class Engine:
             # Check scheduled events
             self._strategy._check_schedules(bar_index)
 
-            # Record equity
-            self._portfolio.record_equity(timestamp)
-
-            # Margin checks
+            # Margin checks (before equity recording so the curve is consistent)
             if self._portfolio.margin.enabled:
                 self._portfolio.accrue_borrow_fees(timestamp)
                 if self._portfolio.check_margin_call(timestamp):
                     self._liquidate_all(timestamp)
+
+            # Record equity after all state changes for this bar
+            self._portfolio.record_equity(timestamp)
 
             bar_index += 1
 

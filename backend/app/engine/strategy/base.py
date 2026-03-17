@@ -245,34 +245,26 @@ class StrategyBase(ABC):
 
         Returns dict with keys: 'entry', 'take_profit', 'stop_loss'
         """
-        # Entry order
         if entry_price is not None:
             entry = self.limit_order(symbol, quantity, entry_price)
         else:
             entry = self.market_order(symbol, quantity)
 
-        # Take profit (opposite side)
-        tp = self.limit_order(symbol, -quantity, take_profit_price)
-
-        # Stop loss (opposite side)
-        sl = self.stop_order(symbol, -quantity, stop_loss_price)
-
         group_id = entry.order_id
-        self._bracket_groups[group_id] = {
-            "entry": entry.order_id,
-            "take_profit": tp.order_id,
-            "stop_loss": sl.order_id,
-        }
-
-        # Tag orders with bracket metadata
         entry.metadata["bracket_group"] = group_id
         entry.metadata["bracket_role"] = "entry"
-        tp.metadata["bracket_group"] = group_id
-        tp.metadata["bracket_role"] = "take_profit"
-        sl.metadata["bracket_group"] = group_id
-        sl.metadata["bracket_role"] = "stop_loss"
 
-        return {"entry": entry, "take_profit": tp, "stop_loss": sl}
+        self._bracket_groups[group_id] = {
+            "entry": entry.order_id,
+            "take_profit": None,
+            "stop_loss": None,
+            "_pending_tp_price": take_profit_price,
+            "_pending_sl_price": stop_loss_price,
+            "_symbol": symbol,
+            "_quantity": quantity,
+        }
+
+        return {"entry": entry, "take_profit": None, "stop_loss": None}
 
     def oco_order(
         self, symbol: str,
@@ -311,15 +303,38 @@ class StrategyBase(ABC):
             other_id = order.metadata["oco_other"]
             self.broker.cancel_order(other_id, self.time)
 
-        # Bracket handling : cancel other leg when TP or SL fills
-        if "bracket_role" in order.metadata and order.metadata["bracket_role"] in ("take_profit", "stop_loss"):
-            if order.status.value == "filled":
-                group_id = order.metadata.get("bracket_group")
-                if group_id and group_id in self._bracket_groups:
-                    group = self._bracket_groups[group_id]
-                    for role, oid in group.items():
-                        if oid != fill.order_id and role != "entry":
-                            self.broker.cancel_order(oid, self.time)
+        if "bracket_role" not in order.metadata:
+            return
+
+        role = order.metadata["bracket_role"]
+        group_id = order.metadata.get("bracket_group")
+        if not group_id or group_id not in self._bracket_groups:
+            return
+        group = self._bracket_groups[group_id]
+
+        if role == "entry" and order.status.value == "filled":
+            symbol = group["_symbol"]
+            quantity = group["_quantity"]
+            tp_price = group["_pending_tp_price"]
+            sl_price = group["_pending_sl_price"]
+
+            tp = self.limit_order(symbol, -quantity, tp_price)
+            sl = self.stop_order(symbol, -quantity, sl_price)
+
+            tp.metadata["bracket_group"] = group_id
+            tp.metadata["bracket_role"] = "take_profit"
+            sl.metadata["bracket_group"] = group_id
+            sl.metadata["bracket_role"] = "stop_loss"
+
+            group["take_profit"] = tp.order_id
+            group["stop_loss"] = sl.order_id
+
+        elif role in ("take_profit", "stop_loss") and order.status.value == "filled":
+            for r, oid in group.items():
+                if r.startswith("_") or r == "entry":
+                    continue
+                if oid and oid != fill.order_id:
+                    self.broker.cancel_order(oid, self.time)
 
     def close_position(self, symbol: str) -> Order | None:
         """Close entire position in a symbol."""

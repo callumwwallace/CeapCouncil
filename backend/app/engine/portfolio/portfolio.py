@@ -165,8 +165,12 @@ class Portfolio:
 
     def record_equity(self, timestamp: datetime) -> None:
         """Record current equity for the equity curve."""
+        if timestamp.hour == 0 and timestamp.minute == 0 and timestamp.second == 0:
+            date_str = timestamp.strftime("%Y-%m-%d")
+        else:
+            date_str = timestamp.strftime("%Y-%m-%dT%H:%M:%S")
         self.equity_curve.append(EquityPoint(
-            date=timestamp.strftime("%Y-%m-%d"),
+            date=date_str,
             equity=round(self.equity, 2),
             cash=round(self.cash, 2),
             margin_used=round(self._margin_used, 2),

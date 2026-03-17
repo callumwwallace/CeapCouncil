@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable
 
 from app.engine.broker.order import (
@@ -108,7 +108,7 @@ class BrokerSimulator:
 
     def cancel_all(self, symbol: str | None = None, timestamp: datetime | None = None) -> int:
         """Cancel all pending orders, optionally filtered by symbol."""
-        ts = timestamp or datetime.utcnow()
+        ts = timestamp or datetime.now(timezone.utc)
         cancelled = 0
         remaining: list[Order] = []
         for order in self._pending_orders:

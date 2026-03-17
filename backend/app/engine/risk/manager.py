@@ -64,6 +64,7 @@ class RiskManager:
         self._daily_pnl_start: float | None = None
         self._current_day: str | None = None
         self._trading_halted: bool = False
+        self._peak_equity: float = 0.0
 
         # PDT tracking
         self._day_trades: list[DayTradeRecord] = []
@@ -177,8 +178,10 @@ class RiskManager:
             self._daily_pnl_start = portfolio.equity
             self._current_day = day_str
 
-        # Max drawdown check
-        drawdown = (portfolio.initial_cash - portfolio.equity) / portfolio.initial_cash * 100
+        # Max drawdown check (from peak equity, not initial capital)
+        if portfolio.equity > self._peak_equity:
+            self._peak_equity = portfolio.equity
+        drawdown = (self._peak_equity - portfolio.equity) / self._peak_equity * 100 if self._peak_equity > 0 else 0
         if drawdown > 0 and drawdown >= self.limits.max_drawdown_pct:
             v = RiskViolation(
                 timestamp=timestamp,

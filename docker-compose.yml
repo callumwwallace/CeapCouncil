@@ -1,16 +1,15 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database
   db:
     image: timescale/timescaledb:latest-pg16
     container_name: quantguild-db
     environment:
-      POSTGRES_USER: quantguild
-      POSTGRES_PASSWORD: quantguild
-      POSTGRES_DB: quantguild
+      POSTGRES_USER: ${POSTGRES_USER:-quantguild}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quantguild}
+      POSTGRES_DB: ${POSTGRES_DB:-quantguild}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -19,31 +18,30 @@ services:
       timeout: 5s
       retries: 5
 
-  # Redis
   redis:
     image: redis:7-alpine
     container_name: quantguild-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-changeme_redis}
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme_redis}", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  # MinIO (S3-compatible storage)
   minio:
     image: minio/minio
     container_name: quantguild-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -52,17 +50,18 @@ services:
       timeout: 5s
       retries: 5
 
-  # FastAPI Backend
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: quantguild-backend
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://quantguild:quantguild@db:5432/quantguild
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-quantguild}:${POSTGRES_PASSWORD:-quantguild}@db:5432/${POSTGRES_DB:-quantguild}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme_redis}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-changeme_redis}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-changeme_redis}@redis:6379/2
       S3_ENDPOINT: minio:9000
     ports:
       - "8000:8000"
@@ -75,17 +74,18 @@ services:
       - ./backend:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  # Celery Worker
   celery:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: quantguild-celery
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://quantguild:quantguild@db:5432/quantguild
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-quantguild}:${POSTGRES_PASSWORD:-quantguild}@db:5432/${POSTGRES_DB:-quantguild}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme_redis}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-changeme_redis}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-changeme_redis}@redis:6379/2
     depends_on:
       db:
         condition: service_healthy
@@ -95,7 +95,6 @@ services:
       - ./backend:/app
     command: celery -A app.tasks worker --beat --loglevel=info --pool=solo
 
-  # Next.js Frontend
   frontend:
     build:
       context: ./frontend

@@ -1,16 +1,14 @@
-"""WebSocket endpoint for real-time notifications."""
-
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from jose import JWTError, jwt
 
 from app.core.config import settings
+from app.core.security import is_token_blocked
 from app.websocket.manager import manager
 
 router = APIRouter()
 
 
 def _get_user_id_from_token(token: str) -> int | None:
-    """Verify JWT and return user id. Returns None if invalid."""
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         if payload.get("type") != "access":
@@ -21,22 +19,37 @@ def _get_user_id_from_token(token: str) -> int | None:
 
 
 @router.websocket("/ws/notifications")
-async def notifications_websocket(
-    websocket: WebSocket,
-    token: str = Query(..., description="JWT access token"),
-):
-    """Connect for real-time notification push. Pass token as query param: ?token=xxx"""
+async def notifications_websocket(websocket: WebSocket):
+    await websocket.accept()
+
+    try:
+        auth_msg = await websocket.receive_text()
+    except WebSocketDisconnect:
+        return
+
+    if not auth_msg.startswith("Bearer "):
+        await websocket.close(code=4001)
+        return
+
+    token = auth_msg[7:]
     user_id = _get_user_id_from_token(token)
     if not user_id:
+        await websocket.close(code=4001)
+        return
+
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if await is_token_blocked(payload):
+            await websocket.close(code=4001)
+            return
+    except Exception:
         await websocket.close(code=4001)
         return
 
     await manager.connect(websocket, user_id)
     try:
         while True:
-            # Keep connection alive; client can send ping, we just wait
             data = await websocket.receive_text()
-            # Optional: handle ping/pong for keepalive
             if data == "ping":
                 await websocket.send_text("pong")
     except WebSocketDisconnect:

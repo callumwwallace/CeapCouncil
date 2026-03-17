@@ -59,10 +59,15 @@ export default function NotificationBell() {
 
     const connect = () => {
       try {
-        const ws = new WebSocket(`${WS_URL}/ws/notifications?token=${encodeURIComponent(accessToken)}`);
+        const ws = new WebSocket(`${WS_URL}/ws/notifications`);
         wsRef.current = ws;
 
+        ws.onopen = () => {
+          ws.send(`Bearer ${accessToken}`);
+        };
+
         ws.onmessage = (event) => {
+          if (event.data === 'pong') return;
           try {
             const data = JSON.parse(event.data);
             if (data.type === 'notification') {

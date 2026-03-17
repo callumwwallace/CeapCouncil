@@ -13,7 +13,7 @@ from app.models.strategy import Strategy
 from app.models.forum import ForumThread, ForumPost
 from app.models.reputation import UserReputation
 from app.models.strategy import Strategy
-from app.schemas.user import UserResponse, UserUpdate, EmailChange, PasswordChange, NotificationPreferencesUpdate
+from app.schemas.user import UserResponse, UserPrivateResponse, UserUpdate, EmailChange, PasswordChange, NotificationPreferencesUpdate
 from app.core.security import verify_password, get_password_hash
 
 router = APIRouter()
@@ -26,12 +26,12 @@ class RepGive(BaseModel):
     value: int  # 1 or -1
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get("/me", response_model=UserPrivateResponse)
 async def get_current_user_info(current_user: User = Depends(get_current_active_user)):
     return current_user
 
 
-@router.patch("/me", response_model=UserResponse)
+@router.patch("/me", response_model=UserPrivateResponse)
 async def update_current_user(
     user_update: UserUpdate,
     current_user: User = Depends(get_current_active_user),
@@ -48,7 +48,7 @@ async def update_current_user(
     return current_user
 
 
-@router.patch("/me/email", response_model=UserResponse)
+@router.patch("/me/email", response_model=UserPrivateResponse)
 async def change_email(
     data: EmailChange,
     current_user: User = Depends(get_current_active_user),
@@ -66,7 +66,7 @@ async def change_email(
     return current_user
 
 
-@router.patch("/me/notification-preferences", response_model=UserResponse)
+@router.patch("/me/notification-preferences", response_model=UserPrivateResponse)
 async def update_notification_preferences(
     data: NotificationPreferencesUpdate,
     current_user: User = Depends(get_current_active_user),

@@ -6,7 +6,7 @@ In live/paper mode, the clock follows wall-clock time.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 
@@ -32,7 +32,7 @@ class SimulationClock:
             if self._current_time is None:
                 raise RuntimeError("Clock not initialized: call advance() first")
             return self._current_time
-        return datetime.utcnow()
+        return datetime.now(timezone.utc)
 
     @property
     def bar_count(self) -> int:

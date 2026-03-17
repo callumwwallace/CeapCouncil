@@ -1,5 +1,7 @@
 from datetime import datetime
 import re
+from urllib.parse import urlparse
+
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
@@ -7,7 +9,7 @@ class UserBase(BaseModel):
     email: EmailStr
     username: str = Field(..., min_length=3, max_length=50)
     full_name: str | None = None
-    
+
     @field_validator('username')
     @classmethod
     def username_alphanumeric(cls, v: str) -> str:
@@ -18,7 +20,7 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=8, max_length=128)
-    
+
     @field_validator('password')
     @classmethod
     def password_strength(cls, v: str) -> str:
@@ -38,10 +40,28 @@ class UserLogin(BaseModel):
     password: str
 
 
+_AVATAR_ALLOWED_SCHEMES = {"http", "https"}
+
+
 class UserUpdate(BaseModel):
     full_name: str | None = None
     bio: str | None = None
     avatar_url: str | None = None
+
+    @field_validator('avatar_url')
+    @classmethod
+    def validate_avatar_url(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return v
+        try:
+            parsed = urlparse(v)
+        except Exception:
+            raise ValueError("Invalid URL")
+        if parsed.scheme not in _AVATAR_ALLOWED_SCHEMES:
+            raise ValueError("Avatar URL must use http or https")
+        if not parsed.netloc:
+            raise ValueError("Avatar URL must include a domain")
+        return v
 
 
 class EmailChange(BaseModel):
@@ -67,17 +87,26 @@ class PasswordChange(BaseModel):
         return v
 
 
-class UserResponse(UserBase):
+class UserResponse(BaseModel):
     id: int
+    username: str
+    full_name: str | None
     bio: str | None
     avatar_url: str | None
     is_active: bool
     is_verified: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UserPrivateResponse(UserResponse):
+    email: EmailStr
     notify_on_mention: bool = True
     email_on_mention: bool = False
     email_marketing: bool = False
-    created_at: datetime
-    
+
     class Config:
         from_attributes = True
 

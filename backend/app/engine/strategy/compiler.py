@@ -1,18 +1,12 @@
-"""Strategy compiler : safely compiles user code into a StrategyBase subclass.
-
-Provides a sandboxed execution environment with restricted imports.
-User code must define a class named `MyStrategy` that extends `StrategyBase`.
-"""
-
 from __future__ import annotations
 
+import ast
 from typing import Any
 
 from app.engine.strategy.base import StrategyBase
 from app.engine.broker.order import Order, OrderSide, OrderType, TimeInForce
 from app.engine.data.feed import BarData
 
-# Import indicator library for strategy access
 from app.engine.indicators.overlays import (
     SMA, EMA, WMA, DEMA, TEMA, VWAP as OverlayVWAP,
     BollingerBands, KeltnerChannel, DonchianChannel,
@@ -48,11 +42,38 @@ _BLOCKED_BUILTINS = {
     "exec", "eval", "compile", "__import__", "open",
     "input", "exit", "quit", "breakpoint", "globals", "locals",
     "getattr", "setattr", "delattr", "vars", "dir",
+    "type", "super",
+}
+
+_BLOCKED_DUNDER_ATTRS = {
+    "__subclasses__", "__bases__", "__mro__", "__base__",
+    "__class__", "__dict__", "__globals__", "__code__",
+    "__func__", "__self__", "__module__", "__import__",
+    "__builtins__", "__qualname__", "__wrapped__",
+    "__loader__", "__spec__", "__path__", "__file__",
+    "__reduce__", "__reduce_ex__", "__getstate__",
 }
 
 
+def _validate_no_dunder_access(code: str) -> None:
+    tree = ast.parse(code)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            if node.attr in _BLOCKED_DUNDER_ATTRS:
+                raise ValueError(
+                    f"Access to '{node.attr}' is not allowed "
+                    f"(line {getattr(node, 'lineno', '?')})"
+                )
+        if isinstance(node, ast.Subscript):
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                if node.slice.value in _BLOCKED_DUNDER_ATTRS:
+                    raise ValueError(
+                        f"Access to '{node.slice.value}' is not allowed "
+                        f"(line {getattr(node, 'lineno', '?')})"
+                    )
+
+
 def _build_safe_builtins() -> dict:
-    """Restricted builtins for user code execution."""
     if isinstance(__builtins__, dict):
         src = __builtins__
     else:
@@ -72,13 +93,10 @@ def _build_safe_builtins() -> dict:
 
 
 def compile_strategy(code: str, params: dict[str, Any] | None = None) -> type[StrategyBase]:
-    """Compile user strategy code into a StrategyBase subclass.
-
-    The user code must define a class `MyStrategy(StrategyBase)`.
-    Params are passed to the strategy's __init__ via the `params` dict.
-    """
     import numpy as np
     import math
+
+    _validate_no_dunder_access(code)
 
     safe_globals: dict = {
         "__builtins__": _build_safe_builtins(),
@@ -90,7 +108,6 @@ def compile_strategy(code: str, params: dict[str, Any] | None = None) -> type[St
         "TimeInForce": TimeInForce,
         "np": np,
         "math": math,
-        # Overlay indicators
         "SMA": SMA,
         "EMA": EMA,
         "WMA": WMA,
@@ -103,7 +120,6 @@ def compile_strategy(code: str, params: dict[str, Any] | None = None) -> type[St
         "IchimokuCloud": IchimokuCloud,
         "ParabolicSAR": ParabolicSAR,
         "Envelope": Envelope,
-        # Oscillator indicators
         "RSI": RSI,
         "MACD": MACD,
         "Stochastic": Stochastic,
@@ -116,25 +132,21 @@ def compile_strategy(code: str, params: dict[str, Any] | None = None) -> type[St
         "UltimateOscillator": UltimateOscillator,
         "Aroon": Aroon,
         "ADX": ADX,
-        # Volume indicators
         "OBV": OBV,
         "MFI": MFI,
         "ChaikinMoneyFlow": ChaikinMoneyFlow,
         "ForceIndex": ForceIndex,
         "AccumulationDistribution": AccumulationDistribution,
         "EaseOfMovement": EaseOfMovement,
-        # Statistical indicators
         "StdDev": StdDev,
         "LinearRegression": LinearRegression,
         "Correlation": Correlation,
         "ZScore": ZScore,
         "HurstExponent": HurstExponent,
-        # Volatility indicators
         "ATR": ATR,
         "NormalizedATR": NormalizedATR,
         "HistoricalVolatility": HistoricalVolatility,
         "GarmanKlass": GarmanKlass,
-        # Consolidators
         "TimeConsolidator": TimeConsolidator,
         "BarCountConsolidator": BarCountConsolidator,
         "RenkoConsolidator": RenkoConsolidator,
@@ -144,7 +156,7 @@ def compile_strategy(code: str, params: dict[str, Any] | None = None) -> type[St
 
     try:
         compiled = compile(code, "<strategy>", "exec")
-        exec(compiled, safe_globals)  # noqa: S102 : intentional; sandboxed
+        exec(compiled, safe_globals)
     except SyntaxError as e:
         line_info = f" (line {e.lineno})" if e.lineno else ""
         raise ValueError(f"SyntaxError{line_info}: {e.msg}") from e
@@ -165,7 +177,6 @@ def compile_strategy(code: str, params: dict[str, Any] | None = None) -> type[St
 
 
 def extract_user_error(exc: Exception, code: str) -> str:
-    """Extract clean error message from user strategy code."""
     tb = exc.__traceback__
     user_frames: list[str] = []
     while tb is not None:

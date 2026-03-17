@@ -213,11 +213,12 @@ def compute_metrics(
         held_days: set[str] = set()
         for t in trade_dicts:
             try:
-                entry = datetime.strptime(t["entry_date"], "%Y-%m-%d")
-                exit_ = datetime.strptime(t["exit_date"], "%Y-%m-%d")
+                entry = datetime.strptime(t["entry_date"][:10], "%Y-%m-%d")
+                exit_ = datetime.strptime(t["exit_date"][:10], "%Y-%m-%d")
                 d = entry
                 while d <= exit_:
-                    held_days.add(d.strftime("%Y-%m-%d"))
+                    if d.weekday() < 5:
+                        held_days.add(d.strftime("%Y-%m-%d"))
                     d += timedelta(days=1)
             except (ValueError, KeyError):
                 pass

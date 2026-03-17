@@ -203,14 +203,13 @@ class Position:
             total_cost = sum(abs(l.quantity) * l.price for l in self._lots)
             total_qty = sum(abs(l.quantity) for l in self._lots)
             self.avg_cost = total_cost / total_qty if total_qty > 0 else 0
-        else:
-            # Reversed position : add new lot for remaining
-            if remaining > 1e-9:
-                self._add_lot(
-                    remaining if quantity > 0 else -remaining,
-                    price, commission * (remaining / abs(quantity)),
-                    timestamp,
-                )
+
+        if abs(self.quantity) > 1e-9 and not self._lots and remaining > 1e-9:
+            self._add_lot(
+                remaining if quantity > 0 else -remaining,
+                price, commission * (remaining / abs(quantity)),
+                timestamp,
+            )
 
         self.trades.extend(trades)
         return trades

@@ -130,11 +130,21 @@ class ApiClient {
     const formData = new URLSearchParams();
     formData.append('username', credentials.username);
     formData.append('password', credentials.password);
-    
+
     const response = await this.client.post<Token>('/auth/login', formData, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
     return response.data;
+  }
+
+  async logout(refreshToken: string | null): Promise<void> {
+    try {
+      await this.client.post('/auth/logout', {
+        refresh_token: refreshToken,
+      });
+    } catch {
+      // best-effort
+    }
   }
 
   // Users

@@ -1,9 +1,7 @@
-"""Forum API: topics, threads, posts."""
-
 import re
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, or_, and_
 
@@ -23,10 +21,15 @@ from app.schemas.forum import (
     ForumPostUpdate,
     ForumSearchResult,
 )
+from app.core.limiter import limiter
 
 router = APIRouter()
 
 MENTION_RE = re.compile(r"@([a-zA-Z0-9_]+)")
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 async def create_mention_notifications(
@@ -109,7 +112,7 @@ async def search_threads(
             pass
 
     if posted_by and posted_by.strip():
-        match = f"%{posted_by.strip()}%"
+        match = f"%{_escape_like(posted_by.strip())}%"
         subq_thread_author = (
             select(ForumThread.id)
             .join(User, ForumThread.author_id == User.id)
@@ -123,7 +126,7 @@ async def search_threads(
         filters.append(or_(ForumThread.id.in_(subq_thread_author), ForumThread.id.in_(subq_post_author)))
 
     if q and q.strip():
-        kw = f"%{q.strip()}%"
+        kw = f"%{_escape_like(q.strip())}%"
         subq_title = select(ForumThread.id).where(ForumThread.title.ilike(kw))
         subq_content = (
             select(ForumPost.thread_id).where(ForumPost.content.ilike(kw))
@@ -246,7 +249,9 @@ async def list_threads(
 
 
 @router.post("/topics/{slug}/threads", response_model=ForumThreadSummary, status_code=201)
+@limiter.limit("10/minute")
 async def create_thread(
+    request: Request,
     slug: str,
     data: ForumThreadCreate,
     current_user: User = Depends(get_current_active_user),
@@ -340,7 +345,9 @@ async def get_thread(
 
 
 @router.post("/threads/{thread_id}/posts", response_model=ForumPostResponse, status_code=201)
+@limiter.limit("20/minute")
 async def create_post(
+    request: Request,
     thread_id: int,
     data: ForumPostCreate,
     current_user: User = Depends(get_current_active_user),

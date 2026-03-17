@@ -1,7 +1,7 @@
 import ast
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
@@ -12,6 +12,7 @@ from app.models.user import User
 from app.models.strategy import Strategy, StrategyVersion
 import difflib
 from app.schemas.strategy import StrategyCreate, StrategyUpdate, StrategyResponse
+from app.core.limiter import limiter
 
 router = APIRouter()
 
@@ -23,6 +24,15 @@ _FORBIDDEN_IMPORTS = {
     "os", "sys", "subprocess", "shutil", "pathlib", "socket",
     "http", "urllib", "requests", "ctypes", "pickle", "shelve",
     "multiprocessing", "threading", "signal", "io",
+}
+
+_BLOCKED_DUNDER_ATTRS = {
+    "__subclasses__", "__bases__", "__mro__", "__base__",
+    "__class__", "__dict__", "__globals__", "__code__",
+    "__func__", "__self__", "__module__", "__import__",
+    "__builtins__", "__qualname__", "__wrapped__",
+    "__loader__", "__spec__", "__path__", "__file__",
+    "__reduce__", "__reduce_ex__", "__getstate__",
 }
 
 
@@ -123,7 +133,23 @@ async def validate_strategy(body: ValidateRequest):
                     severity="warning",
                 ))
 
-    # 5. Check __init__ and next methods exist
+    # 5. Check for blocked dunder attribute access
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            if node.attr in _BLOCKED_DUNDER_ATTRS:
+                errors.append(ValidationError(
+                    line=getattr(node, "lineno", None),
+                    message=f"Access to '{node.attr}' is not allowed",
+                ))
+        if isinstance(node, ast.Subscript):
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                if node.slice.value in _BLOCKED_DUNDER_ATTRS:
+                    errors.append(ValidationError(
+                        line=getattr(node, "lineno", None),
+                        message=f"Access to '{node.slice.value}' is not allowed",
+                    ))
+
+    # 6. Check __init__ and next methods exist
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == "MyStrategy":
             methods = {m.name for m in node.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))}
@@ -142,7 +168,9 @@ async def validate_strategy(body: ValidateRequest):
 
 
 @router.post("/", response_model=StrategyResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
 async def create_strategy(
+    request: Request,
     strategy_in: StrategyCreate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -291,7 +319,9 @@ async def restore_strategy_version(
 
 
 @router.post("/{strategy_id}/fork", response_model=StrategyResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
 async def fork_strategy(
+    request: Request,
     strategy_id: int,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),

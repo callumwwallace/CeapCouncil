@@ -4,6 +4,7 @@ Processes pending orders against incoming market data. Handles:
 - Market orders: fill at next bar open (or configurable)
 - Limit orders: fill when price crosses limit
 - Stop orders: trigger when price crosses stop, then fill as market
+- Stop-limit orders: trigger converts to limit, fills on subsequent bars
 - Trailing stop: dynamic stop level
 - MOO/MOC: fill at open/close
 - Partial fills based on volume availability
@@ -42,7 +43,7 @@ class FillModel:
         spread_model: SpreadModel | None = None,
         slippage_model: SlippageModel | None = None,
         fill_at_open: bool = True,
-        max_fill_pct_of_volume: float = 0.1,  # Max 10% of bar volume per fill
+        max_fill_pct_of_volume: float = 0.1,
     ):
         self.spread = spread_model or NoSpread()
         self.slippage = slippage_model or NoSlippage()
@@ -67,15 +68,11 @@ class FillModel:
         if not handler:
             return FillResult()
 
-        # No fill when bar has zero volume (market/MOO/MOC need liquidity)
-        if bar.volume <= 0 and order.order_type in (
-            OrderType.MARKET, OrderType.MARKET_ON_OPEN, OrderType.MARKET_ON_CLOSE
-        ):
+        if bar.volume <= 0:
             return FillResult()
 
         result = handler(order, bar, avg_volume)
 
-        # Apply volume-based partial fill constraint
         if result.filled and bar.volume > 0:
             max_qty = bar.volume * self.max_fill_pct
             if result.fill_quantity > max_qty:
@@ -92,14 +89,12 @@ class FillModel:
         """
         is_buy = order.is_buy
 
-        # Apply spread: buys at ask, sells at bid
         if is_buy:
             spread_adjusted = self.spread.get_ask(base_price, bar, avg_volume)
         else:
             spread_adjusted = self.spread.get_bid(base_price, bar, avg_volume)
         spread_cost = abs(spread_adjusted - base_price)
 
-        # Apply slippage on top
         slip = self.slippage.compute_slippage(
             spread_adjusted, order.remaining_quantity, bar, is_buy
         )
@@ -108,7 +103,6 @@ class FillModel:
         else:
             fill_price = spread_adjusted - slip
 
-        # Clamp price to bar range
         fill_price = max(bar.low, min(fill_price, bar.high))
 
         return fill_price, slip, spread_cost
@@ -130,30 +124,33 @@ class FillModel:
         if order.limit_price is None:
             return FillResult()
 
-        # Check if price touched limit during this bar
         if order.is_buy:
             if bar.low <= order.limit_price:
-                fill_price = min(order.limit_price, bar.open)
-                slip = self.slippage.compute_slippage(
-                    fill_price, order.remaining_quantity, bar, True
+                fill_price = order.limit_price
+                fill_price, slip, spread_cost = self._apply_spread_and_slippage(
+                    fill_price, order, bar, avg_volume
                 )
+                fill_price = min(fill_price, order.limit_price)
                 return FillResult(
                     filled=True,
-                    fill_price=fill_price + slip,
+                    fill_price=fill_price,
                     fill_quantity=order.remaining_quantity,
                     slippage=slip,
+                    spread_cost=spread_cost,
                 )
         else:
             if bar.high >= order.limit_price:
-                fill_price = max(order.limit_price, bar.open)
-                slip = self.slippage.compute_slippage(
-                    fill_price, order.remaining_quantity, bar, False
+                fill_price = order.limit_price
+                fill_price, slip, spread_cost = self._apply_spread_and_slippage(
+                    fill_price, order, bar, avg_volume
                 )
+                fill_price = max(fill_price, order.limit_price)
                 return FillResult(
                     filled=True,
-                    fill_price=fill_price - slip,
+                    fill_price=fill_price,
                     fill_quantity=order.remaining_quantity,
                     slippage=slip,
+                    spread_cost=spread_cost,
                 )
         return FillResult()
 
@@ -168,7 +165,6 @@ class FillModel:
             triggered = True
 
         if triggered:
-            # Stop triggered : fill as market at stop price (or worse)
             base_price = order.stop_price
             fill_price, slip, spread_cost = self._apply_spread_and_slippage(
                 base_price, order, bar, avg_volume
@@ -186,53 +182,54 @@ class FillModel:
         if order.stop_price is None or order.limit_price is None:
             return FillResult()
 
-        # First check if stop is triggered
-        stop_triggered = False
-        if order.is_buy and bar.high >= order.stop_price:
-            stop_triggered = True
-        elif not order.is_buy and bar.low <= order.stop_price:
-            stop_triggered = True
+        if not order.metadata.get("_stop_triggered"):
+            stop_triggered = False
+            if order.is_buy and bar.high >= order.stop_price:
+                stop_triggered = True
+            elif not order.is_buy and bar.low <= order.stop_price:
+                stop_triggered = True
 
-        if not stop_triggered:
+            if stop_triggered:
+                order.metadata["_stop_triggered"] = True
             return FillResult()
 
-        # Stop triggered : now check limit
         if order.is_buy and bar.low <= order.limit_price:
-            fill_price = min(order.limit_price, max(bar.open, order.stop_price))
-            slip = self.slippage.compute_slippage(
-                fill_price, order.remaining_quantity, bar, True
+            fill_price = order.limit_price
+            fill_price, slip, spread_cost = self._apply_spread_and_slippage(
+                fill_price, order, bar, avg_volume
             )
+            fill_price = min(fill_price, order.limit_price)
             return FillResult(
                 filled=True,
-                fill_price=fill_price + slip,
+                fill_price=fill_price,
                 fill_quantity=order.remaining_quantity,
                 slippage=slip,
+                spread_cost=spread_cost,
             )
         elif not order.is_buy and bar.high >= order.limit_price:
-            fill_price = max(order.limit_price, min(bar.open, order.stop_price))
-            slip = self.slippage.compute_slippage(
-                fill_price, order.remaining_quantity, bar, False
+            fill_price = order.limit_price
+            fill_price, slip, spread_cost = self._apply_spread_and_slippage(
+                fill_price, order, bar, avg_volume
             )
+            fill_price = max(fill_price, order.limit_price)
             return FillResult(
                 filled=True,
-                fill_price=fill_price - slip,
+                fill_price=fill_price,
                 fill_quantity=order.remaining_quantity,
                 slippage=slip,
+                spread_cost=spread_cost,
             )
         return FillResult()
 
     def _fill_trailing_stop(self, order: Order, bar: BarData, avg_volume: float | None) -> FillResult:
-        # Update trailing peak with current bar's extreme
         if order.side == OrderSide.SELL:
-            order.update_trail(bar.high)
+            stop_price = order.update_trail(bar.high)
         else:
-            order.update_trail(bar.low)
+            stop_price = order.update_trail(bar.low)
 
-        stop_price = order.update_trail(bar.close)
         if stop_price is None:
             return FillResult()
 
-        # Check if stop triggered
         triggered = False
         if order.side == OrderSide.SELL and bar.low <= stop_price:
             triggered = True
