@@ -33,6 +33,7 @@ from app.engine.strategy.base import StrategyBase, StrategyContext
 from app.engine.analytics.metrics import (
     compute_metrics, derive_drawdown_series, sample_series, MetricsResult,
 )
+from app.engine.broker.intrabar import IntrabarSimulator, IntrabarConfig, IntrabarModel
 
 
 @dataclass
@@ -68,6 +69,11 @@ class EngineConfig:
     # Fill
     fill_at_open: bool = True
     max_fill_pct_volume: float = 0.1
+
+    # Intrabar simulation for realistic limit/stop fills (always on)
+    intrabar_enabled: bool = True
+    intrabar_model: str = "ohlc_path"
+    intrabar_ticks: int = 20
 
     # Determinism
     random_seed: int | None = None
@@ -211,11 +217,13 @@ class Engine:
         # Build components from config
         self._spread_model = self._build_spread_model()
         self._slippage_model = self._build_slippage_model()
+        self._intrabar_sim = self._build_intrabar_simulator()
         self._fill_model = FillModel(
             spread_model=self._spread_model,
             slippage_model=self._slippage_model,
             fill_at_open=self.config.fill_at_open,
             max_fill_pct_of_volume=self.config.max_fill_pct_volume,
+            intrabar_simulator=self._intrabar_sim,
         )
         self._commission = CommissionModel(
             rate=self.config.commission_rate,
@@ -539,6 +547,19 @@ class Engine:
             if cfg.spread_model == "fixed_bps":
                 return FixedBpsSpread(bps=cfg.spread_value)
             return FixedSpread(spread=cfg.spread_value)
+
+    def _build_intrabar_simulator(self) -> IntrabarSimulator | None:
+        if not self.config.intrabar_enabled:
+            return None
+        try:
+            model = IntrabarModel(self.config.intrabar_model)
+        except ValueError:
+            model = IntrabarModel.OHLC_PATH
+        return IntrabarSimulator(IntrabarConfig(
+            model=model,
+            num_ticks=self.config.intrabar_ticks,
+            seed=self.config.random_seed,
+        ))
 
     def _build_slippage_model(self) -> SlippageModel:
         cfg = self.config

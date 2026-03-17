@@ -123,6 +123,11 @@ class BrokerSimulator:
     def process_bar(self, bar: BarData, timestamp: datetime) -> list[FillEvent]:
         """Process all pending orders against a new bar.
 
+        When orders have intrabar tick indices (from IntrabarSimulator),
+        fills are sorted by tick index so that the order triggered first
+        within the bar is processed first. This correctly handles cases
+        like a stop-loss and take-profit both within the same bar.
+
         Returns list of fills produced.
         """
         # Update volume history for slippage calculations
@@ -130,50 +135,60 @@ class BrokerSimulator:
         recent = self._volume_history[bar.symbol][-20:]
         self._avg_volumes[bar.symbol] = sum(recent) / len(recent) if recent else 0
 
-        fills: list[FillEvent] = []
+        # Phase 1: evaluate all orders for this symbol and collect results
+        avg_vol = self._avg_volumes.get(bar.symbol)
+        candidates: list[tuple[Order, FillResult]] = []
         still_pending: list[Order] = []
 
-        # Process in FIFO order (time priority)
         for order in self._pending_orders:
             if order.symbol != bar.symbol:
                 still_pending.append(order)
                 continue
-
             if not order.is_active:
                 continue
 
-            avg_vol = self._avg_volumes.get(bar.symbol)
             result = self.fill_model.try_fill(order, bar, avg_vol)
-
             if result.filled and result.fill_quantity > 0:
-                comm = self.commission.compute(result.fill_price, result.fill_quantity)
-                order.fill(
-                    quantity=result.fill_quantity,
-                    price=result.fill_price,
-                    commission=comm,
-                    slippage=result.slippage,
-                    timestamp=timestamp,
-                )
-
-                fill_event = FillEvent(
-                    timestamp=timestamp,
-                    order_id=order.order_id,
-                    symbol=order.symbol,
-                    side=order.side.value,
-                    quantity=result.fill_quantity,
-                    fill_price=result.fill_price,
-                    commission=comm,
-                    slippage=result.slippage,
-                )
-                fills.append(fill_event)
-
-                if self._on_fill:
-                    self._on_fill(fill_event)
-
-                # If partially filled, keep in pending
-                if order.is_active:
-                    still_pending.append(order)
+                candidates.append((order, result))
             else:
+                still_pending.append(order)
+
+        # Phase 2: sort by intrabar tick index for correct fill sequencing.
+        # Orders without a tick index (market, MOO, MOC) get index -1 so
+        # they fill before conditional orders, preserving existing behavior.
+        candidates.sort(key=lambda c: c[1].intrabar_tick_index if c[1].intrabar_tick_index is not None else -1)
+
+        # Phase 3: execute fills in sequence
+        fills: list[FillEvent] = []
+        for order, result in candidates:
+            if not order.is_active:
+                continue
+
+            comm = self.commission.compute(result.fill_price, result.fill_quantity)
+            order.fill(
+                quantity=result.fill_quantity,
+                price=result.fill_price,
+                commission=comm,
+                slippage=result.slippage,
+                timestamp=timestamp,
+            )
+
+            fill_event = FillEvent(
+                timestamp=timestamp,
+                order_id=order.order_id,
+                symbol=order.symbol,
+                side=order.side.value,
+                quantity=result.fill_quantity,
+                fill_price=result.fill_price,
+                commission=comm,
+                slippage=result.slippage,
+            )
+            fills.append(fill_event)
+
+            if self._on_fill:
+                self._on_fill(fill_event)
+
+            if order.is_active:
                 still_pending.append(order)
 
         self._pending_orders = still_pending
