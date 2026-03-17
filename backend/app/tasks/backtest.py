@@ -339,7 +339,6 @@ def _compute_exposure_pct(trades: list[dict], total_bars: int) -> float | None:
 
 
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
 # Engine runner
 # ---------------------------------------------------------------------------
 
@@ -743,6 +742,7 @@ def _run_single_backtest(
     start_date=None,
     end_date=None,
     interval: str = "1d",
+    include_equity_curve: bool = False,
 ) -> dict:
     """Run a single backtest with specific params.
 
@@ -808,6 +808,7 @@ def _run_single_backtest(
         "total_trades": _p(m.total_trades, 0),
         "win_rate": _p(m.win_rate, 0),
         "final_value": _p(round(result.final_value, 2)),
+        **({"equity_curve": result.equity_curve} if include_equity_curve else {}),
     }
 
 
@@ -1395,7 +1396,7 @@ def run_heatmap_task(
 # Walk-Forward Analysis task
 # ---------------------------------------------------------------------------
 
-@celery_app.task(bind=True, time_limit=600, soft_time_limit=540, autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 2})
+@celery_app.task(bind=True, time_limit=900, soft_time_limit=840, autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 2})
 def run_walk_forward_task(
     self,
     code: str,
@@ -1410,13 +1411,22 @@ def run_walk_forward_task(
     purge_bars: int = 0,
     window_mode: str = "rolling",
     interval: str = "1d",
+    param_ranges: dict | None = None,
+    n_trials: int = 30,
 ):
-    """Walk-forward analysis: split data into N windows, train+test each.
+    """Walk-forward analysis with optional parameter optimization.
 
-    purge_bars: gap between train and test to prevent information leakage.
-    window_mode: "rolling" (fixed train_pct per window) or "anchored" (train grows from start).
+    Splits data into windows, optimizes on train Sharpe via Optuna, and
+    evaluates on an OOS test then uses defaults if param_ranges is None.
+
     """
-    # Pre-fetch all data once (uses cache for reproducibility)
+    try:
+        import optuna
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+    except ImportError:
+        if param_ranges:
+            return {"status": "failed", "error": "optuna required for walk-forward optimization"}
+
     data = _fetch_data(symbol, start_date, end_date, interval)
     if data is None or data.empty:
         return {"status": "failed", "error": "No market data for the selected date range"}
@@ -1433,9 +1443,49 @@ def run_walk_forward_task(
             ),
         }
 
-    # Lookback bars to warm up indicators in each sub-window.
     lookback = min(50, window_size)
     anchored = window_mode == "anchored"
+
+    def _adjust_return(result, warmup_bars):
+        ret = result.get("total_return")
+        curve = result.get("equity_curve") or []
+        if warmup_bars > 0 and warmup_bars < len(curve):
+            eq_start = curve[warmup_bars].get("equity", initial_capital)
+            eq_end = curve[-1].get("equity", initial_capital)
+            if eq_start > 0:
+                ret = round((eq_end - eq_start) / eq_start * 100, 4)
+        return ret
+
+    def _optimize_on_train(train_data_slice):
+        if not param_ranges:
+            return {}
+        def objective(trial):
+            combo = {}
+            for key, rng in param_ranges.items():
+                if isinstance(rng, dict):
+                    low, high = rng.get("low", 1), rng.get("high", 100)
+                    pt = rng.get("type", "float")
+                    if pt == "int":
+                        combo[key] = trial.suggest_int(key, int(low), int(high))
+                    else:
+                        combo[key] = trial.suggest_float(key, float(low), float(high))
+                else:
+                    combo[key] = rng[0] if isinstance(rng, list) else rng
+            r = _run_single_backtest(
+                code=code, initial_capital=initial_capital,
+                commission=commission, slippage=slippage,
+                param_combo=combo, data=train_data_slice.copy(), symbol=symbol,
+            )
+            if "error" in r:
+                return float("-inf")
+            return r.get("sharpe_ratio", 0) or 0
+
+        study = optuna.create_study(
+            direction="maximize",
+            sampler=optuna.samplers.TPESampler(seed=42),
+        )
+        study.optimize(objective, n_trials=min(n_trials, 100), show_progress_bar=False)
+        return study.best_params if study.best_trial else {}
 
     windows = []
     for i in range(n_splits):
@@ -1456,17 +1506,14 @@ def run_walk_forward_task(
         if test_start >= end_idx:
             continue
 
-        # Include lookback bars before each window so indicators can warm up.
         train_lb_start = max(0, train_start_idx - lookback)
         train_data = data.iloc[train_lb_start:train_end].copy()
 
-        # Test slice: pull lookback bars from the end of the training window
-        # so the test run has enough history for indicators like SMA(30).
         test_lb_start = max(0, test_start - lookback)
         test_data = data.iloc[test_lb_start:end_idx].copy()
 
         train_period = {
-            "start": data.index[train_lb_start].strftime("%Y-%m-%d"),
+            "start": data.index[train_start_idx].strftime("%Y-%m-%d"),
             "end": data.index[min(train_end - 1, total_bars - 1)].strftime("%Y-%m-%d"),
         }
         test_period = {
@@ -1474,45 +1521,66 @@ def run_walk_forward_task(
             "end": data.index[min(end_idx - 1, total_bars - 1)].strftime("%Y-%m-%d"),
         }
 
-        # Run backtest on training slice (with lookback warmup)
+        best_params = _optimize_on_train(train_data)
+
         train_result = _run_single_backtest(
             code=code,
             initial_capital=initial_capital,
             commission=commission, slippage=slippage,
-            param_combo={},
+            param_combo=best_params,
             data=train_data,
             symbol=symbol,
+            include_equity_curve=True,
         )
+        train_warmup = train_start_idx - train_lb_start
+        train_return = _adjust_return(train_result, train_warmup)
 
-        # Run backtest on test slice (with lookback warmup)
         test_result = _run_single_backtest(
             code=code,
             initial_capital=initial_capital,
             commission=commission, slippage=slippage,
-            param_combo={},
+            param_combo=best_params,
             data=test_data,
             symbol=symbol,
+            include_equity_curve=True,
         )
+        test_warmup = test_start - test_lb_start
+        test_return = _adjust_return(test_result, test_warmup)
+
+        train_sharpe = train_result.get("sharpe_ratio") or 0
+        test_sharpe = test_result.get("sharpe_ratio") or 0
+        overfit_score = None
+        if train_sharpe > 0:
+            overfit_score = round(max(0, 1 - (test_sharpe / train_sharpe)) * 100, 1)
 
         windows.append({
             "window": i + 1,
             "train_period": train_period,
             "test_period": test_period,
-            "train_return": train_result.get("total_return"),
-            "test_return": test_result.get("total_return"),
+            "best_params": best_params,
+            "train_return": train_return,
+            "test_return": test_return,
             "train_sharpe": train_result.get("sharpe_ratio"),
             "test_sharpe": test_result.get("sharpe_ratio"),
             "train_trades": train_result.get("total_trades"),
             "test_trades": test_result.get("total_trades"),
+            "overfit_score": overfit_score,
             "train_error": train_result.get("error"),
             "test_error": test_result.get("error"),
         })
 
         self.update_state(state="PROGRESS", meta={"current": i + 1, "total": n_splits})
 
-    # Aggregate
     test_returns = [w["test_return"] for w in windows if w["test_return"] is not None]
+    test_sharpes = [w["test_sharpe"] for w in windows if w["test_sharpe"] is not None]
+    train_sharpes = [w["train_sharpe"] for w in windows if w["train_sharpe"] is not None]
     avg_oos_return = round(sum(test_returns) / len(test_returns), 4) if test_returns else None
+    avg_oos_sharpe = round(sum(test_sharpes) / len(test_sharpes), 4) if test_sharpes else None
+    avg_is_sharpe = round(sum(train_sharpes) / len(train_sharpes), 4) if train_sharpes else None
+
+    overall_overfit = None
+    if avg_is_sharpe and avg_is_sharpe > 0 and avg_oos_sharpe is not None:
+        overall_overfit = round(max(0, 1 - (avg_oos_sharpe / avg_is_sharpe)) * 100, 1)
 
     return {
         "status": "completed",
@@ -1522,6 +1590,9 @@ def run_walk_forward_task(
         "window_mode": window_mode,
         "windows": windows,
         "avg_oos_return": avg_oos_return,
+        "avg_oos_sharpe": avg_oos_sharpe,
+        "avg_is_sharpe": avg_is_sharpe,
+        "overall_overfit_score": overall_overfit,
     }
 
 

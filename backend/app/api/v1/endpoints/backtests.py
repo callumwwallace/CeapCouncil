@@ -127,6 +127,8 @@ class WalkForwardRequest(BaseModel):
     purge_bars: int = Field(default=0, ge=0, le=100)
     window_mode: str = Field(default="rolling", pattern=r"^(rolling|anchored)$")
     interval: str = "1d"
+    param_ranges: dict | None = None
+    n_trials: int = Field(default=30, ge=5, le=200)
 
 
 class MonteCarloRequest(BaseModel):
@@ -479,6 +481,8 @@ async def walk_forward_analysis(
         purge_bars=body.purge_bars,
         window_mode=body.window_mode,
         interval=body.interval,
+        param_ranges=body.param_ranges,
+        n_trials=body.n_trials,
     )
     return {"task_id": task.id, "status": "queued"}
 
