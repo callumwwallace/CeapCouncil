@@ -401,28 +401,39 @@ class Engine:
             bar_index += 1
 
         last_timestamp = self._clock.now
-        for symbol, pos in list(self._portfolio._positions.items()):
-            if not pos.is_flat:
-                from app.engine.broker.order import Order as _Order, OrderSide as _Side, OrderType as _OType
-                side = _Side.SELL if pos.is_long else _Side.BUY
-                order = _Order(
-                    symbol=symbol,
-                    side=side,
-                    order_type=_OType.MARKET,
-                    quantity=abs(pos.quantity),
+        if last_bar_group:
+            for event in last_bar_group:
+                bar = BarData(
+                    symbol=event.symbol,
+                    timestamp=event.timestamp,
+                    open=event.open, high=event.high,
+                    low=event.low, close=event.close,
+                    volume=event.volume, bar_index=event.bar_index,
                 )
-                self._broker.submit_order(order, last_timestamp)
-                for event in last_bar_group:
-                    if event.symbol == symbol:
-                        bar = BarData(
-                            symbol=event.symbol,
-                            timestamp=event.timestamp,
-                            open=event.open, high=event.high,
-                            low=event.low, close=event.close,
-                            volume=event.volume, bar_index=event.bar_index,
-                        )
-                        self._broker.process_bar(bar, last_timestamp)
-                        break
+                self._broker.process_bar(bar, last_timestamp)
+
+            for symbol, pos in list(self._portfolio._positions.items()):
+                if not pos.is_flat:
+                    from app.engine.broker.order import Order as _Order, OrderSide as _Side, OrderType as _OType
+                    side = _Side.SELL if pos.is_long else _Side.BUY
+                    order = _Order(
+                        symbol=symbol,
+                        side=side,
+                        order_type=_OType.MARKET,
+                        quantity=abs(pos.quantity),
+                    )
+                    self._broker.submit_order(order, last_timestamp)
+                    for event in last_bar_group:
+                        if event.symbol == symbol:
+                            bar = BarData(
+                                symbol=event.symbol,
+                                timestamp=event.timestamp,
+                                open=event.open, high=event.high,
+                                low=event.low, close=event.close,
+                                volume=event.volume, bar_index=event.bar_index,
+                            )
+                            self._broker.process_bar(bar, last_timestamp)
+                            break
 
         self._strategy.on_end()
         elapsed = (time.monotonic() - start_time) * 1000
