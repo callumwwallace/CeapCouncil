@@ -425,6 +425,17 @@ class ApiClient {
     return response.data;
   }
 
+  // Factor Attribution
+  async runFactorAttribution(backtestId: number): Promise<{ task_id: string }> {
+    const response = await this.client.post(`/backtests/${backtestId}/factor-attribution`);
+    return response.data;
+  }
+
+  async getFactorAttributionResult(taskId: string): Promise<any> {
+    const response = await this.client.get(`/backtests/factor-attribution/${taskId}`);
+    return response.data;
+  }
+
   // Competitions / Leaderboard
   async listCompetitions(status?: string): Promise<CompetitionSummary[]> {
     const response = await this.client.get<CompetitionSummary[]>('/competitions', { params: status ? { status } : {} });

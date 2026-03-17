@@ -141,6 +141,9 @@ export interface BacktestResults {
   total_slippage?: number | null;
   total_spread_cost?: number | null;
   cost_as_pct_of_pnl?: number | null;
+  total_funding_paid?: number | null;
+  total_funding_received?: number | null;
+  net_funding?: number | null;
   rolling_sharpe?: Array<{date: string; value: number}> | null;
   rolling_sortino?: Array<{date: string; value: number}> | null;
   rolling_beta?: Array<{date: string; value: number}> | null;

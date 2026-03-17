@@ -42,6 +42,7 @@ import {
   GitCompare,
   Filter,
   Layers,
+  PieChart,
 } from 'lucide-react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -1083,6 +1084,9 @@ interface BacktestResult {
   total_slippage?: number;
   total_spread_cost?: number;
   cost_as_pct_of_pnl?: number;
+  total_funding_paid?: number;
+  total_funding_received?: number;
+  net_funding?: number;
   rolling_sharpe?: Array<{date: string; value: number}>;
   rolling_sortino?: Array<{date: string; value: number}>;
   var_95?: number;
@@ -1140,7 +1144,7 @@ export default function PlaygroundPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [lastRunTime, setLastRunTime] = useState<string | null>(null);
-  const [activeResultsTab, setActiveResultsTab] = useState<'summary' | 'trades' | 'orders' | 'charts' | 'compare' | 'optimize' | 'walkforward' | 'oos' | 'cpcv' | 'montecarlo' | 'risk' | 'tca' | 'heatmap' | 'distribution'>('summary');
+  const [activeResultsTab, setActiveResultsTab] = useState<'summary' | 'trades' | 'orders' | 'charts' | 'compare' | 'optimize' | 'walkforward' | 'oos' | 'cpcv' | 'factors' | 'montecarlo' | 'risk' | 'tca' | 'heatmap' | 'distribution'>('summary');
   const [showCostsSection, setShowCostsSection] = useState(false);
   const [showSizingSection, setShowSizingSection] = useState(false);
   const [showRiskSection, setShowRiskSection] = useState(false);
@@ -1219,6 +1223,8 @@ export default function PlaygroundPage() {
   const [cpcvLoading, setCpcvLoading] = useState(false);
   const [cpcvNGroups, setCpcvNGroups] = useState(6);
   const [cpcvPurgeBars, setCpcvPurgeBars] = useState(10);
+  const [factorResults, setFactorResults] = useState<any>(null);
+  const [factorLoading, setFactorLoading] = useState(false);
   const [monteCarloResults, setMonteCarloResults] = useState<any>(null);
   const [monteCarloLoading, setMonteCarloLoading] = useState(false);
   const [lastBacktestId, setLastBacktestId] = useState<number | null>(null);
@@ -1444,6 +1450,9 @@ export default function PlaygroundPage() {
             total_slippage: r?.total_slippage ?? undefined,
             total_spread_cost: r?.total_spread_cost ?? undefined,
             cost_as_pct_of_pnl: r?.cost_as_pct_of_pnl ?? undefined,
+            total_funding_paid: r?.total_funding_paid ?? undefined,
+            total_funding_received: r?.total_funding_received ?? undefined,
+            net_funding: r?.net_funding ?? undefined,
             rolling_sharpe: r?.rolling_sharpe ?? undefined,
             rolling_sortino: r?.rolling_sortino ?? undefined,
             var_95: r?.var_95 ?? undefined,
@@ -1729,6 +1738,30 @@ export default function PlaygroundPage() {
       setCpcvLoading(false);
     }
   }, [playgroundStrategyId, strategyMode, code, config, cpcvNGroups, cpcvPurgeBars]);
+
+  const handleRunFactorAttribution = useCallback(async () => {
+    if (!lastBacktestId) return;
+    setFactorLoading(true);
+    setFactorResults(null);
+    try {
+      const { task_id } = await api.runFactorAttribution(lastBacktestId);
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const res = await api.getFactorAttributionResult(task_id);
+        if (res.status === 'completed') {
+          setFactorResults(res);
+          break;
+        } else if (res.status === 'failed') {
+          setFactorResults({ error: res.error });
+          break;
+        }
+      }
+    } catch (err: unknown) {
+      setFactorResults({ error: extractApiError(err, 'Factor attribution failed') });
+    } finally {
+      setFactorLoading(false);
+    }
+  }, [lastBacktestId]);
 
   const handleRunMonteCarlo = useCallback(async () => {
     if (!lastBacktestId) return;
@@ -2329,10 +2362,10 @@ hist('dist',${histData});
                   </div>
                     {/* Secondary / advanced tabs - 2 rows of 4 */}
                     <div className="grid grid-cols-4 gap-1.5">
-                      {(['tca', 'optimize', 'walkforward', 'oos', 'cpcv', 'montecarlo', 'risk', 'heatmap', 'distribution', 'compare'] as const).map((tab) => {
-                        const secondaryIcons = { tca: Activity, optimize: Sliders, walkforward: GitBranch, oos: Filter, cpcv: Layers, montecarlo: Shuffle, risk: Shield, heatmap: Calendar, distribution: BarChart2, compare: GitCompare };
+                      {(['tca', 'optimize', 'walkforward', 'oos', 'cpcv', 'factors', 'montecarlo', 'risk', 'heatmap', 'distribution', 'compare'] as const).map((tab) => {
+                        const secondaryIcons = { tca: Activity, optimize: Sliders, walkforward: GitBranch, oos: Filter, cpcv: Layers, factors: PieChart, montecarlo: Shuffle, risk: Shield, heatmap: Calendar, distribution: BarChart2, compare: GitCompare };
                         const Icon = secondaryIcons[tab];
-                        const label = ({ tca: 'TCA', optimize: 'Optimize', walkforward: 'Walk-Fwd', oos: 'OOS', cpcv: 'CPCV', montecarlo: 'Monte Carlo', risk: 'Risk', heatmap: 'Monthly', distribution: 'Dist.', compare: 'Compare' } as Record<string, string>)[tab];
+                        const label = ({ tca: 'TCA', optimize: 'Optimize', walkforward: 'Walk-Fwd', oos: 'OOS', cpcv: 'CPCV', factors: 'Factors', montecarlo: 'Monte Carlo', risk: 'Risk', heatmap: 'Monthly', distribution: 'Dist.', compare: 'Compare' } as Record<string, string>)[tab];
                         return (
                       <button
                         key={tab}
@@ -2740,6 +2773,143 @@ hist('dist',${histData});
                           )}
                         </div>
                       )}
+                      {activeResultsTab === 'factors' && (
+                        <div className="space-y-3">
+                          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+                            <div className="text-[11px] font-medium text-gray-700 mb-1">Multi-Factor Attribution</div>
+                            <p className="text-[11px] text-gray-500 mb-2">Decomposes returns into Market, Size (SMB), Value (HML), and Momentum factors. Shows how much of your return is true alpha vs. factor exposure.</p>
+                            <button onClick={handleRunFactorAttribution} disabled={factorLoading || !lastBacktestId} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition">
+                              {factorLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Run Factor Attribution
+                            </button>
+                            {!lastBacktestId && (
+                              <p className="text-[10px] text-amber-600">Run a backtest first to enable factor attribution.</p>
+                            )}
+                          </div>
+                          {factorResults?.error && (
+                            <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs">{factorResults.error}</div>
+                          )}
+                          {factorResults && !factorResults.error && factorResults.status === 'completed' && (
+                            <div className="space-y-3">
+                              {/* Alpha headline */}
+                              <div className={`p-3 rounded-lg border ${factorResults.alpha_significant ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 bg-white'}`}>
+                                <div className="flex items-baseline justify-between">
+                                  <div>
+                                    <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">Annualized Alpha</div>
+                                    <div className={`text-xl font-bold ${factorResults.alpha_annual_pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{factorResults.alpha_annual_pct >= 0 ? '+' : ''}{factorResults.alpha_annual_pct.toFixed(2)}%</div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-[10px] text-gray-500">t-stat: {factorResults.alpha_t_stat.toFixed(2)}</div>
+                                    <div className={`text-[11px] font-medium ${factorResults.alpha_significant ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                      {factorResults.alpha_significant ? 'Statistically significant' : 'Not significant (p > 0.05)'}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Model fit */}
+                              <div className="grid grid-cols-3 gap-2">
+                                <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                  <div className="text-[10px] text-gray-500">R²</div>
+                                  <div className="text-sm font-semibold text-gray-900">{(factorResults.r_squared * 100).toFixed(1)}%</div>
+                                  <div className="text-[10px] text-gray-400">{factorResults.r_squared > 0.7 ? 'Well explained' : factorResults.r_squared > 0.3 ? 'Partially explained' : 'Mostly unexplained'}</div>
+                                </div>
+                                <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                  <div className="text-[10px] text-gray-500">Strategy Return (ann.)</div>
+                                  <div className={`text-sm font-semibold ${factorResults.strategy_annual_return_pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{factorResults.strategy_annual_return_pct.toFixed(1)}%</div>
+                                </div>
+                                <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                  <div className="text-[10px] text-gray-500">Observations</div>
+                                  <div className="text-sm font-semibold text-gray-900">{factorResults.n_observations}</div>
+                                </div>
+                              </div>
+
+                              {/* Factor loadings table */}
+                              <div>
+                                <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Factor Loadings</div>
+                                <div className="rounded-lg border border-gray-200 overflow-hidden">
+                                  <table className="w-full text-[11px]">
+                                    <thead className="bg-gray-50">
+                                      <tr>
+                                        <th className="px-3 py-1.5 text-left text-gray-500 font-medium">Factor</th>
+                                        <th className="px-3 py-1.5 text-right text-gray-500 font-medium">Beta (β)</th>
+                                        <th className="px-3 py-1.5 text-right text-gray-500 font-medium">t-stat</th>
+                                        <th className="px-3 py-1.5 text-right text-gray-500 font-medium">p-value</th>
+                                        <th className="px-3 py-1.5 text-right text-gray-500 font-medium">Contrib. (ann.)</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                      {factorResults.factors.map((f: any) => (
+                                        <tr key={f.factor} className="hover:bg-gray-50">
+                                          <td className="px-3 py-1.5 text-gray-700 font-medium">{f.factor} <span className="text-emerald-500">{f.significance}</span></td>
+                                          <td className={`px-3 py-1.5 text-right font-mono ${Math.abs(f.beta) > 0.3 ? 'font-semibold' : ''}`}>{f.beta.toFixed(3)}</td>
+                                          <td className="px-3 py-1.5 text-right text-gray-600">{f.t_stat.toFixed(2)}</td>
+                                          <td className={`px-3 py-1.5 text-right ${f.p_value < 0.05 ? 'text-emerald-600 font-medium' : 'text-gray-500'}`}>{f.p_value < 0.001 ? '<0.001' : f.p_value.toFixed(3)}</td>
+                                          <td className={`px-3 py-1.5 text-right font-medium ${f.annual_contribution_pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{f.annual_contribution_pct >= 0 ? '+' : ''}{f.annual_contribution_pct.toFixed(2)}%</td>
+                                        </tr>
+                                      ))}
+                                      <tr className="bg-gray-50 font-medium">
+                                        <td className="px-3 py-1.5 text-gray-700">Alpha (α)</td>
+                                        <td className="px-3 py-1.5 text-right text-gray-400">—</td>
+                                        <td className="px-3 py-1.5 text-right text-gray-600">{factorResults.alpha_t_stat.toFixed(2)}</td>
+                                        <td className={`px-3 py-1.5 text-right ${factorResults.alpha_p_value < 0.05 ? 'text-emerald-600' : 'text-gray-500'}`}>{factorResults.alpha_p_value < 0.001 ? '<0.001' : factorResults.alpha_p_value.toFixed(3)}</td>
+                                        <td className={`px-3 py-1.5 text-right ${factorResults.alpha_annual_pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{factorResults.alpha_annual_pct >= 0 ? '+' : ''}{factorResults.alpha_annual_pct.toFixed(2)}%</td>
+                                      </tr>
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+
+                              {/* Visual breakdown bar */}
+                              <div>
+                                <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Return Decomposition</div>
+                                <div className="p-3 rounded-lg border border-gray-200 bg-white space-y-2">
+                                  {factorResults.factors.map((f: any) => {
+                                    const maxAbs = Math.max(
+                                      ...factorResults.factors.map((x: any) => Math.abs(x.annual_contribution_pct)),
+                                      Math.abs(factorResults.alpha_annual_pct),
+                                      0.01
+                                    );
+                                    const pct = Math.min(Math.abs(f.annual_contribution_pct) / maxAbs * 100, 100);
+                                    return (
+                                      <div key={f.factor} className="flex items-center gap-2">
+                                        <div className="w-28 text-[10px] text-gray-600 truncate">{f.factor}</div>
+                                        <div className="flex-1 h-4 bg-gray-100 rounded-full overflow-hidden relative">
+                                          <div className={`h-full rounded-full ${f.annual_contribution_pct >= 0 ? 'bg-emerald-400' : 'bg-red-400'}`} style={{ width: `${pct}%` }} />
+                                        </div>
+                                        <div className={`w-16 text-right text-[10px] font-mono ${f.annual_contribution_pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{f.annual_contribution_pct >= 0 ? '+' : ''}{f.annual_contribution_pct.toFixed(1)}%</div>
+                                      </div>
+                                    );
+                                  })}
+                                  <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
+                                    <div className="w-28 text-[10px] text-gray-600 font-medium">Alpha (α)</div>
+                                    <div className="flex-1 h-4 bg-gray-100 rounded-full overflow-hidden relative">
+                                      {(() => {
+                                        const maxAbs = Math.max(
+                                          ...factorResults.factors.map((x: any) => Math.abs(x.annual_contribution_pct)),
+                                          Math.abs(factorResults.alpha_annual_pct),
+                                          0.01
+                                        );
+                                        const pct = Math.min(Math.abs(factorResults.alpha_annual_pct) / maxAbs * 100, 100);
+                                        return <div className={`h-full rounded-full ${factorResults.alpha_annual_pct >= 0 ? 'bg-blue-400' : 'bg-red-400'}`} style={{ width: `${pct}%` }} />;
+                                      })()}
+                                    </div>
+                                    <div className={`w-16 text-right text-[10px] font-mono ${factorResults.alpha_annual_pct >= 0 ? 'text-blue-600' : 'text-red-500'}`}>{factorResults.alpha_annual_pct >= 0 ? '+' : ''}{factorResults.alpha_annual_pct.toFixed(1)}%</div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Interpretation */}
+                              <div className="p-2 rounded-lg border border-gray-200 bg-gray-50 text-[11px] text-gray-600 space-y-1">
+                                {factorResults.r_squared > 0.7 && <p>High R² ({(factorResults.r_squared * 100).toFixed(0)}%) — most of your returns are explained by known factors.</p>}
+                                {factorResults.r_squared <= 0.7 && factorResults.r_squared > 0.3 && <p>Moderate R² ({(factorResults.r_squared * 100).toFixed(0)}%) — returns are partially driven by factors, with meaningful unique behavior.</p>}
+                                {factorResults.r_squared <= 0.3 && <p>Low R² ({(factorResults.r_squared * 100).toFixed(0)}%) — your strategy behaves independently of standard factors. This is often desirable.</p>}
+                                {factorResults.alpha_significant && factorResults.alpha_annual_pct > 0 && <p className="text-emerald-700 font-medium">Positive significant alpha — evidence of genuine skill beyond factor tilts.</p>}
+                                {!factorResults.alpha_significant && <p className="text-amber-700">Alpha is not statistically significant — observed returns could be explained by factor exposures.</p>}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {activeResultsTab === 'walkforward' && (
                         <div className="space-y-3">
                           <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
@@ -2964,11 +3134,12 @@ hist('dist',${histData});
                       {activeResultsTab === 'tca' && (
                         <div className="space-y-3">
                           {((results as { total_commission?: number }).total_commission || (results as { total_slippage?: number }).total_slippage) ? (
+                            <>
                             <div className="grid grid-cols-2 gap-2">
                               <div className="p-3 rounded-lg border border-gray-200 bg-white">
                                 <div className="text-[11px] text-gray-500 mb-1">Total commission</div>
                                 <div className="text-sm font-semibold text-gray-900">${((results as { total_commission?: number }).total_commission ?? 0).toFixed(2)}</div>
-                                            </div>
+                              </div>
                               <div className="p-3 rounded-lg border border-gray-200 bg-white">
                                 <div className="text-[11px] text-gray-500 mb-1">Total slippage</div>
                                 <div className="text-sm font-semibold text-gray-900">${((results as { total_slippage?: number }).total_slippage ?? 0).toFixed(2)}</div>
@@ -2976,11 +3147,31 @@ hist('dist',${histData});
                               <div className="p-3 rounded-lg border border-gray-200 bg-white col-span-2">
                                 <div className="text-[11px] text-gray-500 mb-1">Cost as % of P&amp;L</div>
                                 <div className="text-sm font-semibold text-gray-900">{((results as { cost_as_pct_of_pnl?: number }).cost_as_pct_of_pnl ?? 0).toFixed(2)}%</div>
-                                    </div>
                               </div>
+                            </div>
+                            {((results.total_funding_paid ?? 0) > 0 || (results.total_funding_received ?? 0) > 0) && (
+                              <div className="space-y-2">
+                                <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Perpetual Funding</div>
+                                <div className="grid grid-cols-3 gap-2">
+                                  <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                    <div className="text-[11px] text-gray-500 mb-1">Funding paid</div>
+                                    <div className="text-sm font-semibold text-red-500">${(results.total_funding_paid ?? 0).toFixed(2)}</div>
+                                  </div>
+                                  <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                    <div className="text-[11px] text-gray-500 mb-1">Funding received</div>
+                                    <div className="text-sm font-semibold text-emerald-600">${(results.total_funding_received ?? 0).toFixed(2)}</div>
+                                  </div>
+                                  <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                    <div className="text-[11px] text-gray-500 mb-1">Net funding</div>
+                                    <div className={`text-sm font-semibold ${(results.net_funding ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>${(results.net_funding ?? 0).toFixed(2)}</div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            </>
                           ) : (
                             <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-center">
-                              <div className="text-[11px] text-gray-500">Configure commission and slippage in Setup → Costs to see transaction cost analysis.</div>
+                              <div className="text-[11px] text-gray-500">Configure commission and slippage in Setup &rarr; Costs to see transaction cost analysis.</div>
                             </div>
                           )}
                   </div>

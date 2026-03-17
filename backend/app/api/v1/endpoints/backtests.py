@@ -17,6 +17,7 @@ from app.tasks.backtest import (
     run_genetic_optimization_task, run_multiobjective_optimization_task,
     run_heatmap_task, run_walk_forward_task, run_monte_carlo_task,
     run_batch_backtest_task, run_oos_validation_task, run_cpcv_task,
+    run_factor_attribution_task,
 )
 
 router = APIRouter()
@@ -680,7 +681,7 @@ async def cpcv_analysis(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Run Combinatorial Purged Cross-Validation (López de Prado)."""
+    """Run Combinatorial Purged Cross-Validation."""
     code = await _resolve_code(body.strategy_id, body.code, current_user, db)
 
     task = run_cpcv_task.delay(
@@ -708,6 +709,56 @@ async def get_cpcv_result(
     current_user: User = Depends(get_current_active_user),
 ):
     """Poll CPCV task result."""
+    from celery.result import AsyncResult
+    result = AsyncResult(task_id)
+    if result.state == "PROGRESS":
+        return {"status": "running", "progress": result.info}
+    elif result.state == "SUCCESS":
+        return {"status": "completed", **result.result}
+    elif result.state == "FAILURE":
+        return {"status": "failed", "error": str(result.result)}
+    return {"status": result.state.lower()}
+
+
+# ---------------------------------------------------------------------------
+# Advanced: Factor Attribution
+# ---------------------------------------------------------------------------
+
+@router.post("/{backtest_id}/factor-attribution")
+@limiter.limit("5/minute")
+async def factor_attribution(
+    request: Request,
+    backtest_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run multi-factor attribution on a completed backtest."""
+    result = await db.execute(select(Backtest).where(Backtest.id == backtest_id))
+    backtest = result.scalar_one_or_none()
+    if not backtest:
+        raise HTTPException(status_code=404, detail="Backtest not found")
+    if backtest.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not backtest.results or not backtest.results.get("equity_curve"):
+        raise HTTPException(status_code=400, detail="Backtest has no equity curve data")
+
+    task = run_factor_attribution_task.delay(
+        equity_curve=backtest.results["equity_curve"],
+        initial_capital=backtest.initial_capital,
+        symbol=backtest.symbol,
+        start_date=str(backtest.start_date)[:10],
+        end_date=str(backtest.end_date)[:10],
+        interval=(backtest.parameters or {}).get("interval", "1d"),
+    )
+    return {"task_id": task.id, "status": "queued"}
+
+
+@router.get("/factor-attribution/{task_id}")
+async def get_factor_attribution_result(
+    task_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Poll factor attribution task result."""
     from celery.result import AsyncResult
     result = AsyncResult(task_id)
     if result.state == "PROGRESS":

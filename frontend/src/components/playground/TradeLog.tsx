@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
+import { List } from 'react-window';
 import { ArrowUpRight, ArrowDownRight, TrendingUp } from 'lucide-react';
 import { BacktestTrade } from '@/types';
 
@@ -9,6 +10,68 @@ export interface TradeLogProps {
 }
 
 type SortKey = 'entry_date' | 'type' | 'entry_price' | 'exit_price' | 'size' | 'pnl' | 'commission';
+
+const ROW_HEIGHT = 32;
+const VIRTUALIZATION_THRESHOLD = 100;
+
+const COLUMN_GRID = 'grid grid-cols-[1fr_60px_80px_80px_56px_120px_64px]';
+
+interface TradeRowExtraProps {
+  trades: BacktestTrade[];
+}
+
+function TradeRowComponent({ index, style, trades }: { index: number; style: React.CSSProperties } & TradeRowExtraProps) {
+  const trade = trades[index];
+  return (
+    <div
+      style={style}
+      className={`${COLUMN_GRID} items-center text-xs hover:bg-gray-50 border-b border-gray-100`}
+      data-testid={`trade-row-${index}`}
+    >
+      <div className="px-2 text-gray-600 truncate">
+        {new Date(trade.entry_date).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: '2-digit',
+        })}
+      </div>
+      <div className="px-2">
+        <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium ${
+          trade.type === 'LONG'
+            ? 'bg-emerald-100 text-emerald-700'
+            : 'bg-red-100 text-red-700'
+        }`}>
+          {trade.type === 'LONG' ? (
+            <ArrowUpRight className="h-3 w-3" />
+          ) : (
+            <ArrowDownRight className="h-3 w-3" />
+          )}
+          {trade.type}
+        </span>
+      </div>
+      <div className="px-2 text-right font-medium text-gray-900">
+        ${trade.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      </div>
+      <div className="px-2 text-right font-medium text-gray-900">
+        ${trade.exit_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      </div>
+      <div className="px-2 text-right text-gray-600">
+        {trade.size}
+      </div>
+      <div className="px-2 text-right">
+        <span className={`font-medium ${trade.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+          {trade.pnl >= 0 ? '+' : ''}${trade.pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          <span className="text-xs ml-1">
+            ({trade.pnl_pct >= 0 ? '+' : ''}{trade.pnl_pct.toFixed(1)}%)
+          </span>
+        </span>
+      </div>
+      <div className="px-2 text-right text-gray-500">
+        ${trade.commission.toFixed(2)}
+      </div>
+    </div>
+  );
+}
 
 export default function TradeLog({ trades }: TradeLogProps) {
   const [sortKey, setSortKey] = useState<SortKey>('entry_date');
@@ -30,10 +93,16 @@ export default function TradeLog({ trades }: TradeLogProps) {
     return arr;
   }, [trades, sortKey, sortDir]);
 
-  const handleSort = (key: SortKey) => {
-    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setSortKey(key); setSortDir('desc'); }
-  };
+  const handleSort = useCallback((key: SortKey) => {
+    setSortKey(prev => {
+      if (prev === key) {
+        setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        return prev;
+      }
+      setSortDir('desc');
+      return key;
+    });
+  }, []);
 
   const SortIcon = ({ col }: { col: SortKey }) =>
     sortKey === col ? <span className="text-gray-400">{sortDir === 'asc' ? '↑' : '↓'}</span> : null;
@@ -53,6 +122,8 @@ export default function TradeLog({ trades }: TradeLogProps) {
     };
   }, [trades]);
 
+  const rowProps = useMemo(() => ({ trades: sortedTrades }), [sortedTrades]);
+
   if (trades.length === 0) {
     return (
       <div className="h-full min-h-[120px] flex flex-col items-center justify-center p-8 text-center bg-gray-50 rounded-lg border border-gray-200" data-testid="trade-log-empty">
@@ -65,9 +136,11 @@ export default function TradeLog({ trades }: TradeLogProps) {
     );
   }
 
+  const useVirtualization = sortedTrades.length >= VIRTUALIZATION_THRESHOLD;
+
   return (
     <div className="h-full min-h-0 flex flex-col bg-white rounded-lg border border-gray-200" data-testid="trade-log">
-      {/* Summary Stats - compact */}
+      {/* Summary Stats */}
       <div className="grid grid-cols-4 gap-1.5 p-2 border-b border-gray-200 bg-gray-50 shrink-0">
         <div className="text-center">
           <div className="text-[10px] text-gray-500">Trades</div>
@@ -93,68 +166,35 @@ export default function TradeLog({ trades }: TradeLogProps) {
         </div>
       </div>
 
-      {/* Trades Table - sortable */}
-      <div className="flex-1 min-h-0 overflow-auto">
-        <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
-            <tr className="text-left text-[10px] text-gray-500 uppercase tracking-wider">
-              <th className="px-2 py-1.5 font-medium cursor-pointer hover:text-gray-300 inline-flex items-center gap-0.5" onClick={() => handleSort('entry_date')}>Date <SortIcon col="entry_date" /></th>
-              <th className="px-2 py-1.5 font-medium cursor-pointer hover:text-gray-300" onClick={() => handleSort('type')}>Type</th>
-              <th className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('entry_price')}>Entry</th>
-              <th className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('exit_price')}>Exit</th>
-              <th className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('size')}>Size</th>
-              <th className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('pnl')}><span className="inline-flex items-center gap-0.5 justify-end">P&L <SortIcon col="pnl" /></span></th>
-              <th className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('commission')}>Comm.</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
+      {/* Column Headers */}
+      <div className={`${COLUMN_GRID} shrink-0 bg-gray-50 border-b border-gray-200 text-left text-[10px] text-gray-500 uppercase tracking-wider`}>
+        <div className="px-2 py-1.5 font-medium cursor-pointer hover:text-gray-300 inline-flex items-center gap-0.5" onClick={() => handleSort('entry_date')}>Date <SortIcon col="entry_date" /></div>
+        <div className="px-2 py-1.5 font-medium cursor-pointer hover:text-gray-300" onClick={() => handleSort('type')}>Type</div>
+        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('entry_price')}>Entry</div>
+        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('exit_price')}>Exit</div>
+        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('size')}>Size</div>
+        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('pnl')}><span className="inline-flex items-center gap-0.5 justify-end">P&L <SortIcon col="pnl" /></span></div>
+        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('commission')}>Comm.</div>
+      </div>
+
+      {/* Rows */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {useVirtualization ? (
+          <List<TradeRowExtraProps>
+            rowComponent={TradeRowComponent}
+            rowCount={sortedTrades.length}
+            rowHeight={ROW_HEIGHT}
+            rowProps={rowProps}
+            overscanCount={20}
+            defaultHeight={300}
+          />
+        ) : (
+          <div className="overflow-auto h-full">
             {sortedTrades.map((trade, index) => (
-              <tr key={index} className="hover:bg-gray-50" data-testid={`trade-row-${index}`}>
-                <td className="px-2 py-1.5 text-gray-600">
-                  {new Date(trade.entry_date).toLocaleDateString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    year: '2-digit',
-                  })}
-                </td>
-                <td className="px-2 py-1.5">
-                  <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                    trade.type === 'LONG'
-                      ? 'bg-emerald-100 text-emerald-700'
-                      : 'bg-red-100 text-red-700'
-                  }`}>
-                    {trade.type === 'LONG' ? (
-                      <ArrowUpRight className="h-3 w-3" />
-                    ) : (
-                      <ArrowDownRight className="h-3 w-3" />
-                    )}
-                    {trade.type}
-                  </span>
-                </td>
-                <td className="px-2 py-1.5 text-right font-medium text-gray-900">
-                  ${trade.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </td>
-                <td className="px-2 py-1.5 text-right font-medium text-gray-900">
-                  ${trade.exit_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </td>
-                <td className="px-2 py-1.5 text-right text-gray-600">
-                  {trade.size}
-                </td>
-                <td className="px-2 py-1.5 text-right">
-                  <div className={`font-medium ${trade.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {trade.pnl >= 0 ? '+' : ''}${trade.pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    <span className="text-xs ml-1">
-                      ({trade.pnl_pct >= 0 ? '+' : ''}{trade.pnl_pct.toFixed(1)}%)
-                    </span>
-                  </div>
-                </td>
-                <td className="px-2 py-1.5 text-right text-gray-500">
-                  ${trade.commission.toFixed(2)}
-                </td>
-              </tr>
+              <TradeRowComponent key={index} index={index} style={{ height: ROW_HEIGHT }} trades={sortedTrades} />
             ))}
-          </tbody>
-        </table>
+          </div>
+        )}
       </div>
     </div>
   );

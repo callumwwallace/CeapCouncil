@@ -34,6 +34,7 @@ from app.engine.analytics.metrics import (
     compute_metrics, derive_drawdown_series, sample_series, MetricsResult,
 )
 from app.engine.broker.intrabar import IntrabarSimulator, IntrabarConfig, IntrabarModel
+from app.engine.portfolio.currency import CurrencyManager
 
 
 @dataclass
@@ -83,6 +84,14 @@ class EngineConfig:
 
     # Pattern Day Trading (US equities)
     pdt_enabled: bool = False
+
+    # Crypto perpetual funding rates
+    funding_enabled: bool = False
+    funding_rate_annual_pct: float = 10.0  # Annualized funding rate (typical: 10-30%)
+    funding_interval_hours: int = 8        # Standard perp funding interval
+
+    # Multi-currency
+    base_currency: str = "USD"
 
     # Misc
     is_crypto: bool = False
@@ -191,6 +200,9 @@ class EngineResult:
             "cvar_99": p(m.cvar_99),
             "deflated_sharpe_ratio": p(m.deflated_sharpe_ratio),
             "robustness_score": p(m.robustness_score),
+            "total_funding_paid": p(m.total_funding_paid),
+            "total_funding_received": p(m.total_funding_received),
+            "net_funding": p(m.net_funding),
             "risk_violations": self.risk_violations,
             "custom_charts": self.custom_charts,
             "alerts": self.alerts,
@@ -213,6 +225,11 @@ class Engine:
         self._strategy: StrategyBase | None = None
         self._event_queue = EventQueue()
         self._clock = SimulationClock(ClockMode.BACKTEST)
+
+        # Multi-currency support
+        self._currency_mgr = CurrencyManager(base_currency=self.config.base_currency)
+        self._fx_currencies_needed: set[str] = set()
+        self._fx_data: dict[str, pd.DataFrame] = {}
 
         # Build components from config
         self._spread_model = self._build_spread_model()
@@ -245,6 +262,8 @@ class Engine:
         self._portfolio = Portfolio(
             initial_cash=self.config.initial_capital,
             margin_config=margin,
+            base_currency=self.config.base_currency,
+            currency_manager=self._currency_mgr,
         )
 
         risk_limits = RiskLimits(
@@ -273,12 +292,15 @@ class Engine:
         self._event_log: list[dict] = []
 
     def add_data(self, symbol: str, df: pd.DataFrame, corporate_actions=None) -> None:
-        """Add market data for a symbol.
-        
-        """
+        """Add market data for a symbol."""
         if corporate_actions is not None:
             df = corporate_actions.apply_all(df, symbol)
         self._data_feed.add_symbol(symbol, df)
+
+        # Detect non-base currencies that need FX conversion
+        currency = self._currency_mgr.get_currency_for_symbol(symbol)
+        if currency != self._currency_mgr.base_currency:
+            self._fx_currencies_needed.add(currency)
 
     def set_strategy(self, strategy: StrategyBase) -> None:
         """Set the strategy to run."""
@@ -306,6 +328,10 @@ class Engine:
         if self.config.warmup_bars > 0 and self._strategy._warmup_bars == 0:
             self._strategy.set_warmup(bars=self.config.warmup_bars)
 
+        # Fetch FX data for non-base currencies
+        if self._fx_currencies_needed:
+            self._load_fx_data()
+
         # Main event loop : iterate through all bars
         bar_index = 0
         last_bar_group: list[MarketDataEvent] = []
@@ -315,6 +341,10 @@ class Engine:
             self._clock.advance(timestamp)
             ctx.current_time = timestamp
             ctx.bar_index = bar_index
+
+            # Update FX rates for this bar's date
+            if self._fx_data:
+                self._update_fx_rates(timestamp)
 
             # Update prices
             prices = {ev.symbol: ev.close for ev in bar_group}
@@ -406,6 +436,15 @@ class Engine:
                 if self._portfolio.check_margin_call(timestamp):
                     self._liquidate_all(timestamp)
 
+            # Crypto perpetual funding rate accrual
+            if self.config.funding_enabled:
+                payments_per_day = max(1, 24 // max(self.config.funding_interval_hours, 1))
+                self._portfolio.accrue_funding(
+                    timestamp=timestamp,
+                    annual_rate_pct=self.config.funding_rate_annual_pct,
+                    payments_per_day=payments_per_day,
+                )
+
             # Record equity after all state changes for this bar
             self._portfolio.record_equity(timestamp)
 
@@ -458,6 +497,13 @@ class Engine:
             equity_curve=equity_curve,
             trades=trades_list,
             initial_capital=self.config.initial_capital,
+        )
+
+        # Attach funding rate totals from portfolio
+        metrics.total_funding_paid = round(self._portfolio.total_funding_paid, 2)
+        metrics.total_funding_received = round(self._portfolio.total_funding_received, 2)
+        metrics.net_funding = round(
+            self._portfolio.total_funding_received - self._portfolio.total_funding_paid, 2
         )
 
         risk_violation_dicts = [
@@ -535,6 +581,45 @@ class Engine:
                     quantity=abs(pos.quantity),
                 )
                 self._broker.submit_order(order, timestamp)
+
+    def _load_fx_data(self) -> None:
+        """Fetch FX rate history for all non-base currencies via yfinance."""
+        import yfinance as yf
+
+        # Get date range from the primary symbol's data
+        primary = self._data_feed.primary_symbol
+        if not primary:
+            return
+        bars = self._data_feed.get_bars(primary)
+        if not bars:
+            return
+        start_date = bars[0].timestamp.strftime("%Y-%m-%d")
+        end_date = bars[-1].timestamp.strftime("%Y-%m-%d")
+
+        base = self._currency_mgr.base_currency
+        for currency in self._fx_currencies_needed:
+            # yfinance format: GBPUSD=X gives USD per 1 GBP
+            pair_symbol = f"{currency}{base}=X"
+            try:
+                ticker = yf.Ticker(pair_symbol)
+                hist = ticker.history(start=start_date, end=end_date, interval="1d")
+                if hist.index.tz is not None:
+                    hist.index = hist.index.tz_localize(None)
+                if not hist.empty:
+                    self._fx_data[currency] = hist
+            except Exception:
+                pass
+
+    def _update_fx_rates(self, timestamp: datetime) -> None:
+        """Update CurrencyManager with FX rates for the current bar date."""
+        base = self._currency_mgr.base_currency
+        bar_date = timestamp.date() if hasattr(timestamp, "date") else timestamp
+
+        for currency, fx_df in self._fx_data.items():
+            mask = fx_df.index.date <= bar_date
+            if mask.any():
+                rate = float(fx_df.loc[mask, "Close"].iloc[-1])
+                self._currency_mgr.update_fx(f"{currency}/{base}", rate, timestamp)
 
     def _build_spread_model(self) -> SpreadModel:
         cfg = self.config

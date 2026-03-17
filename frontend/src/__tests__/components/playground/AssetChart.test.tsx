@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import AssetChart, { generatePriceData } from '@/components/playground/AssetChart';
+import AssetChart from '@/components/playground/AssetChart';
 
 // Mock Recharts to avoid complex SVG rendering issues
 jest.mock('recharts', () => ({
@@ -86,63 +86,5 @@ describe('AssetChart', () => {
 
       expect(onIndicatorsChange).toHaveBeenCalledWith({ ma20: true, ma50: false });
     });
-  });
-});
-
-describe('generatePriceData', () => {
-  it('generates price data with correct structure', () => {
-    const data = generatePriceData('AAPL', '2023-01-01', '2023-01-31');
-
-    expect(data.length).toBeGreaterThan(0);
-    expect(data[0]).toHaveProperty('date');
-    expect(data[0]).toHaveProperty('open');
-    expect(data[0]).toHaveProperty('high');
-    expect(data[0]).toHaveProperty('low');
-    expect(data[0]).toHaveProperty('close');
-    expect(data[0]).toHaveProperty('volume');
-    expect(data[0]).toHaveProperty('return');
-  });
-
-  it('generates different base prices for different symbols', () => {
-    const aaplData = generatePriceData('AAPL', '2023-01-01', '2023-01-10');
-    const btcData = generatePriceData('BTC-USD', '2023-01-01', '2023-01-10');
-
-    expect(aaplData[0].close).toBeLessThan(500);
-    expect(btcData[0].close).toBeGreaterThan(10000);
-  });
-
-  it('calculates MA20 after 20 data points', () => {
-    const data = generatePriceData('AAPL', '2023-01-01', '2023-06-01');
-    const withMa20 = data.find(d => d.ma20 !== undefined);
-    expect(withMa20).toBeDefined();
-    expect(typeof withMa20?.ma20).toBe('number');
-  });
-
-  it('calculates MA50 after 50 data points', () => {
-    const data = generatePriceData('AAPL', '2023-01-01', '2023-06-01');
-    const withMa50 = data.find(d => d.ma50 !== undefined);
-    expect(withMa50).toBeDefined();
-    expect(typeof withMa50?.ma50).toBe('number');
-  });
-
-  it('high is always >= close and low is always <= close', () => {
-    const data = generatePriceData('AAPL', '2023-01-01', '2023-03-01');
-    data.forEach(point => {
-      expect(point.high).toBeGreaterThanOrEqual(point.close);
-      expect(point.low).toBeLessThanOrEqual(point.close);
-    });
-  });
-
-  it('volume is always positive', () => {
-    const data = generatePriceData('AAPL', '2023-01-01', '2023-03-01');
-    data.forEach(point => {
-      expect(point.volume).toBeGreaterThan(0);
-    });
-  });
-
-  it('samples down large date ranges', () => {
-    const data = generatePriceData('AAPL', '2020-01-01', '2024-01-01');
-    expect(data.length).toBeLessThanOrEqual(750);
-    expect(data.length).toBeGreaterThan(50);
   });
 });

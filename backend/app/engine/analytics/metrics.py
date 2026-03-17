@@ -58,6 +58,11 @@ class MetricsResult:
     # Drawdown series
     max_drawdown_duration_days: int | None = None
 
+    # Crypto perpetual funding
+    total_funding_paid: float = 0.0
+    total_funding_received: float = 0.0
+    net_funding: float = 0.0
+
     # Overfitting detection
     deflated_sharpe_ratio: float | None = None
     robustness_score: float | None = None

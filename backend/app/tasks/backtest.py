@@ -362,6 +362,7 @@ def _run_backtest(
         slippage_pct=params.get("slippage", 0.1),
         spread_model="volatility" if is_crypto else "none",
         is_crypto=is_crypto,
+        funding_enabled=is_crypto,
         stop_loss_pct=params.get("stop_loss_pct"),
         take_profit_pct=params.get("take_profit_pct"),
     )
@@ -576,6 +577,10 @@ def run_backtest_task(self, backtest_id: int):
         allow_shorts_without_margin = bool(params.get("allow_shorts_without_margin", False))
         leverage = float(params.get("leverage", 1))
 
+        # Funding rate config (crypto perpetuals)
+        funding_enabled = bool(params.get("funding_enabled", is_crypto))
+        funding_rate = float(params.get("funding_rate_annual_pct", 10.0))
+
         engine_config = EngineConfig(
             initial_capital=backtest.initial_capital,
             commission_rate=params.get("commission", 0.001),
@@ -584,6 +589,8 @@ def run_backtest_task(self, backtest_id: int):
             liquidity_tier=liquidity_tier,
             spread_model=resolved_spread,
             is_crypto=is_crypto,
+            funding_enabled=funding_enabled,
+            funding_rate_annual_pct=funding_rate,
             stop_loss_pct=params.get("stop_loss_pct"),
             take_profit_pct=params.get("take_profit_pct"),
             max_drawdown_pct=float(params.get("max_drawdown_pct", 100)),
@@ -2176,4 +2183,233 @@ def run_cpcv_task(
         "train_sharpe_mean": train_sharpe_mean,
         "prob_oos_loss": prob_oos_loss,
         "overfit_score": overfit_score,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Factor Attribution (multi-factor decomposition)
+# ---------------------------------------------------------------------------
+
+def _ols_regression(y: np.ndarray, X: np.ndarray) -> dict:
+    """Ordinary least-squares via numpy. Returns coefficients, t-stats, p-values, R²."""
+    from scipy import stats as sp_stats
+
+    n, k = X.shape
+    # Add intercept column
+    X_aug = np.column_stack([np.ones(n), X])
+    k_aug = k + 1
+
+    # Beta = (X'X)^-1 X'y
+    try:
+        beta = np.linalg.lstsq(X_aug, y, rcond=None)[0]
+    except np.linalg.LinAlgError:
+        return {"error": "Singular matrix — factor data may be collinear"}
+
+    residuals = y - X_aug @ beta
+    dof = max(n - k_aug, 1)
+    mse = float(np.sum(residuals ** 2) / dof)
+
+    # Coefficient standard errors
+    try:
+        cov = mse * np.linalg.inv(X_aug.T @ X_aug)
+        se = np.sqrt(np.diag(cov))
+    except np.linalg.LinAlgError:
+        se = np.full(k_aug, np.nan)
+
+    t_stats = beta / np.where(se > 0, se, np.nan)
+    p_values = np.array([
+        2 * (1 - sp_stats.t.cdf(abs(t), dof)) if np.isfinite(t) else np.nan
+        for t in t_stats
+    ])
+
+    ss_res = float(np.sum(residuals ** 2))
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    r_squared = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    adj_r_squared = 1 - (1 - r_squared) * (n - 1) / dof if dof > 0 else r_squared
+
+    return {
+        "beta": beta.tolist(),
+        "se": se.tolist(),
+        "t_stats": t_stats.tolist(),
+        "p_values": p_values.tolist(),
+        "r_squared": r_squared,
+        "adj_r_squared": adj_r_squared,
+        "residuals": residuals.tolist(),
+    }
+
+
+@celery_app.task(bind=True, time_limit=300, soft_time_limit=240)
+def run_factor_attribution_task(
+    self,
+    equity_curve: list[dict],
+    initial_capital: float,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    interval: str = "1d",
+):
+    """Multi-factor attribution using ETF proxies for Fama-French + Momentum.
+
+    Regresses strategy daily returns against:
+      - Market (SPY excess return)
+      - SMB  (IWM - SPY, size factor proxy)
+      - HML  (IVE - IVW, value factor proxy)
+      - Momentum (MTUM - SPY)
+
+    Risk-free rate approximated from ^IRX (13-week T-bill).
+    """
+    if not equity_curve or len(equity_curve) < 30:
+        return {"status": "failed", "error": "Need at least 30 equity curve points for factor attribution"}
+
+    # Strategy daily returns
+    equities = np.array([p["equity"] for p in equity_curve], dtype=float)
+    dates = [p["date"] for p in equity_curve]
+    strat_returns = np.diff(equities) / equities[:-1]
+    strat_dates = dates[1:]
+
+    # Fetch factor proxy ETFs
+    factor_etfs = ["SPY", "IWM", "IVE", "IVW", "MTUM"]
+    factor_data = {}
+    for etf in factor_etfs:
+        try:
+            ticker = yf.Ticker(etf)
+            hist = ticker.history(start=start_date, end=end_date, interval=interval)
+            if hist.index.tz is not None:
+                hist.index = hist.index.tz_localize(None)
+            if not hist.empty:
+                factor_data[etf] = hist
+        except Exception:
+            pass
+
+    if "SPY" not in factor_data:
+        return {"status": "failed", "error": "Could not fetch market data (SPY) for factor attribution"}
+
+    self.update_state(state="PROGRESS", meta={"current": 1, "total": 3})
+
+    # Fetch risk-free rate proxy
+    rf_daily = 0.0
+    try:
+        irx = yf.Ticker("^IRX")
+        irx_hist = irx.history(start=start_date, end=end_date, interval=interval)
+        if not irx_hist.empty:
+            rf_annual = float(irx_hist["Close"].mean()) / 100
+            rf_daily = rf_annual / 252
+    except Exception:
+        pass
+
+    # Build aligned daily returns DataFrame
+    strat_df = pd.DataFrame({"date": strat_dates, "strategy": strat_returns})
+    strat_df["date"] = pd.to_datetime(strat_df["date"])
+    strat_df = strat_df.set_index("date")
+
+    factor_returns = {}
+    for etf, hist in factor_data.items():
+        closes = hist["Close"]
+        rets = closes.pct_change().dropna()
+        rets.index = pd.to_datetime(rets.index)
+        factor_returns[etf] = rets
+
+    # Merge everything on common dates
+    merged = strat_df.copy()
+    for etf in factor_etfs:
+        if etf in factor_returns:
+            col = factor_returns[etf].rename(etf)
+            merged = merged.join(col, how="inner")
+
+    # Drop rows with NaN
+    available_factors = [f for f in factor_etfs if f in merged.columns]
+    merged = merged.dropna(subset=["strategy"] + available_factors)
+
+    if len(merged) < 30:
+        return {"status": "failed", "error": f"Only {len(merged)} overlapping data points — need at least 30"}
+
+    self.update_state(state="PROGRESS", meta={"current": 2, "total": 3})
+
+    # Construct factor series from ETF proxies
+    factor_names = []
+    factor_cols = []
+
+    # Market excess return
+    if "SPY" in merged.columns:
+        merged["Mkt_RF"] = merged["SPY"] - rf_daily
+        factor_names.append("Market (Mkt-RF)")
+        factor_cols.append("Mkt_RF")
+
+    # SMB (Size): small minus big
+    if "IWM" in merged.columns and "SPY" in merged.columns:
+        merged["SMB"] = merged["IWM"] - merged["SPY"]
+        factor_names.append("Size (SMB)")
+        factor_cols.append("SMB")
+
+    # HML (Value): value minus growth
+    if "IVE" in merged.columns and "IVW" in merged.columns:
+        merged["HML"] = merged["IVE"] - merged["IVW"]
+        factor_names.append("Value (HML)")
+        factor_cols.append("HML")
+
+    # Momentum
+    if "MTUM" in merged.columns and "SPY" in merged.columns:
+        merged["MOM"] = merged["MTUM"] - merged["SPY"]
+        factor_names.append("Momentum (MOM)")
+        factor_cols.append("MOM")
+
+    if not factor_cols:
+        return {"status": "failed", "error": "No factor data could be constructed"}
+
+    # Dependent variable: strategy excess return
+    y = (merged["strategy"] - rf_daily).values
+    X = merged[factor_cols].values
+
+    reg = _ols_regression(y, X)
+    if "error" in reg:
+        return {"status": "failed", "error": reg["error"]}
+
+    self.update_state(state="PROGRESS", meta={"current": 3, "total": 3})
+
+    # Parse results
+    alpha_daily = reg["beta"][0]
+    alpha_annual = round(((1 + alpha_daily) ** 252 - 1) * 100, 4)
+    factor_betas = reg["beta"][1:]
+
+    # Factor contributions: mean daily factor return × beta × 252 (annualized)
+    contributions = []
+    for i, (name, col) in enumerate(zip(factor_names, factor_cols)):
+        mean_factor = float(merged[col].mean())
+        beta_val = factor_betas[i]
+        annual_contrib = round(beta_val * mean_factor * 252 * 100, 4)
+        sig = "***" if reg["p_values"][i + 1] < 0.01 else "**" if reg["p_values"][i + 1] < 0.05 else "*" if reg["p_values"][i + 1] < 0.1 else ""
+        contributions.append({
+            "factor": name,
+            "beta": round(float(beta_val), 4),
+            "t_stat": round(float(reg["t_stats"][i + 1]), 2),
+            "p_value": round(float(reg["p_values"][i + 1]), 4),
+            "significance": sig,
+            "annual_contribution_pct": annual_contrib,
+        })
+
+    # Total strategy annualized return for comparison
+    total_strat_return = round(float((equities[-1] / equities[0] - 1) * 100), 4)
+    n_days = len(merged)
+    annual_strat_return = round(float(((equities[-1] / equities[0]) ** (252 / max(n_days, 1)) - 1) * 100), 4)
+
+    # Sum of factor contributions
+    factor_sum = sum(c["annual_contribution_pct"] for c in contributions)
+    unexplained = round(alpha_annual, 4)
+
+    return {
+        "status": "completed",
+        "n_observations": n_days,
+        "alpha_daily_pct": round(alpha_daily * 100, 6),
+        "alpha_annual_pct": alpha_annual,
+        "alpha_t_stat": round(float(reg["t_stats"][0]), 2),
+        "alpha_p_value": round(float(reg["p_values"][0]), 4),
+        "alpha_significant": reg["p_values"][0] < 0.05,
+        "r_squared": round(reg["r_squared"], 4),
+        "adj_r_squared": round(reg["adj_r_squared"], 4),
+        "factors": contributions,
+        "factor_contribution_sum_pct": round(factor_sum, 4),
+        "unexplained_alpha_pct": unexplained,
+        "strategy_annual_return_pct": annual_strat_return,
+        "strategy_total_return_pct": total_strat_return,
+        "rf_daily": round(rf_daily * 100, 6),
     }
