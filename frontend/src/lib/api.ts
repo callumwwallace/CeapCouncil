@@ -409,6 +409,22 @@ class ApiClient {
     return response.data;
   }
 
+  // CPCV (Combinatorial Purged Cross-Validation)
+  async runCpcv(data: {
+    strategy_id?: number; code?: string; symbol: string; start_date: string; end_date: string;
+    initial_capital: number; commission: number; slippage: number;
+    n_groups?: number; n_test_groups?: number; purge_bars?: number; embargo_bars?: number;
+    param_ranges?: Record<string, unknown>; n_trials?: number; interval?: string;
+  }): Promise<{ task_id: string }> {
+    const response = await this.client.post('/backtests/cpcv', data);
+    return response.data;
+  }
+
+  async getCpcvResult(taskId: string): Promise<any> {
+    const response = await this.client.get(`/backtests/cpcv/${taskId}`);
+    return response.data;
+  }
+
   // Competitions / Leaderboard
   async listCompetitions(status?: string): Promise<CompetitionSummary[]> {
     const response = await this.client.get<CompetitionSummary[]>('/competitions', { params: status ? { status } : {} });

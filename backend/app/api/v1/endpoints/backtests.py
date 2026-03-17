@@ -16,7 +16,7 @@ from app.tasks.backtest import (
     run_backtest_task, run_optimization_task, run_bayesian_optimization_task,
     run_genetic_optimization_task, run_multiobjective_optimization_task,
     run_heatmap_task, run_walk_forward_task, run_monte_carlo_task,
-    run_batch_backtest_task, run_oos_validation_task,
+    run_batch_backtest_task, run_oos_validation_task, run_cpcv_task,
 )
 
 router = APIRouter()
@@ -639,6 +639,75 @@ async def get_oos_result(
     current_user: User = Depends(get_current_active_user),
 ):
     """Poll out-of-sample validation task result."""
+    from celery.result import AsyncResult
+    result = AsyncResult(task_id)
+    if result.state == "PROGRESS":
+        return {"status": "running", "progress": result.info}
+    elif result.state == "SUCCESS":
+        return {"status": "completed", **result.result}
+    elif result.state == "FAILURE":
+        return {"status": "failed", "error": str(result.result)}
+    return {"status": result.state.lower()}
+
+
+# ---------------------------------------------------------------------------
+# Advanced: Combinatorial Purged Cross-Validation (CPCV)
+# ---------------------------------------------------------------------------
+
+class CpcvRequest(BaseModel):
+    strategy_id: int | None = None
+    code: str | None = None
+    symbol: str
+    start_date: str
+    end_date: str
+    initial_capital: float = 10000
+    commission: float = 0.001
+    slippage: float = 0.001
+    n_groups: int = Field(default=6, ge=3, le=20)
+    n_test_groups: int = Field(default=2, ge=1, le=5)
+    purge_bars: int = Field(default=10, ge=0, le=100)
+    embargo_bars: int = Field(default=0, ge=0, le=50)
+    param_ranges: dict | None = None
+    n_trials: int = Field(default=30, ge=5, le=200)
+    interval: str = "1d"
+
+
+@router.post("/cpcv")
+@limiter.limit("3/minute")
+async def cpcv_analysis(
+    request: Request,
+    body: CpcvRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run Combinatorial Purged Cross-Validation (López de Prado)."""
+    code = await _resolve_code(body.strategy_id, body.code, current_user, db)
+
+    task = run_cpcv_task.delay(
+        code=code,
+        symbol=body.symbol,
+        start_date=body.start_date,
+        end_date=body.end_date,
+        initial_capital=body.initial_capital,
+        commission=body.commission,
+        slippage=body.slippage,
+        n_groups=body.n_groups,
+        n_test_groups=body.n_test_groups,
+        purge_bars=body.purge_bars,
+        embargo_bars=body.embargo_bars,
+        param_ranges=body.param_ranges,
+        n_trials=body.n_trials,
+        interval=body.interval,
+    )
+    return {"task_id": task.id, "status": "queued"}
+
+
+@router.get("/cpcv/{task_id}")
+async def get_cpcv_result(
+    task_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Poll CPCV task result."""
     from celery.result import AsyncResult
     result = AsyncResult(task_id)
     if result.state == "PROGRESS":

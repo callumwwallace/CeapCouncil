@@ -1956,3 +1956,224 @@ def run_oos_validation_task(
         "multiple_testing_note": multiple_testing_note,
         "total_is_trials": len(is_results),
     }
+
+
+# ---------------------------------------------------------------------------
+# Combinatorial Purged Cross-Validation (CPCV)
+# ---------------------------------------------------------------------------
+
+@celery_app.task(bind=True, time_limit=1200, soft_time_limit=1140)
+def run_cpcv_task(
+    self,
+    code: str,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    initial_capital: float = 10000,
+    commission: float = 0.001,
+    slippage: float = 0.001,
+    n_groups: int = 6,
+    n_test_groups: int = 2,
+    purge_bars: int = 10,
+    embargo_bars: int = 0,
+    param_ranges: dict | None = None,
+    n_trials: int = 30,
+    interval: str = "1d",
+):
+    """Combinatorial Purged Cross-Validation (López de Prado).
+
+    Splits data into n_groups contiguous blocks, then tests every C(n_groups, n_test_groups)
+    combination of held-out test groups. For each combination, bars adjacent to
+    train/test boundaries are purged (and optionally embargoed) to prevent
+    look-ahead bias. Optionally optimizes parameters on the training set.
+
+    Returns a distribution of OOS Sharpe ratios across all paths.
+    """
+    from itertools import combinations
+
+    try:
+        import optuna
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+    except ImportError:
+        if param_ranges:
+            return {"status": "failed", "error": "optuna required for CPCV with parameter optimization"}
+
+    data = _fetch_data(symbol, start_date, end_date, interval)
+    if data is None or data.empty:
+        return {"status": "failed", "error": "No market data for the selected date range"}
+
+    total_bars = len(data)
+    n_groups = min(n_groups, 20)
+    n_test_groups = min(n_test_groups, n_groups - 1)
+    group_size = total_bars // n_groups
+
+    if group_size < 20:
+        return {
+            "status": "failed",
+            "error": (
+                f"Not enough data for CPCV: {total_bars} bars / {n_groups} groups = "
+                f"{group_size} bars per group (need ≥20). "
+                f"Try a longer date range or fewer groups."
+            ),
+        }
+
+    # Build group boundaries: list of (start_idx, end_idx) for each group
+    groups = []
+    for g in range(n_groups):
+        g_start = g * group_size
+        g_end = (g + 1) * group_size if g < n_groups - 1 else total_bars
+        groups.append((g_start, g_end))
+
+    # All combinations of test groups
+    combos = list(combinations(range(n_groups), n_test_groups))
+    max_combos = 120
+    if len(combos) > max_combos:
+        import random
+        random.seed(42)
+        combos = random.sample(combos, max_combos)
+
+    def _optimize_params(train_data_slice):
+        if not param_ranges:
+            return {}
+        def objective(trial):
+            combo = {}
+            for key, rng in param_ranges.items():
+                if isinstance(rng, dict):
+                    low, high = rng.get("low", 1), rng.get("high", 100)
+                    pt = rng.get("type", "float")
+                    if pt == "int":
+                        combo[key] = trial.suggest_int(key, int(low), int(high))
+                    else:
+                        combo[key] = trial.suggest_float(key, float(low), float(high))
+                else:
+                    combo[key] = rng[0] if isinstance(rng, list) else rng
+            r = _run_single_backtest(
+                code=code, initial_capital=initial_capital,
+                commission=commission, slippage=slippage,
+                param_combo=combo, data=train_data_slice.copy(), symbol=symbol,
+            )
+            if "error" in r:
+                return float("-inf")
+            return r.get("sharpe_ratio", 0) or 0
+
+        study = optuna.create_study(
+            direction="maximize",
+            sampler=optuna.samplers.TPESampler(seed=42),
+        )
+        study.optimize(objective, n_trials=min(n_trials, 50), show_progress_bar=False)
+        return study.best_params if study.best_trial else {}
+
+    path_results = []
+    for ci, test_group_indices in enumerate(combos):
+        test_indices_set = set(test_group_indices)
+        train_group_indices = [g for g in range(n_groups) if g not in test_indices_set]
+
+        # Build train indices with purging and embargo
+        train_idx = []
+        for g in train_group_indices:
+            g_start, g_end = groups[g]
+
+            # Purge: remove bars at the end of a train group that borders a test group
+            purge_end = 0
+            if (g + 1) in test_indices_set:
+                purge_end = purge_bars + embargo_bars
+
+            # Purge: remove bars at the start of a train group that borders a test group
+            purge_start = 0
+            if (g - 1) in test_indices_set:
+                purge_start = purge_bars + embargo_bars
+
+            adj_start = min(g_start + purge_start, g_end)
+            adj_end = max(g_start, g_end - purge_end)
+
+            if adj_start < adj_end:
+                train_idx.extend(range(adj_start, adj_end))
+
+        # Build test indices (no purging needed on test)
+        test_idx = []
+        for g in test_group_indices:
+            g_start, g_end = groups[g]
+            test_idx.extend(range(g_start, g_end))
+
+        if len(train_idx) < 30 or len(test_idx) < 10:
+            continue
+
+        train_data = data.iloc[train_idx].copy()
+        test_data = data.iloc[test_idx].copy()
+
+        best_params = _optimize_params(train_data)
+
+        train_result = _run_single_backtest(
+            code=code, initial_capital=initial_capital,
+            commission=commission, slippage=slippage,
+            param_combo=best_params, data=train_data, symbol=symbol,
+        )
+        test_result = _run_single_backtest(
+            code=code, initial_capital=initial_capital,
+            commission=commission, slippage=slippage,
+            param_combo=best_params, data=test_data, symbol=symbol,
+        )
+
+        train_sharpe = train_result.get("sharpe_ratio") or 0
+        test_sharpe = test_result.get("sharpe_ratio") or 0
+        test_return = test_result.get("total_return") or 0
+
+        path_results.append({
+            "path": ci + 1,
+            "test_groups": list(test_group_indices),
+            "train_bars": len(train_idx),
+            "test_bars": len(test_idx),
+            "best_params": best_params,
+            "train_sharpe": train_sharpe if "error" not in train_result else None,
+            "test_sharpe": test_sharpe if "error" not in test_result else None,
+            "test_return": test_return if "error" not in test_result else None,
+            "train_error": train_result.get("error"),
+            "test_error": test_result.get("error"),
+        })
+
+        if (ci + 1) % 5 == 0 or ci == len(combos) - 1:
+            self.update_state(
+                state="PROGRESS",
+                meta={"current": ci + 1, "total": len(combos)},
+            )
+
+    if not path_results:
+        return {"status": "failed", "error": "No valid CPCV paths could be evaluated"}
+
+    # Aggregate OOS statistics
+    oos_sharpes = [p["test_sharpe"] for p in path_results if p["test_sharpe"] is not None]
+    oos_returns = [p["test_return"] for p in path_results if p["test_return"] is not None]
+    train_sharpes = [p["train_sharpe"] for p in path_results if p["train_sharpe"] is not None]
+
+    oos_sharpe_mean = round(float(np.mean(oos_sharpes)), 4) if oos_sharpes else None
+    oos_sharpe_std = round(float(np.std(oos_sharpes)), 4) if oos_sharpes else None
+    oos_sharpe_median = round(float(np.median(oos_sharpes)), 4) if oos_sharpes else None
+    oos_return_mean = round(float(np.mean(oos_returns)), 4) if oos_returns else None
+    train_sharpe_mean = round(float(np.mean(train_sharpes)), 4) if train_sharpes else None
+
+    # Probability of OOS loss (negative Sharpe)
+    prob_oos_loss = round(float(np.mean(np.array(oos_sharpes) < 0)) * 100, 1) if oos_sharpes else None
+
+    # Overfit score: how much Sharpe degrades IS → OOS
+    overfit_score = None
+    if train_sharpe_mean and train_sharpe_mean > 0 and oos_sharpe_mean is not None:
+        overfit_score = round(max(0, 1 - (oos_sharpe_mean / train_sharpe_mean)) * 100, 1)
+
+    return {
+        "status": "completed",
+        "method": "cpcv",
+        "n_groups": n_groups,
+        "n_test_groups": n_test_groups,
+        "purge_bars": purge_bars,
+        "embargo_bars": embargo_bars,
+        "total_paths": len(combos),
+        "valid_paths": len(path_results),
+        "paths": path_results,
+        "oos_sharpe_mean": oos_sharpe_mean,
+        "oos_sharpe_std": oos_sharpe_std,
+        "oos_sharpe_median": oos_sharpe_median,
+        "oos_return_mean": oos_return_mean,
+        "train_sharpe_mean": train_sharpe_mean,
+        "prob_oos_loss": prob_oos_loss,
+        "overfit_score": overfit_score,
+    }

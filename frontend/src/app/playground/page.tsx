@@ -41,6 +41,7 @@ import {
   BarChart2,
   GitCompare,
   Filter,
+  Layers,
 } from 'lucide-react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -1139,7 +1140,7 @@ export default function PlaygroundPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [lastRunTime, setLastRunTime] = useState<string | null>(null);
-  const [activeResultsTab, setActiveResultsTab] = useState<'summary' | 'trades' | 'orders' | 'charts' | 'compare' | 'optimize' | 'walkforward' | 'oos' | 'montecarlo' | 'risk' | 'tca' | 'heatmap' | 'distribution'>('summary');
+  const [activeResultsTab, setActiveResultsTab] = useState<'summary' | 'trades' | 'orders' | 'charts' | 'compare' | 'optimize' | 'walkforward' | 'oos' | 'cpcv' | 'montecarlo' | 'risk' | 'tca' | 'heatmap' | 'distribution'>('summary');
   const [showCostsSection, setShowCostsSection] = useState(false);
   const [showSizingSection, setShowSizingSection] = useState(false);
   const [showRiskSection, setShowRiskSection] = useState(false);
@@ -1214,6 +1215,10 @@ export default function PlaygroundPage() {
   const [oosResults, setOosResults] = useState<any>(null);
   const [oosLoading, setOosLoading] = useState(false);
   const [oosNfolds, setOosNfolds] = useState(1);
+  const [cpcvResults, setCpcvResults] = useState<any>(null);
+  const [cpcvLoading, setCpcvLoading] = useState(false);
+  const [cpcvNGroups, setCpcvNGroups] = useState(6);
+  const [cpcvPurgeBars, setCpcvPurgeBars] = useState(10);
   const [monteCarloResults, setMonteCarloResults] = useState<any>(null);
   const [monteCarloLoading, setMonteCarloLoading] = useState(false);
   const [lastBacktestId, setLastBacktestId] = useState<number | null>(null);
@@ -1684,6 +1689,46 @@ export default function PlaygroundPage() {
       setOosLoading(false);
     }
   }, [playgroundStrategyId, strategyMode, code, config, oosNfolds]);
+
+  const handleRunCpcv = useCallback(async () => {
+    const useCode = strategyMode === 'templates';
+    if (!playgroundStrategyId && !useCode) return;
+    setCpcvLoading(true);
+    setCpcvResults(null);
+    try {
+      const { task_id } = await api.runCpcv({
+        ...(playgroundStrategyId ? { strategy_id: playgroundStrategyId } : { code }),
+        symbol: config.symbol,
+        start_date: config.startDate,
+        end_date: config.endDate,
+        initial_capital: config.initialCapital,
+        commission: config.commission / 100,
+        slippage: config.slippage / 100,
+        n_groups: cpcvNGroups,
+        n_test_groups: 2,
+        purge_bars: cpcvPurgeBars,
+        embargo_bars: 0,
+        param_ranges: strategyMode === 'templates' ? { fast: { low: 5, high: 30, type: 'int' }, slow: { low: 20, high: 100, type: 'int' } } : undefined,
+        n_trials: 30,
+        interval: config.interval,
+      });
+      for (let i = 0; i < 180; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const res = await api.getCpcvResult(task_id);
+        if (res.status === 'completed') {
+          setCpcvResults(res);
+          break;
+        } else if (res.status === 'failed') {
+          setCpcvResults({ error: res.error });
+          break;
+        }
+      }
+    } catch (err: unknown) {
+      setCpcvResults({ error: extractApiError(err, 'CPCV failed') });
+    } finally {
+      setCpcvLoading(false);
+    }
+  }, [playgroundStrategyId, strategyMode, code, config, cpcvNGroups, cpcvPurgeBars]);
 
   const handleRunMonteCarlo = useCallback(async () => {
     if (!lastBacktestId) return;
@@ -2284,10 +2329,10 @@ hist('dist',${histData});
                   </div>
                     {/* Secondary / advanced tabs - 2 rows of 4 */}
                     <div className="grid grid-cols-4 gap-1.5">
-                      {(['tca', 'optimize', 'walkforward', 'oos', 'montecarlo', 'risk', 'heatmap', 'distribution', 'compare'] as const).map((tab) => {
-                        const secondaryIcons = { tca: Activity, optimize: Sliders, walkforward: GitBranch, oos: Filter, montecarlo: Shuffle, risk: Shield, heatmap: Calendar, distribution: BarChart2, compare: GitCompare };
+                      {(['tca', 'optimize', 'walkforward', 'oos', 'cpcv', 'montecarlo', 'risk', 'heatmap', 'distribution', 'compare'] as const).map((tab) => {
+                        const secondaryIcons = { tca: Activity, optimize: Sliders, walkforward: GitBranch, oos: Filter, cpcv: Layers, montecarlo: Shuffle, risk: Shield, heatmap: Calendar, distribution: BarChart2, compare: GitCompare };
                         const Icon = secondaryIcons[tab];
-                        const label = ({ tca: 'TCA', optimize: 'Optimize', walkforward: 'Walk-Fwd', oos: 'OOS', montecarlo: 'Monte Carlo', risk: 'Risk', heatmap: 'Monthly', distribution: 'Dist.', compare: 'Compare' } as Record<string, string>)[tab];
+                        const label = ({ tca: 'TCA', optimize: 'Optimize', walkforward: 'Walk-Fwd', oos: 'OOS', cpcv: 'CPCV', montecarlo: 'Monte Carlo', risk: 'Risk', heatmap: 'Monthly', distribution: 'Dist.', compare: 'Compare' } as Record<string, string>)[tab];
                         return (
                       <button
                         key={tab}
@@ -2597,6 +2642,101 @@ hist('dist',${histData});
                           )}
                           {oosResults && !oosResults.error && !oosResults.is_result && oosResults.status === 'completed' && (
                             <div className="px-3 py-4 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 text-xs text-center">No optimization – run with param_ranges for IS/OOS comparison.</div>
+                          )}
+                        </div>
+                      )}
+                      {activeResultsTab === 'cpcv' && (
+                        <div className="space-y-3">
+                          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+                            <div className="text-[11px] font-medium text-gray-700 mb-1">Combinatorial Purged Cross-Validation</div>
+                            <p className="text-[11px] text-gray-500 mb-2">Tests every combination of held-out groups with purging to prevent look-ahead bias. Produces a distribution of OOS performance — not just one number.</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] text-gray-500 block mb-0.5">Groups (N)</label>
+                                <select value={cpcvNGroups} onChange={(e) => setCpcvNGroups(parseInt(e.target.value, 10))} className="w-full px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900">
+                                  {[4, 5, 6, 8, 10].map(n => (
+                                    <option key={n} value={n}>{n} groups ({n * (n - 1) / 2} paths)</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-gray-500 block mb-0.5">Purge bars</label>
+                                <input type="number" min={0} max={100} value={cpcvPurgeBars} onChange={(e) => setCpcvPurgeBars(Math.max(0, parseInt(e.target.value, 10) || 0))} className="w-full px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" title="Bars removed at train/test boundaries" />
+                              </div>
+                            </div>
+                            <button onClick={handleRunCpcv} disabled={cpcvLoading || (!playgroundStrategyId && strategyMode !== 'templates')} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition">
+                              {cpcvLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Run CPCV
+                            </button>
+                          </div>
+                          {cpcvResults?.error && (
+                            <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs">{cpcvResults.error}</div>
+                          )}
+                          {cpcvResults && !cpcvResults.error && cpcvResults.status === 'completed' && (
+                            <div className="space-y-3">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">OOS Distribution ({cpcvResults.valid_paths} / {cpcvResults.total_paths} paths)</div>
+                              <div className="grid grid-cols-3 gap-2">
+                                <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                  <div className="text-[10px] text-gray-500">OOS Sharpe (mean)</div>
+                                  <div className={`text-sm font-semibold ${(cpcvResults.oos_sharpe_mean ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{(cpcvResults.oos_sharpe_mean ?? 0).toFixed(2)}</div>
+                                </div>
+                                <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                  <div className="text-[10px] text-gray-500">OOS Sharpe (std)</div>
+                                  <div className="text-sm font-semibold text-gray-900">± {(cpcvResults.oos_sharpe_std ?? 0).toFixed(2)}</div>
+                                </div>
+                                <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                  <div className="text-[10px] text-gray-500">Median Sharpe</div>
+                                  <div className={`text-sm font-semibold ${(cpcvResults.oos_sharpe_median ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{(cpcvResults.oos_sharpe_median ?? 0).toFixed(2)}</div>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2">
+                                <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                  <div className="text-[10px] text-gray-500">OOS Return (mean)</div>
+                                  <div className={`text-sm font-semibold ${(cpcvResults.oos_return_mean ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{(cpcvResults.oos_return_mean ?? 0).toFixed(1)}%</div>
+                                </div>
+                                <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                  <div className="text-[10px] text-gray-500">Train Sharpe (mean)</div>
+                                  <div className="text-sm font-semibold text-gray-900">{(cpcvResults.train_sharpe_mean ?? 0).toFixed(2)}</div>
+                                </div>
+                                <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                  <div className="text-[10px] text-gray-500">P(OOS Loss)</div>
+                                  <div className={`text-sm font-semibold ${(cpcvResults.prob_oos_loss ?? 0) > 50 ? 'text-red-500' : 'text-emerald-600'}`}>{(cpcvResults.prob_oos_loss ?? 0).toFixed(0)}%</div>
+                                </div>
+                              </div>
+                              {cpcvResults.overfit_score != null && (
+                                <div className={`p-2 rounded-lg border text-xs ${cpcvResults.overfit_score > 50 ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-gray-50 border-gray-200'}`}>
+                                  Overfit score: <span className="font-semibold">{cpcvResults.overfit_score}%</span> {cpcvResults.overfit_score > 50 ? '(high – strategy may be overfit)' : '(low – good generalization)'}
+                                </div>
+                              )}
+                              {cpcvResults.paths && cpcvResults.paths.length > 0 && (
+                                <div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Path Details</div>
+                                  <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200">
+                                    <table className="w-full text-[11px]">
+                                      <thead className="bg-gray-50 sticky top-0">
+                                        <tr>
+                                          <th className="px-2 py-1 text-left text-gray-500 font-medium">Path</th>
+                                          <th className="px-2 py-1 text-left text-gray-500 font-medium">Test Groups</th>
+                                          <th className="px-2 py-1 text-right text-gray-500 font-medium">Train Sharpe</th>
+                                          <th className="px-2 py-1 text-right text-gray-500 font-medium">OOS Sharpe</th>
+                                          <th className="px-2 py-1 text-right text-gray-500 font-medium">OOS Return</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-gray-100">
+                                        {cpcvResults.paths.map((p: any) => (
+                                          <tr key={p.path} className="hover:bg-gray-50">
+                                            <td className="px-2 py-1 text-gray-700">{p.path}</td>
+                                            <td className="px-2 py-1 text-gray-500 font-mono">[{p.test_groups.join(', ')}]</td>
+                                            <td className="px-2 py-1 text-right text-gray-700">{p.train_sharpe != null ? p.train_sharpe.toFixed(2) : '-'}</td>
+                                            <td className={`px-2 py-1 text-right font-medium ${(p.test_sharpe ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{p.test_sharpe != null ? p.test_sharpe.toFixed(2) : '-'}</td>
+                                            <td className={`px-2 py-1 text-right ${(p.test_return ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{p.test_return != null ? `${p.test_return.toFixed(1)}%` : '-'}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
                       )}
