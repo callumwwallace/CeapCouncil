@@ -14,6 +14,12 @@ from typing import Any
 
 from app.engine.broker.broker import BrokerSimulator
 from app.engine.broker.order import Order, OrderSide, OrderType, TimeInForce
+from app.engine.broker.execution import (
+    TWAPExecutor, TWAPConfig,
+    VWAPExecutor, VWAPConfig,
+    IcebergExecutor, IcebergConfig,
+    POVExecutor, POVConfig,
+)
 from app.engine.core.events import FillEvent, MarketDataEvent
 from app.engine.data.feed import BarData, DataFeed
 from app.engine.portfolio.portfolio import Portfolio
@@ -65,6 +71,9 @@ class StrategyBase(ABC):
 
         # Bracket order tracking
         self._bracket_groups: dict[str, dict] = {}
+
+        # Execution algo tracking
+        self._executors: list[TWAPExecutor | VWAPExecutor | IcebergExecutor | POVExecutor] = []
 
         # Object store
         self._store: dict[str, Any] = {}
@@ -346,6 +355,135 @@ class StrategyBase(ABC):
     def cancel_all_orders(self, symbol: str | None = None) -> int:
         """Cancel all pending orders."""
         return self.broker.cancel_all(symbol, self.time)
+
+    # -- Execution algorithms --
+
+    def twap_order(
+        self, symbol: str, quantity: float, num_slices: int = 10,
+    ) -> TWAPExecutor:
+        """Execute a large order using TWAP (Time-Weighted Average Price).
+
+        Splits the order into equal-sized market orders spread over N bars.
+
+        Args:
+            symbol: Ticker to trade
+            quantity: Total quantity (positive=buy, negative=sell)
+            num_slices: Number of bars to spread the order across
+        """
+        side = OrderSide.BUY if quantity > 0 else OrderSide.SELL
+        config = TWAPConfig(
+            total_quantity=abs(quantity),
+            num_slices=num_slices,
+            symbol=symbol,
+            side=side,
+        )
+        executor = TWAPExecutor(config, self.broker.submit_order)
+        self._executors.append(executor)
+        return executor
+
+    def vwap_order(
+        self, symbol: str, quantity: float, num_slices: int = 10,
+        volume_profile: list[float] | None = None,
+    ) -> VWAPExecutor:
+        """Execute a large order using VWAP (Volume-Weighted Average Price).
+
+        Distributes child orders proportional to a volume profile.
+
+        Args:
+            symbol: Ticker to trade
+            quantity: Total quantity (positive=buy, negative=sell)
+            num_slices: Number of bars to spread the order across
+            volume_profile: Historical volume weights per slice (auto-uniform if None)
+        """
+        side = OrderSide.BUY if quantity > 0 else OrderSide.SELL
+        config = VWAPConfig(
+            total_quantity=abs(quantity),
+            num_slices=num_slices,
+            symbol=symbol,
+            side=side,
+            volume_profile=volume_profile,
+        )
+        executor = VWAPExecutor(config, self.broker.submit_order)
+        self._executors.append(executor)
+        return executor
+
+    def iceberg_order(
+        self, symbol: str, quantity: float, visible_quantity: float,
+        limit_price: float | None = None,
+    ) -> IcebergExecutor:
+        """Execute a large order as an iceberg (show only a visible portion).
+
+        Automatically submits the next visible slice when one fills.
+
+        Args:
+            symbol: Ticker to trade
+            quantity: Total quantity (positive=buy, negative=sell)
+            visible_quantity: Size of each visible slice
+            limit_price: If set, use limit orders; otherwise market orders
+        """
+        side = OrderSide.BUY if quantity > 0 else OrderSide.SELL
+        config = IcebergConfig(
+            total_quantity=abs(quantity),
+            visible_quantity=visible_quantity,
+            symbol=symbol,
+            side=side,
+            limit_price=limit_price,
+        )
+        executor = IcebergExecutor(config, self.broker.submit_order)
+        self._executors.append(executor)
+        executor.start(self.time)
+        return executor
+
+    def pov_order(
+        self, symbol: str, quantity: float, max_pct_of_volume: float = 0.1,
+    ) -> POVExecutor:
+        """Execute a large order as a percentage of each bar's volume.
+
+        Limits execution rate to avoid excessive market impact.
+
+        Args:
+            symbol: Ticker to trade
+            quantity: Total quantity (positive=buy, negative=sell)
+            max_pct_of_volume: Max fraction of bar volume per slice (default 10%)
+        """
+        side = OrderSide.BUY if quantity > 0 else OrderSide.SELL
+        config = POVConfig(
+            total_quantity=abs(quantity),
+            max_pct_of_volume=max_pct_of_volume,
+            symbol=symbol,
+            side=side,
+        )
+        executor = POVExecutor(config, self.broker.submit_order)
+        self._executors.append(executor)
+        return executor
+
+    def _tick_executors(self, bar: BarData, timestamp: datetime) -> None:
+        """Tick all active executors for the current bar (called by engine)."""
+        for executor in self._executors:
+            if executor.is_complete:
+                continue
+            if hasattr(executor, "on_bar"):
+                executor.on_bar(bar, timestamp)
+
+    def _route_executor_fill(self, fill: FillEvent) -> None:
+        """Route a fill event to the executor that owns the child order."""
+        order = self.broker.get_order(fill.order_id)
+        if order is None:
+            return
+        algo = order.metadata.get("algo")
+        if not algo:
+            return
+
+        for executor in self._executors:
+            if executor.is_complete:
+                continue
+            if isinstance(executor, IcebergExecutor) and algo == "iceberg":
+                executor.on_fill(fill.quantity, self.time)
+                return
+            if isinstance(executor, (TWAPExecutor, VWAPExecutor, POVExecutor)):
+                if hasattr(executor, "on_fill"):
+                    executor.on_fill(fill.quantity)
+                    return
 
     # -- Custom charting API --
 

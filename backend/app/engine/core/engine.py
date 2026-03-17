@@ -275,10 +275,6 @@ class Engine:
     def add_data(self, symbol: str, df: pd.DataFrame, corporate_actions=None) -> None:
         """Add market data for a symbol.
         
-        Args:
-            symbol: Ticker/symbol identifier.
-            df: DataFrame with OHLCV data.
-            corporate_actions: Optional CorporateActionsManager to apply adjustments.
         """
         if corporate_actions is not None:
             df = corporate_actions.apply_all(df, symbol)
@@ -398,6 +394,9 @@ class Engine:
             if self._strategy._check_warmup(bar_index):
                 self._strategy.on_data(primary_bar)
 
+            # Tick execution algorithms (TWAP/VWAP/Iceberg/POV)
+            self._strategy._tick_executors(primary_bar, timestamp)
+
             # Check scheduled events
             self._strategy._check_schedules(bar_index)
 
@@ -508,6 +507,7 @@ class Engine:
         """Handle fill events : update portfolio and notify strategy."""
         completed_trades = self._portfolio.on_fill(fill)
         if self._strategy:
+            self._strategy._route_executor_fill(fill)
             self._strategy.on_order_event(fill)
             self._strategy._handle_bracket_fill(fill)
         # Log event

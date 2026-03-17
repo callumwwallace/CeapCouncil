@@ -85,14 +85,7 @@ def compute_metrics(
     num_backtests_tried: int = 1,
 ) -> MetricsResult:
     """Compute all analytics from an equity curve and trade list.
-
-    Args:
-        equity_curve: List of {"date": str, "equity": float}
-        trades: List of trade dicts or TradeRecord objects
-        initial_capital: Starting capital
-        benchmark_returns: Daily returns of benchmark (for CAPM)
-        risk_free_rate: Annual risk-free rate (decimal, e.g. 0.04 for 4%)
-        num_backtests_tried: Total backtests tried (for deflated Sharpe)
+    
     """
     result = MetricsResult()
 
