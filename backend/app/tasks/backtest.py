@@ -604,6 +604,26 @@ def run_backtest_task(self, backtest_id: int):
 
         engine = Engine(engine_config)
         engine.add_data(backtest.symbol, data)
+
+        # Load additional symbols for multi-asset strategies
+        extra_symbols = params.get("additional_symbols") or []
+        for extra_sym in extra_symbols[:5]:  # Cap at 5 extra symbols to limit load
+            try:
+                extra_ticker = yf.Ticker(extra_sym)
+                extra_data = extra_ticker.history(
+                    start=backtest.start_date,
+                    end=backtest.end_date,
+                    interval=interval,
+                )
+                if not extra_data.empty:
+                    if extra_data.index.tz is not None:
+                        extra_data.index = extra_data.index.tz_localize(None)
+                    extra_data = filter_to_trading_days(extra_data, extra_sym)
+                    if not extra_data.empty:
+                        engine.add_data(extra_sym, extra_data)
+            except Exception:
+                pass  # Skip symbols that fail to download
+
         engine.set_strategy(strategy)
 
         try:

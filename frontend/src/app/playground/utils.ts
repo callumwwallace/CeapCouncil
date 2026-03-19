@@ -1,8 +1,18 @@
-export function applyDatePreset(preset: '1M' | '3M' | '6M' | '1Y' | '5Y'): { startDate: string; endDate: string } {
+export type DatePreset = '1M' | '3M' | '6M' | '1Y' | '2Y' | '3Y' | '5Y' | 'YTD' | 'Max';
+
+export function applyDatePreset(preset: DatePreset): { startDate: string; endDate: string } {
   const end = new Date();
   const start = new Date(end);
-  const months = { '1M': 1, '3M': 3, '6M': 6, '1Y': 12, '5Y': 60 };
-  start.setMonth(start.getMonth() - months[preset]);
+
+  if (preset === 'YTD') {
+    start.setMonth(0, 1); // Jan 1 of current year
+  } else if (preset === 'Max') {
+    start.setFullYear(end.getFullYear() - 10); // 10 years (engine max)
+  } else {
+    const months: Record<string, number> = { '1M': 1, '3M': 3, '6M': 6, '1Y': 12, '2Y': 24, '3Y': 36, '5Y': 60 };
+    start.setMonth(start.getMonth() - (months[preset] ?? 12));
+  }
+
   return {
     startDate: start.toISOString().slice(0, 10),
     endDate: end.toISOString().slice(0, 10),

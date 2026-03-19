@@ -79,7 +79,7 @@ import {
 } from 'recharts';
 
 import { STRATEGY_TEMPLATES, DEFAULT_CODE, type StrategyTemplateKey } from './strategyTemplates';
-import { applyDatePreset, formatRelativeTime, formatCommitTime, extractApiError } from './utils';
+import { applyDatePreset, formatRelativeTime, formatCommitTime, extractApiError, type DatePreset } from './utils';
 import type { BacktestConfig, BacktestResult, BrokerPreset } from './types';
 import { SYMBOLS, BROKER_PRESETS } from './types';
 import { useExport } from './useExport';
@@ -164,14 +164,43 @@ export default function PlaygroundPage() {
     setCanPortal(true);
   }, []);
 
-  // Check for injected code from docs "Try in Playground" buttons
+  // Check for injected code from docs "Try in Playground" or forum embed cards
   useEffect(() => {
     const injectedCode = sessionStorage.getItem('playground_inject_code');
     if (injectedCode) {
       setCode(injectedCode);
-      setSavedStrategyId(null); // Injected code is unsaved
+      setSelectedStarter('custom');
+      setSavedStrategyId(null);
+      const extracted = extractParamsFromCode(injectedCode);
+      const defaultParams: Record<string, number> = {};
+      extracted.forEach(p => { defaultParams[p.key] = p.defaultValue; });
+      setStrategyParams(defaultParams);
       sessionStorage.removeItem('playground_inject_code');
+      sessionStorage.removeItem('playground_inject_template');
     }
+  }, []);
+
+  // Handle ?strategy=ID share links (load a public strategy by ID)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const strategyIdParam = params.get('strategy');
+    if (!strategyIdParam) return;
+    const id = parseInt(strategyIdParam, 10);
+    if (isNaN(id)) return;
+
+    api.getStrategy(id)
+      .then((strategy) => {
+        setCode(strategy.code);
+        setSelectedStarter('custom');
+        setSavedStrategyId(null);
+        const extracted = extractParamsFromCode(strategy.code);
+        const defaultParams: Record<string, number> = {};
+        extracted.forEach(p => { defaultParams[p.key] = p.defaultValue; });
+        setStrategyParams(defaultParams);
+      })
+      .catch(() => {
+        setError('Could not load shared strategy — it may be private or deleted');
+      });
   }, []);
 
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
@@ -319,6 +348,8 @@ export default function PlaygroundPage() {
     const startTime = Date.now();
 
     try {
+      // Strategy params (user-defined in code) are kept separate from engine config
+      // so self.params in the strategy only contains trading parameters, not engine noise.
       const backtestConfig = {
         symbol: config.symbol,
         symbols: additionalSymbols.length > 0 ? additionalSymbols : undefined,
@@ -328,7 +359,9 @@ export default function PlaygroundPage() {
         slippage: config.slippage / 100,
         commission: config.commission / 100,
         parameters: {
+          // Strategy params (appear in self.params)
           ...strategyParams,
+          // Engine config (consumed by EngineConfig, also lands in self.params for now)
           spread_model: config.spreadModel,
           slippage_model: config.slippageModel,
           margin_enabled: config.marginEnabled,
@@ -339,8 +372,6 @@ export default function PlaygroundPage() {
           warmup_bars: config.warmupBars,
           pdt_enabled: config.pdtEnabled,
         },
-        sizing_method: config.sizingMethod,
-        sizing_value: config.sizingValue,
         stop_loss_pct: config.stopLossPct,
         take_profit_pct: config.takeProfitPct,
         benchmark_symbol: config.benchmarkSymbol,
@@ -1012,17 +1043,100 @@ export default function PlaygroundPage() {
                   </div>
                 )}
 
+                {/* Multi-symbol for multi-asset strategies */}
+                <div className="space-y-1.5 pt-2 border-t border-gray-200">
+                  <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Additional Symbols</div>
+                  <p className="text-[10px] text-gray-400 leading-relaxed">Add extra symbols for multi-asset strategies. Data is passed to <code className="bg-gray-100 px-0.5 rounded">self.history(symbol)</code>.</p>
+                  {additionalSymbols.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {additionalSymbols.map((sym) => (
+                        <span key={sym} className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 text-gray-700 text-[10px] font-medium rounded-md">
+                          {sym}
+                          <button
+                            onClick={() => setAdditionalSymbols((prev) => prev.filter((s) => s !== sym))}
+                            className="text-gray-400 hover:text-red-500 transition"
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="e.g. MSFT"
+                      className="flex-1 px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900 placeholder-gray-400 uppercase"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const val = (e.target as HTMLInputElement).value.trim().toUpperCase();
+                          if (val && val !== config.symbol && !additionalSymbols.includes(val)) {
+                            setAdditionalSymbols((prev) => [...prev, val]);
+                            (e.target as HTMLInputElement).value = '';
+                          }
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const input = document.querySelector<HTMLInputElement>('input[placeholder="e.g. MSFT"]');
+                        if (input) {
+                          const val = input.value.trim().toUpperCase();
+                          if (val && val !== config.symbol && !additionalSymbols.includes(val)) {
+                            setAdditionalSymbols((prev) => [...prev, val]);
+                            input.value = '';
+                          }
+                        }
+                      }}
+                      className="px-2 py-1.5 text-[10px] font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md transition"
+                    >
+                      <Plus className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+
                 {/* Open code editor — always available */}
                 <button onClick={() => setShowCodeEditor(true)} className="w-full py-2 text-[11px] text-emerald-600 border border-emerald-200 rounded-md mt-2 hover:bg-emerald-50">Open Editor</button>
               </div>
             )}
             {activeSetupPanel === 'dates' && (
-              <div className="space-y-2">
-                <div className="text-[10px] text-gray-500 uppercase tracking-wide">Start</div>
-                <input type="date" value={config.startDate} onChange={(e) => setConfig({ ...config, startDate: e.target.value })} className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900" />
-                <div className="text-[10px] text-gray-500 uppercase tracking-wide">End</div>
-                <input type="date" value={config.endDate} onChange={(e) => setConfig({ ...config, endDate: e.target.value })} className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900" />
-                <div className="text-[11px] text-gray-500">{daysOfData} days</div>
+              <div className="space-y-3">
+                {/* Quick presets */}
+                <div>
+                  <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-1.5">Quick Select</div>
+                  <div className="flex flex-wrap gap-1">
+                    {(['1M', '3M', '6M', 'YTD', '1Y', '2Y', '3Y', '5Y', 'Max'] as DatePreset[]).map((p) => {
+                      // Check if this preset matches current dates
+                      const preview = applyDatePreset(p);
+                      const isActive = preview.startDate === config.startDate && preview.endDate === config.endDate;
+                      return (
+                        <button
+                          key={p}
+                          onClick={() => {
+                            const { startDate, endDate } = applyDatePreset(p);
+                            setConfig((prev) => ({ ...prev, startDate, endDate }));
+                          }}
+                          className={`px-2 py-1 text-[10px] font-medium rounded transition ${
+                            isActive
+                              ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-transparent'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {/* Manual date inputs */}
+                <div className="pt-2 border-t border-gray-200">
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">Start</div>
+                  <input type="date" value={config.startDate} onChange={(e) => setConfig({ ...config, startDate: e.target.value })} className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900" />
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wide mt-2 mb-1">End</div>
+                  <input type="date" value={config.endDate} onChange={(e) => setConfig({ ...config, endDate: e.target.value })} className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900" />
+                  <div className="text-[11px] text-gray-500 mt-1">{daysOfData} days · Interval set via chart toolbar</div>
+                </div>
               </div>
             )}
             {activeSetupPanel === 'capital' && (
@@ -1033,35 +1147,9 @@ export default function PlaygroundPage() {
                     <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
                     <input type="number" value={config.initialCapital} onChange={(e) => setConfig({ ...config, initialCapital: parseFloat(e.target.value) || 10000 })} className="w-full pl-8 px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900" />
                   </div>
-                </div>
-                <div className="pt-2 border-t border-gray-200">
-                  <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-2">Position Sizing</div>
-                  <select
-                    value={config.sizingMethod}
-                    onChange={(e) => setConfig({ ...config, sizingMethod: e.target.value as BacktestConfig['sizingMethod'], sizingValue: e.target.value === 'full' ? null : config.sizingValue ?? 10 })}
-                    className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900 mb-2"
-                  >
-                    <option value="full">Full equity</option>
-                    <option value="percent_equity">% of equity per trade</option>
-                    <option value="fixed_shares">Fixed shares per trade</option>
-                    <option value="fixed_dollar">Fixed $ per trade</option>
-                  </select>
-                  {config.sizingMethod !== 'full' && (
-                    <div>
-                      <div className="text-[10px] text-gray-500 mb-1">
-                        {config.sizingMethod === 'percent_equity' ? '% of equity' : config.sizingMethod === 'fixed_shares' ? 'Shares' : '$ amount'}
-                      </div>
-                      <input
-                        type="number"
-                        value={config.sizingValue ?? ''}
-                        onChange={(e) => setConfig({ ...config, sizingValue: e.target.value ? parseFloat(e.target.value) : null })}
-                        placeholder={config.sizingMethod === 'percent_equity' ? '10' : config.sizingMethod === 'fixed_shares' ? '100' : '5000'}
-                        step={config.sizingMethod === 'percent_equity' ? 1 : config.sizingMethod === 'fixed_shares' ? 1 : 100}
-                        min={0}
-                        className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900 placeholder-gray-400"
-                      />
-                    </div>
-                  )}
+                  <p className="text-[10px] text-gray-400 mt-1.5 leading-relaxed">
+                    Sets <code className="bg-gray-100 px-1 rounded">self.portfolio.cash</code> at start. Your strategy code controls position sizing via order quantities.
+                  </p>
                 </div>
               </div>
             )}
@@ -1125,7 +1213,8 @@ export default function PlaygroundPage() {
               </div>
             )}
             {activeSetupPanel === 'risk' && (
-              <div className="space-y-2">
+              <div className="space-y-3">
+                <p className="text-[10px] text-gray-400 leading-relaxed">Engine-level risk guards. These apply on top of your strategy&apos;s own exit logic.</p>
                 <div><span className="text-[10px] text-gray-500 uppercase">Stop Loss %</span><input type="number" step={0.1} value={config.stopLossPct ?? ''} onChange={(e) => setConfig({ ...config, stopLossPct: e.target.value ? parseFloat(e.target.value) : null })} placeholder="None" className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
                 <div><span className="text-[10px] text-gray-500 uppercase">Take Profit %</span><input type="number" step={0.1} value={config.takeProfitPct ?? ''} onChange={(e) => setConfig({ ...config, takeProfitPct: e.target.value ? parseFloat(e.target.value) : null })} placeholder="None" className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
                 <div><span className="text-[10px] text-gray-500 uppercase">Max Drawdown %</span><input type="number" value={config.maxDrawdownPct} onChange={(e) => setConfig({ ...config, maxDrawdownPct: parseFloat(e.target.value) || 50 })} className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
@@ -1133,7 +1222,8 @@ export default function PlaygroundPage() {
               </div>
             )}
             {activeSetupPanel === 'engine' && (
-              <div className="space-y-2">
+              <div className="space-y-3">
+                <p className="text-[10px] text-gray-400 leading-relaxed">Engine-level settings. Also configurable in code via <code className="bg-gray-100 px-0.5 rounded">self.set_warmup()</code>.</p>
                 <label className="flex items-center gap-2 text-xs text-gray-900"><input type="checkbox" checked={config.marginEnabled} onChange={(e) => setConfig({ ...config, marginEnabled: e.target.checked })} className="rounded" /> Margin</label>
                 <label className="flex items-center gap-2 text-xs text-gray-900"><input type="checkbox" checked={config.allowShortsWithoutMargin} onChange={(e) => setConfig({ ...config, allowShortsWithoutMargin: e.target.checked })} className="rounded" /> Allow shorts w/o margin</label>
                 <div><span className="text-[10px] text-gray-500 uppercase">Leverage</span><input type="number" min={1} max={10} value={config.leverage} onChange={(e) => setConfig({ ...config, leverage: parseFloat(e.target.value) || 1 })} className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
