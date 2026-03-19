@@ -485,7 +485,6 @@ export default function PlaygroundPage() {
   };
 
   const handleSavedStrategySelect = async (value: string) => {
-    setSelectedStarter('custom');
     const id = parseInt(value, 10);
     if (isNaN(id)) return;
     try {
@@ -494,7 +493,7 @@ export default function PlaygroundPage() {
       setSavedStrategyId(strategy.id);
       setStrategyParams((strategy.parameters as Record<string, number>) || {});
     } catch {
-      setCode(STRATEGY_TEMPLATES.custom.code);
+      setCode(DEFAULT_CODE);
       setSavedStrategyId(null);
     }
   };
@@ -504,19 +503,16 @@ export default function PlaygroundPage() {
     try {
       const strat = await api.createStrategy({
         title: 'New Strategy',
-        code: STRATEGY_TEMPLATES.custom.code,
-        parameters: {},
+        code,
+        parameters: strategyParams,
         is_public: false,
       });
       setSavedStrategies(prev => [strat, ...prev]);
       setSavedStrategyId(strat.id);
-      setCode(strat.code);
-      setStrategyParams({});
-      setSelectedStarter('custom');
     } catch (err) {
       setError(extractApiError(err, 'Failed to create strategy'));
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, code, strategyParams]);
 
   const refetchSavedStrategies = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -567,9 +563,9 @@ export default function PlaygroundPage() {
     if (!idToDelete) return;
     if (!confirm('Delete this strategy? This cannot be undone.')) return;
     if (idToDelete === savedStrategyId) {
-    setSavedStrategyId(null);
-    setCode(STRATEGY_TEMPLATES.custom.code);
-    setResults(null);
+      setSavedStrategyId(null);
+      setCode(DEFAULT_CODE);
+      setResults(null);
     }
     setSavedStrategies(prev => prev.filter(s => s.id !== idToDelete));
     try {
@@ -796,25 +792,35 @@ export default function PlaygroundPage() {
       <div className="flex-1 flex overflow-hidden relative">
         {/* Icon toolbar - absolute overlay on left edge, no layout space */}
         <div className="absolute left-0 top-0 bottom-0 z-30 flex flex-col bg-white border-r border-gray-200 w-12 items-center py-2 gap-0.5 overflow-visible shadow-sm">
-            {(['strategy', 'dates', 'capital', 'benchmark', 'costs', 'risk', 'engine'] as const).map((panel) => {
-              const labels = { strategy: 'Strategy', dates: 'Dates', capital: 'Capital', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine' };
+            {([
+              'strategy', 'dates',
+              '---',
+              'capital', 'benchmark', 'costs',
+              '---',
+              'risk', 'engine',
+            ] as const).map((item, i) => {
+              if (item === '---') return <div key={`sep-${i}`} className="h-px bg-gray-200 w-6 my-1" />;
+              const panel = item as 'strategy' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine';
+              const labels = { strategy: 'Strategy', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine' };
               const icons = { strategy: FileCode, dates: Calendar, capital: DollarSign, benchmark: TrendingUp, costs: Percent, risk: Shield, engine: Settings };
               const Icon = icons[panel];
+              const isActive = activeSetupPanel === panel;
               return (
                 <div key={panel} className="group relative">
-                      <button
-                    onClick={() => setActiveSetupPanel(activeSetupPanel === panel ? null : panel)}
-                    className={`p-2 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100 ${activeSetupPanel === panel ? 'bg-gray-100 text-emerald-600' : ''}`}
-                      >
+                  <button
+                    onClick={() => setActiveSetupPanel(isActive ? null : panel)}
+                    className={`relative p-2 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100 ${isActive ? 'bg-gray-100 text-emerald-600' : ''}`}
+                  >
+                    {isActive && <span className="absolute left-0 top-1 bottom-1 w-0.5 bg-emerald-500 rounded-full" />}
                     <Icon className="h-5 w-5" />
-                      </button>
+                  </button>
                   <span className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-2 py-1 text-xs font-medium text-gray-900 bg-white border border-gray-200 rounded shadow-lg whitespace-nowrap opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 pointer-events-none">
                     {labels[panel]}
-                    </span>
+                  </span>
                 </div>
               );
             })}
-              </div>
+        </div>
 
         {/* Main Content - Chart + Results Bar - ml-12 reserves space for icon bar overlay */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden ml-12">
@@ -902,7 +908,7 @@ export default function PlaygroundPage() {
             onMouseDown={handleSetupPanelDragStart}
           >
             <span className="text-xs font-semibold text-gray-900">
-              {({ strategy: 'Strategy', dates: 'Dates', capital: 'Capital', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine' } as Record<string, string>)[activeSetupPanel]}
+              {({ strategy: 'Strategy', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine' } as Record<string, string>)[activeSetupPanel]}
             </span>
             <button
               onClick={() => setActiveSetupPanel(null)}
@@ -916,10 +922,11 @@ export default function PlaygroundPage() {
           <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
             {activeSetupPanel === 'strategy' && (
               <div className="space-y-2">
+                <p className="text-[10px] text-gray-400 leading-relaxed">Sidebar controls the environment (capital, costs, dates). Your code controls the trading logic.</p>
                 {/* Load starter code */}
                 <div>
                   <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-1">Load Starter</div>
-                  <ConfigSelect value={selectedStarter} onChange={(v) => handleStarterChange(v as StrategyTemplateKey)} light options={Object.entries(STRATEGY_TEMPLATES).filter(([k]) => k !== 'custom').map(([key, t]) => ({ value: key, label: t.name }))} />
+                  <ConfigSelect value={selectedStarter} onChange={(v) => handleStarterChange(v as StrategyTemplateKey)} light options={Object.entries(STRATEGY_TEMPLATES).map(([key, t]) => ({ value: key, label: t.name }))} />
                 </div>
 
                 {/* Dynamic parameters (extracted from code) */}
@@ -1019,11 +1026,42 @@ export default function PlaygroundPage() {
               </div>
             )}
             {activeSetupPanel === 'capital' && (
-              <div>
-                <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-2">Initial Capital</div>
-                <div className="relative">
-                  <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
-                  <input type="number" value={config.initialCapital} onChange={(e) => setConfig({ ...config, initialCapital: parseFloat(e.target.value) || 10000 })} className="w-full pl-8 px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900" />
+              <div className="space-y-3">
+                <div>
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-2">Initial Capital</div>
+                  <div className="relative">
+                    <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+                    <input type="number" value={config.initialCapital} onChange={(e) => setConfig({ ...config, initialCapital: parseFloat(e.target.value) || 10000 })} className="w-full pl-8 px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900" />
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-gray-200">
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-2">Position Sizing</div>
+                  <select
+                    value={config.sizingMethod}
+                    onChange={(e) => setConfig({ ...config, sizingMethod: e.target.value as BacktestConfig['sizingMethod'], sizingValue: e.target.value === 'full' ? null : config.sizingValue ?? 10 })}
+                    className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900 mb-2"
+                  >
+                    <option value="full">Full equity</option>
+                    <option value="percent_equity">% of equity per trade</option>
+                    <option value="fixed_shares">Fixed shares per trade</option>
+                    <option value="fixed_dollar">Fixed $ per trade</option>
+                  </select>
+                  {config.sizingMethod !== 'full' && (
+                    <div>
+                      <div className="text-[10px] text-gray-500 mb-1">
+                        {config.sizingMethod === 'percent_equity' ? '% of equity' : config.sizingMethod === 'fixed_shares' ? 'Shares' : '$ amount'}
+                      </div>
+                      <input
+                        type="number"
+                        value={config.sizingValue ?? ''}
+                        onChange={(e) => setConfig({ ...config, sizingValue: e.target.value ? parseFloat(e.target.value) : null })}
+                        placeholder={config.sizingMethod === 'percent_equity' ? '10' : config.sizingMethod === 'fixed_shares' ? '100' : '5000'}
+                        step={config.sizingMethod === 'percent_equity' ? 1 : config.sizingMethod === 'fixed_shares' ? 1 : 100}
+                        min={0}
+                        className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900 placeholder-gray-400"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1069,6 +1107,19 @@ export default function PlaygroundPage() {
                     <option value="none">None</option>
                   </select>
                 </div>
+                <div>
+                  <div className="text-[10px] text-gray-500 uppercase mb-1">Spread model</div>
+                  <select
+                    value={config.spreadModel}
+                    onChange={(e) => setConfig({ ...config, spreadModel: e.target.value as BacktestConfig['spreadModel'] })}
+                    className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded text-gray-900 mb-2"
+                  >
+                    <option value="auto">Auto (estimated from data)</option>
+                    <option value="volatility">Volatility-based</option>
+                    <option value="fixed_bps">Fixed basis points</option>
+                    <option value="none">None</option>
+                  </select>
+                </div>
                 <div><span className="text-[10px] text-gray-500 uppercase">Slippage %</span><input type="number" step={0.01} value={config.slippage} onChange={(e) => setConfig({ ...config, slippage: parseFloat(e.target.value) || 0, brokerPreset: 'custom' })} className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900 disabled:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-500" disabled={config.slippageModel === 'auto' || config.slippageModel === 'volume_aware' || (config.brokerPreset && config.brokerPreset !== 'custom')} title={config.slippageModel === 'auto' || config.slippageModel === 'volume_aware' ? 'Not used for volume-aware/auto models' : (config.brokerPreset && config.brokerPreset !== 'custom') ? 'Select Custom preset to edit' : undefined} /></div>
                 <div><span className="text-[10px] text-gray-500 uppercase">Commission %</span><input type="number" step={0.01} value={config.commission} onChange={(e) => setConfig({ ...config, commission: parseFloat(e.target.value) || 0, brokerPreset: 'custom' })} className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900 disabled:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-500" disabled={config.brokerPreset !== undefined && config.brokerPreset !== 'custom'} title={config.brokerPreset && config.brokerPreset !== 'custom' ? 'Select Custom preset to edit' : ''} /></div>
               </div>
@@ -1078,6 +1129,7 @@ export default function PlaygroundPage() {
                 <div><span className="text-[10px] text-gray-500 uppercase">Stop Loss %</span><input type="number" step={0.1} value={config.stopLossPct ?? ''} onChange={(e) => setConfig({ ...config, stopLossPct: e.target.value ? parseFloat(e.target.value) : null })} placeholder="None" className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
                 <div><span className="text-[10px] text-gray-500 uppercase">Take Profit %</span><input type="number" step={0.1} value={config.takeProfitPct ?? ''} onChange={(e) => setConfig({ ...config, takeProfitPct: e.target.value ? parseFloat(e.target.value) : null })} placeholder="None" className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
                 <div><span className="text-[10px] text-gray-500 uppercase">Max Drawdown %</span><input type="number" value={config.maxDrawdownPct} onChange={(e) => setConfig({ ...config, maxDrawdownPct: parseFloat(e.target.value) || 50 })} className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
+                <div><span className="text-[10px] text-gray-500 uppercase">Max Position %</span><input type="number" value={config.maxPositionPct} onChange={(e) => setConfig({ ...config, maxPositionPct: parseFloat(e.target.value) || 100 })} min={1} max={100} className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
               </div>
             )}
             {activeSetupPanel === 'engine' && (

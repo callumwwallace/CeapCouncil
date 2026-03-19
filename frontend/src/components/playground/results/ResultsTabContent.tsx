@@ -350,7 +350,7 @@ export default function ResultsTabContent({
                               )}
                         </>
                       ) : (
-                            <div className="text-center py-8 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 text-xs">Optimization requires a template strategy with parameters.</div>
+                            <div className="text-center py-8 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 text-xs">No tunable parameters detected. Add <code className="bg-gray-200 px-1 rounded">self.params.setdefault(&apos;key&apos;, value)</code> to your strategy code.</div>
                           )}
                         </div>
                       )}
