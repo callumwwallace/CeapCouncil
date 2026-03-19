@@ -159,6 +159,18 @@ export default function PlaygroundPage() {
   useEffect(() => {
     setCanPortal(true);
   }, []);
+
+  // Check for injected code from docs "Try in Playground" buttons
+  useEffect(() => {
+    const injectedCode = sessionStorage.getItem('playground_inject_code');
+    if (injectedCode) {
+      setCode(injectedCode);
+      // Stay in templates mode so Run button remains enabled
+      setStrategyMode('templates');
+      sessionStorage.removeItem('playground_inject_code');
+    }
+  }, []);
+
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
   const [resultsBarExpanded, setResultsBarExpanded] = useState(false);
   const [resultsPanelWidth, setResultsPanelWidth] = useState(320);
