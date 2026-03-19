@@ -152,7 +152,7 @@ export default function PlaygroundPage() {
   const [showEngineSection, setShowEngineSection] = useState(false);
   const [showAdvancedSetupSection, setShowAdvancedSetupSection] = useState(false);
   const [additionalSymbols, setAdditionalSymbols] = useState<string[]>([]);
-  const [activeSetupPanel, setActiveSetupPanel] = useState<'strategy' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine' | null>(null);
+  const [activeSetupPanel, setActiveSetupPanel] = useState<'strategy' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine' | 'history' | null>(null);
   const [setupPanelPosition, setSetupPanelPosition] = useState({ x: 70, y: 120 });
   const [setupPanelSize, setSetupPanelSize] = useState({ w: 320, h: 400 });
   const [isDraggingSetupPanel, setIsDraggingSetupPanel] = useState(false);
@@ -233,7 +233,12 @@ export default function PlaygroundPage() {
   }, [theme]);
   const [results, setResults] = useState<BacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [comparisonHistory, setComparisonHistory] = useState<(BacktestResult & { label: string; timestamp: number })[]>([]);
+  const [comparisonHistory, setComparisonHistory] = useState<(BacktestResult & {
+    label: string;
+    timestamp: number;
+    configSnapshot: { symbol: string; startDate: string; endDate: string; initialCapital: number; interval: string };
+    paramsSnapshot: Record<string, number>;
+  })[]>([]);
   const [showComparison, setShowComparison] = useState(false);
   // Advanced analytics (extracted hook)
   const analytics = useAnalytics({ config, code, paramDefs, strategyParams });
@@ -453,13 +458,21 @@ export default function PlaygroundPage() {
             alerts: r?.alerts ?? undefined,
           };
           setResults(resultsObj);
-          // Add to comparison history
+          // Add to comparison history with config snapshot
           setComparisonHistory(prev => [
-            ...prev.slice(-4), // Keep last 5 total
+            ...prev.slice(-9), // Keep last 10 total
             {
               ...resultsObj,
               label: `${STRATEGY_TEMPLATES[selectedStarter]?.name ?? 'Strategy'} - ${config.symbol}`,
               timestamp: Date.now(),
+              configSnapshot: {
+                symbol: config.symbol,
+                startDate: config.startDate,
+                endDate: config.endDate,
+                initialCapital: config.initialCapital,
+                interval: config.interval,
+              },
+              paramsSnapshot: { ...strategyParams },
             },
           ]);
           break;
@@ -829,11 +842,13 @@ export default function PlaygroundPage() {
               'capital', 'benchmark', 'costs',
               '---',
               'risk', 'engine',
+              '---',
+              'history',
             ] as const).map((item, i) => {
               if (item === '---') return <div key={`sep-${i}`} className="h-px bg-gray-200 w-6 my-1" />;
-              const panel = item as 'strategy' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine';
-              const labels = { strategy: 'Strategy', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine' };
-              const icons = { strategy: FileCode, dates: Calendar, capital: DollarSign, benchmark: TrendingUp, costs: Percent, risk: Shield, engine: Settings };
+              const panel = item as 'strategy' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine' | 'history';
+              const labels = { strategy: 'Strategy', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine', history: 'Run History' };
+              const icons = { strategy: FileCode, dates: Calendar, capital: DollarSign, benchmark: TrendingUp, costs: Percent, risk: Shield, engine: Settings, history: RefreshCw };
               const Icon = icons[panel];
               const isActive = activeSetupPanel === panel;
               return (
@@ -844,6 +859,11 @@ export default function PlaygroundPage() {
                   >
                     {isActive && <span className="absolute left-0 top-1 bottom-1 w-0.5 bg-emerald-500 rounded-full" />}
                     <Icon className="h-5 w-5" />
+                    {panel === 'history' && comparisonHistory.length > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] flex items-center justify-center bg-emerald-500 text-white text-[8px] font-bold rounded-full leading-none px-0.5">
+                        {comparisonHistory.length}
+                      </span>
+                    )}
                   </button>
                   <span className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-2 py-1 text-xs font-medium text-gray-900 bg-white border border-gray-200 rounded shadow-lg whitespace-nowrap opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 pointer-events-none">
                     {labels[panel]}
@@ -939,7 +959,7 @@ export default function PlaygroundPage() {
             onMouseDown={handleSetupPanelDragStart}
           >
             <span className="text-xs font-semibold text-gray-900">
-              {({ strategy: 'Strategy', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine' } as Record<string, string>)[activeSetupPanel]}
+              {({ strategy: 'Strategy', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine', history: 'Run History' } as Record<string, string>)[activeSetupPanel]}
             </span>
             <button
               onClick={() => setActiveSetupPanel(null)}
@@ -1229,6 +1249,103 @@ export default function PlaygroundPage() {
                 <div><span className="text-[10px] text-gray-500 uppercase">Leverage</span><input type="number" min={1} max={10} value={config.leverage} onChange={(e) => setConfig({ ...config, leverage: parseFloat(e.target.value) || 1 })} className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
                 <div><span className="text-[10px] text-gray-500 uppercase">Warmup bars</span><input type="number" value={config.warmupBars} onChange={(e) => setConfig({ ...config, warmupBars: parseInt(e.target.value, 10) || 0 })} className="ml-2 w-20 px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" /></div>
                 <label className="flex items-center gap-2 text-xs text-gray-900"><input type="checkbox" checked={config.pdtEnabled} onChange={(e) => setConfig({ ...config, pdtEnabled: e.target.checked })} className="rounded" /> PDT rule</label>
+              </div>
+            )}
+            {activeSetupPanel === 'history' && (
+              <div className="space-y-2">
+                {comparisonHistory.length === 0 ? (
+                  <div className="text-center py-6">
+                    <RefreshCw className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+                    <p className="text-xs text-gray-500">No runs yet</p>
+                    <p className="text-[10px] text-gray-400 mt-1">Run a backtest to see results here</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Recent Runs</div>
+                      <button
+                        onClick={() => setComparisonHistory([])}
+                        className="text-[10px] text-gray-400 hover:text-red-500 transition"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <div className="space-y-1.5">
+                      {[...comparisonHistory].reverse().map((run, i) => {
+                        const isActive = results && run.timestamp === comparisonHistory[comparisonHistory.length - 1]?.timestamp && results.total_return === run.total_return;
+                        const returnPct = run.total_return;
+                        const isPositive = returnPct >= 0;
+                        const elapsed = Date.now() - run.timestamp;
+                        const timeLabel = elapsed < 60000 ? 'just now' : elapsed < 3600000 ? `${Math.floor(elapsed / 60000)}m ago` : `${Math.floor(elapsed / 3600000)}h ago`;
+
+                        // Detect what changed from previous run
+                        const prevRun = comparisonHistory[comparisonHistory.length - 1 - i - 1];
+                        const changes: string[] = [];
+                        if (prevRun) {
+                          if (run.configSnapshot.symbol !== prevRun.configSnapshot.symbol) changes.push(`→ ${run.configSnapshot.symbol}`);
+                          if (run.configSnapshot.initialCapital !== prevRun.configSnapshot.initialCapital) changes.push(`$${(run.configSnapshot.initialCapital / 1000).toFixed(0)}k`);
+                          const paramKeys = Object.keys(run.paramsSnapshot);
+                          for (const k of paramKeys) {
+                            if (run.paramsSnapshot[k] !== prevRun.paramsSnapshot[k]) {
+                              changes.push(`${k}=${run.paramsSnapshot[k]}`);
+                            }
+                          }
+                        }
+
+                        return (
+                          <button
+                            key={run.timestamp}
+                            onClick={() => {
+                              setResults(run);
+                              setResultsBarExpanded(true);
+                              setActiveResultsTab('summary');
+                            }}
+                            className={`w-full text-left px-2.5 py-2 rounded-lg border transition ${
+                              isActive
+                                ? 'bg-emerald-50 border-emerald-200'
+                                : 'bg-white border-gray-200 hover:bg-gray-50'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-0.5">
+                              <span className="text-[10px] text-gray-500 truncate max-w-[60%]">{run.label}</span>
+                              <span className="text-[9px] text-gray-400 shrink-0">{timeLabel}</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className={`text-sm font-bold ${isPositive ? 'text-emerald-600' : 'text-red-500'}`}>
+                                {isPositive ? '+' : ''}{returnPct.toFixed(1)}%
+                              </span>
+                              <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                                <span>SR {run.sharpe_ratio.toFixed(2)}</span>
+                                <span>DD {(run.max_drawdown * 100).toFixed(1)}%</span>
+                              </div>
+                            </div>
+                            {changes.length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {changes.slice(0, 3).map((c, j) => (
+                                  <span key={j} className="text-[9px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-medium">
+                                    {c}
+                                  </span>
+                                ))}
+                                {changes.length > 3 && (
+                                  <span className="text-[9px] text-gray-400">+{changes.length - 3} more</span>
+                                )}
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="pt-2 border-t border-gray-200">
+                      <div className="text-[10px] text-gray-400">
+                        {comparisonHistory.length} run{comparisonHistory.length !== 1 ? 's' : ''} · Best: {
+                          Math.max(...comparisonHistory.map(r => r.total_return)).toFixed(1)
+                        }% · Worst: {
+                          Math.min(...comparisonHistory.map(r => r.total_return)).toFixed(1)
+                        }%
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
