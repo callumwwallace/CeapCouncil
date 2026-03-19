@@ -40,7 +40,7 @@ import {
 import TradeLog from '@/components/playground/TradeLog';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import type { BacktestResult } from '@/app/playground/types';
-import { STRATEGY_PARAMS, type StrategyTemplateKey } from '@/app/playground/strategyTemplates';
+import type { ExtractedParam } from '@/app/playground/extractParams';
 import type { useAnalytics } from '@/app/playground/useAnalytics';
 
 type AnalyticsState = ReturnType<typeof useAnalytics>;
@@ -52,9 +52,7 @@ interface ResultsTabContentProps {
   activeTab: ResultsTab;
   onTabChange: (tab: ResultsTab) => void;
   analytics: AnalyticsState;
-  selectedTemplate: StrategyTemplateKey;
-  playgroundStrategyId: number | null;
-  strategyMode: 'templates' | 'custom';
+  paramDefs: ExtractedParam[];
 }
 
 export default function ResultsTabContent({
@@ -62,9 +60,7 @@ export default function ResultsTabContent({
   activeTab: activeResultsTab,
   onTabChange: setActiveResultsTab,
   analytics,
-  selectedTemplate,
-  playgroundStrategyId,
-  strategyMode,
+  paramDefs,
 }: ResultsTabContentProps) {
   const {
     optimizeResults, walkForwardResults, oosResults, cpcvResults, factorResults, monteCarloResults,
@@ -291,7 +287,7 @@ export default function ResultsTabContent({
                       )}
                       {activeResultsTab === 'optimize' && (
                         <div className="space-y-3">
-                          {strategyMode === 'templates' && STRATEGY_PARAMS[selectedTemplate].length > 0 ? (
+                          {paramDefs.length > 0 ? (
                             <>
                               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
                                 <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Configuration</div>
@@ -307,11 +303,11 @@ export default function ResultsTabContent({
                                     <>
                                       <select value={heatmapParamX} onChange={(e) => setHeatmapParamX(e.target.value)} className="px-2.5 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900">
                                         <option value="">Param X</option>
-                                        {STRATEGY_PARAMS[selectedTemplate].map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                                        {paramDefs.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
                                       </select>
                                       <select value={heatmapParamY} onChange={(e) => setHeatmapParamY(e.target.value)} className="px-2.5 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900">
                                         <option value="">Param Y</option>
-                                        {STRATEGY_PARAMS[selectedTemplate].map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                                        {paramDefs.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
                                       </select>
                                     </>
                                   )}
@@ -371,7 +367,7 @@ export default function ResultsTabContent({
                                 <option value={5}>5 (k-fold)</option>
                               </select>
                     </div>
-                            <button onClick={handleRunOos} disabled={oosLoading || (!playgroundStrategyId && strategyMode !== 'templates')} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition">
+                            <button onClick={handleRunOos} disabled={oosLoading} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition">
                               {oosLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Run OOS Validation
                           </button>
                       </div>
@@ -444,7 +440,7 @@ export default function ResultsTabContent({
                                 <input type="number" min={0} max={100} value={cpcvPurgeBars} onChange={(e) => setCpcvPurgeBars(Math.max(0, parseInt(e.target.value, 10) || 0))} className="w-full px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" title="Bars removed at train/test boundaries" />
                               </div>
                             </div>
-                            <button onClick={handleRunCpcv} disabled={cpcvLoading || (!playgroundStrategyId && strategyMode !== 'templates')} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition">
+                            <button onClick={handleRunCpcv} disabled={cpcvLoading} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition">
                               {cpcvLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Run CPCV
                             </button>
                           </div>
@@ -675,7 +671,7 @@ export default function ResultsTabContent({
                                 </select>
                           </div>
                           </div>
-                            <button onClick={handleRunWalkForward} disabled={walkForwardLoading || (!playgroundStrategyId && strategyMode !== 'templates')} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition">
+                            <button onClick={handleRunWalkForward} disabled={walkForwardLoading} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition">
                               {walkForwardLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Run Walk-Forward
                             </button>
                         </div>

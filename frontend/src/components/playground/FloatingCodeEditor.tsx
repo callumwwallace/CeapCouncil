@@ -21,8 +21,7 @@ interface FloatingCodeEditorProps {
   onClose: () => void;
   code: string;
   onCodeChange: (code: string) => void;
-  strategyMode: 'templates' | 'custom';
-  playgroundStrategyId: number | null;
+  savedStrategyId: number | null;
   strategyParams: Record<string, number>;
   onSetStrategyParams: (params: Record<string, number>) => void;
   effectiveChartTheme: 'light' | 'dark';
@@ -36,8 +35,7 @@ export default function FloatingCodeEditor({
   onClose,
   code,
   onCodeChange,
-  strategyMode,
-  playgroundStrategyId,
+  savedStrategyId,
   strategyParams,
   onSetStrategyParams,
   effectiveChartTheme,
@@ -71,11 +69,11 @@ export default function FloatingCodeEditor({
     return () => clearTimeout(t);
   }, [editorSaveStatus]);
 
-  // Load version history when editor opens for a custom strategy
+  // Load version history when editor opens for a saved strategy
   useEffect(() => {
-    if (visible && strategyMode === 'custom' && playgroundStrategyId) {
+    if (visible && savedStrategyId) {
       setVersionLoading(true);
-      api.listVersions(playgroundStrategyId, 0, 10)
+      api.listVersions(savedStrategyId, 0, 10)
         .then((versions) => {
           setVersionList(versions);
           setVersionListHasMore(versions.length >= 10);
@@ -83,7 +81,7 @@ export default function FloatingCodeEditor({
         .catch(() => { setVersionList([]); setVersionListHasMore(false); })
         .finally(() => setVersionLoading(false));
     }
-  }, [visible, strategyMode, playgroundStrategyId]);
+  }, [visible, savedStrategyId]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     setIsDragging(true);
@@ -135,7 +133,7 @@ export default function FloatingCodeEditor({
               <span className="text-sm text-gray-900 font-medium truncate">
                 {strategyTitle}
               </span>
-              {!editorMinimized && strategyMode === 'custom' && playgroundStrategyId && (
+              {!editorMinimized && savedStrategyId && (
                 <div className="flex items-center gap-0.5 bg-gray-100 rounded-md p-0.5">
                   <button
                     onClick={(e) => { e.stopPropagation(); setEditorTab('code'); }}
@@ -155,7 +153,7 @@ export default function FloatingCodeEditor({
               )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {!editorMinimized && strategyMode === 'custom' && playgroundStrategyId && (
+              {!editorMinimized && savedStrategyId && (
                 <div className="flex items-center gap-2">
                   {lastEditorSaveTime != null && (
                     <span className="text-[10px] text-gray-500" title={`Last saved ${new Date(lastEditorSaveTime).toLocaleString()}`}>
@@ -165,10 +163,10 @@ export default function FloatingCodeEditor({
                   <button
                     onClick={async (e) => {
                       e.stopPropagation();
-                      if (!playgroundStrategyId) return;
+                      if (!savedStrategyId) return;
                       setEditorSaveStatus('saving');
                       try {
-                        await api.updateStrategy(playgroundStrategyId, { code, parameters: strategyParams });
+                        await api.updateStrategy(savedStrategyId, { code, parameters: strategyParams });
                         const now = Date.now();
                         setLastEditorSaveTime(now);
                         setEditorSaveStatus('saved');
@@ -229,7 +227,7 @@ export default function FloatingCodeEditor({
                     <CodeEditor value={code} onChange={onCodeChange} />
                   </ErrorBoundary>
                 </div>
-              ) : strategyMode === 'custom' && playgroundStrategyId ? (
+              ) : savedStrategyId ? (
                 /* Version Control tab - GitHub-style, theme-aware (light/dark) */
                 <div className={`flex flex-col flex-1 min-h-0 overflow-hidden ${
                   effectiveChartTheme === 'light' ? 'bg-gray-100 border-t border-gray-200' : 'bg-gray-800/50'
@@ -260,14 +258,14 @@ export default function FloatingCodeEditor({
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
-                            if (!playgroundStrategyId || !commitTitleInput.trim()) return;
+                            if (!savedStrategyId || !commitTitleInput.trim()) return;
                             const msg = commitTitleInput.trim() + (commitDescriptionInput.trim() ? '\n\n' + commitDescriptionInput.trim() : '');
-                            api.updateStrategy(playgroundStrategyId, { code, parameters: strategyParams })
-                              .then(() => api.createVersion(playgroundStrategyId!, msg))
+                            api.updateStrategy(savedStrategyId, { code, parameters: strategyParams })
+                              .then(() => api.createVersion(savedStrategyId!, msg))
                               .then(() => {
                                 setCommitTitleInput('');
                                 setCommitDescriptionInput('');
-                                return api.listVersions(playgroundStrategyId!, 0, 10);
+                                return api.listVersions(savedStrategyId!, 0, 10);
                               })
                               .then((v) => { setVersionList(v); setVersionListHasMore(v.length >= 10); })
                               .catch((err: unknown) => { onError(extractApiError(err, 'Failed to commit')); });
@@ -276,14 +274,14 @@ export default function FloatingCodeEditor({
                       />
                       <button
                         onClick={async () => {
-                          if (!playgroundStrategyId || !commitTitleInput.trim()) return;
+                          if (!savedStrategyId || !commitTitleInput.trim()) return;
                           try {
                             const msg = commitTitleInput.trim() + (commitDescriptionInput.trim() ? '\n\n' + commitDescriptionInput.trim() : '');
-                            await api.updateStrategy(playgroundStrategyId, { code, parameters: strategyParams });
-                            await api.createVersion(playgroundStrategyId, msg);
+                            await api.updateStrategy(savedStrategyId, { code, parameters: strategyParams });
+                            await api.createVersion(savedStrategyId, msg);
                             setCommitTitleInput('');
                             setCommitDescriptionInput('');
-                            const versions = await api.listVersions(playgroundStrategyId, 0, 10);
+                            const versions = await api.listVersions(savedStrategyId, 0, 10);
                             setVersionList(versions);
                             setVersionListHasMore(versions.length >= 10);
                           } catch (err) {
@@ -364,9 +362,9 @@ export default function FloatingCodeEditor({
                               <div className="flex items-center gap-1 shrink-0">
                                     <button
                                       onClick={async () => {
-                                        if (!playgroundStrategyId) return;
+                                        if (!savedStrategyId) return;
                                         try {
-                                          const data = await api.restoreVersion(playgroundStrategyId, v.version);
+                                          const data = await api.restoreVersion(savedStrategyId, v.version);
                                           onCodeChange(data.code);
                                       onSetStrategyParams((data.parameters as Record<string, number>) ?? {});
                                           setEditorTab('code');
@@ -390,9 +388,9 @@ export default function FloatingCodeEditor({
                                     </button>
                                     <button
                                       onClick={async () => {
-                                        if (!playgroundStrategyId || !confirm(`Delete v${v.version}?`)) return;
+                                        if (!savedStrategyId || !confirm(`Delete v${v.version}?`)) return;
                                         try {
-                                          await api.deleteVersion(playgroundStrategyId, v.version);
+                                          await api.deleteVersion(savedStrategyId, v.version);
                                           setVersionList(prev => prev.filter(x => x.id !== v.id));
                                         } catch (err) {
                                           onError(extractApiError(err, 'Failed to delete version'));
@@ -416,10 +414,10 @@ export default function FloatingCodeEditor({
                           <button
                             type="button"
                             onClick={async () => {
-                              if (!playgroundStrategyId) return;
+                              if (!savedStrategyId) return;
                               setVersionLoading(true);
                               try {
-                                const more = await api.listVersions(playgroundStrategyId, versionList.length, 10);
+                                const more = await api.listVersions(savedStrategyId, versionList.length, 10);
                                 setVersionList(prev => [...prev, ...more]);
                                 setVersionListHasMore(more.length >= 10);
                               } catch (err) {
@@ -441,7 +439,7 @@ export default function FloatingCodeEditor({
                   </div>
                 </div>
               ) : (
-                <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">Select a custom strategy for version control</div>
+                <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">Save your strategy to enable version control</div>
               )}
             </div>
           )}

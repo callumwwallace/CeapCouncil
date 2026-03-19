@@ -1,25 +1,21 @@
 import { useState, useCallback } from 'react';
 import api from '@/lib/api';
 import type { OptimizeResults, WalkForwardResults, OosResults, MonteCarloResults, CpcvResults, FactorResults } from '@/types';
-import { STRATEGY_PARAMS, type StrategyTemplateKey } from './strategyTemplates';
 import type { BacktestConfig } from './types';
 import { extractApiError, pollTaskResult } from './utils';
+import { type ExtractedParam, buildParamRanges } from './extractParams';
 
 interface UseAnalyticsInput {
   config: BacktestConfig;
   code: string;
-  playgroundStrategyId: number | null;
-  strategyMode: 'templates' | 'custom';
-  selectedTemplate: StrategyTemplateKey;
+  paramDefs: ExtractedParam[];
   strategyParams: Record<string, number>;
 }
 
 export function useAnalytics({
   config,
   code,
-  playgroundStrategyId,
-  strategyMode,
-  selectedTemplate,
+  paramDefs,
   strategyParams,
 }: UseAnalyticsInput) {
   // Optimization
@@ -60,15 +56,16 @@ export function useAnalytics({
   // Shared
   const [lastBacktestId, setLastBacktestId] = useState<number | null>(null);
 
+  // ─── Optimization ──────────────────────────────────────────────────
+
   const handleRunOptimization = useCallback(async () => {
-    const paramDefs = STRATEGY_PARAMS[selectedTemplate];
     if (paramDefs.length === 0) return;
     setOptimizeLoading(true);
     setOptimizeResults(null);
     try {
       const activeConstraints = showConstraints && Object.keys(optConstraints).length > 0 ? optConstraints : undefined;
       const basePayload = {
-        ...(playgroundStrategyId ? { strategy_id: playgroundStrategyId } : { code }),
+        code,
         symbol: config.symbol,
         start_date: config.startDate,
         end_date: config.endDate,
@@ -82,10 +79,10 @@ export function useAnalytics({
         const ranges: Record<string, {low: number; high: number; step?: number; type?: string}> = {};
         for (const p of paramDefs) {
           ranges[p.key] = {
-            low: p.min ?? 0,
-            high: p.max ?? 999,
+            low: p.min,
+            high: p.max,
             step: p.step,
-            type: (p.step ?? 1) % 1 === 0 ? 'int' : 'float',
+            type: p.type === 'float' ? 'float' : 'int',
           };
         }
         return ranges;
@@ -138,8 +135,8 @@ export function useAnalytics({
         const { task_id } = await api.runHeatmap({
           ...basePayload,
           param_x: heatmapParamX, param_y: heatmapParamY,
-          x_range: { low: px.min ?? 0, high: px.max ?? 100, steps: 15 },
-          y_range: { low: py.min ?? 0, high: py.max ?? 100, steps: 15 },
+          x_range: { low: px.min, high: px.max, steps: 15 },
+          y_range: { low: py.min, high: py.max, steps: 15 },
           metric: 'sharpe_ratio',
           constraints: activeConstraints,
         });
@@ -149,12 +146,12 @@ export function useAnalytics({
         // Grid search
         const grid: Record<string, number[]> = {};
         for (const p of paramDefs) {
-          const current = strategyParams[p.key] ?? p.default;
-          const step = p.step ?? 1;
+          const current = strategyParams[p.key] ?? p.defaultValue;
+          const step = p.step;
           const vals: number[] = [];
           for (let i = -2; i <= 2; i++) {
             const v = +(current + i * step * 2).toFixed(4);
-            if (v >= (p.min ?? 0) && v <= (p.max ?? 999)) vals.push(v);
+            if (v >= p.min && v <= p.max) vals.push(v);
           }
           if (vals.length > 0) grid[p.key] = [...new Set(vals)];
         }
@@ -170,16 +167,16 @@ export function useAnalytics({
     } finally {
       setOptimizeLoading(false);
     }
-  }, [playgroundStrategyId, selectedTemplate, strategyParams, config, code, optimizeMethod, optConstraints, showConstraints, heatmapParamX, heatmapParamY, multiObjMetrics]);
+  }, [paramDefs, strategyParams, config, code, optimizeMethod, optConstraints, showConstraints, heatmapParamX, heatmapParamY, multiObjMetrics]);
+
+  // ─── Walk-forward ──────────────────────────────────────────────────
 
   const handleRunWalkForward = useCallback(async () => {
-    const useCode = strategyMode === 'templates';
-    if (!playgroundStrategyId && !useCode) return;
     setWalkForwardLoading(true);
     setWalkForwardResults(null);
     try {
       const { task_id } = await api.runWalkForward({
-        ...(playgroundStrategyId ? { strategy_id: playgroundStrategyId } : { code }),
+        code,
         symbol: config.symbol,
         start_date: config.startDate,
         end_date: config.endDate,
@@ -200,16 +197,17 @@ export function useAnalytics({
     } finally {
       setWalkForwardLoading(false);
     }
-  }, [playgroundStrategyId, strategyMode, code, config, walkForwardPurgeBars, walkForwardWindowMode]);
+  }, [code, config, walkForwardPurgeBars, walkForwardWindowMode]);
+
+  // ─── Out-of-sample ─────────────────────────────────────────────────
 
   const handleRunOos = useCallback(async () => {
-    const useCode = strategyMode === 'templates';
-    if (!playgroundStrategyId && !useCode) return;
     setOosLoading(true);
     setOosResults(null);
     try {
+      const paramRanges = paramDefs.length > 0 ? buildParamRanges(paramDefs) : undefined;
       const { task_id } = await api.runOosValidation({
-        ...(playgroundStrategyId ? { strategy_id: playgroundStrategyId } : { code }),
+        code,
         symbol: config.symbol,
         start_date: config.startDate,
         end_date: config.endDate,
@@ -218,7 +216,7 @@ export function useAnalytics({
         slippage: config.slippage / 100,
         oos_ratio: 0.3,
         n_folds: oosNfolds,
-        param_ranges: strategyMode === 'templates' ? { fast: { low: 5, high: 30, type: 'int' }, slow: { low: 20, high: 100, type: 'int' } } : undefined,
+        param_ranges: paramRanges,
         n_trials: 30,
         interval: config.interval,
       });
@@ -229,16 +227,17 @@ export function useAnalytics({
     } finally {
       setOosLoading(false);
     }
-  }, [playgroundStrategyId, strategyMode, code, config, oosNfolds]);
+  }, [code, config, oosNfolds, paramDefs]);
+
+  // ─── CPCV ──────────────────────────────────────────────────────────
 
   const handleRunCpcv = useCallback(async () => {
-    const useCode = strategyMode === 'templates';
-    if (!playgroundStrategyId && !useCode) return;
     setCpcvLoading(true);
     setCpcvResults(null);
     try {
+      const paramRanges = paramDefs.length > 0 ? buildParamRanges(paramDefs) : undefined;
       const { task_id } = await api.runCpcv({
-        ...(playgroundStrategyId ? { strategy_id: playgroundStrategyId } : { code }),
+        code,
         symbol: config.symbol,
         start_date: config.startDate,
         end_date: config.endDate,
@@ -249,7 +248,7 @@ export function useAnalytics({
         n_test_groups: 2,
         purge_bars: cpcvPurgeBars,
         embargo_bars: 0,
-        param_ranges: strategyMode === 'templates' ? { fast: { low: 5, high: 30, type: 'int' }, slow: { low: 20, high: 100, type: 'int' } } : undefined,
+        param_ranges: paramRanges,
         n_trials: 30,
         interval: config.interval,
       });
@@ -260,7 +259,9 @@ export function useAnalytics({
     } finally {
       setCpcvLoading(false);
     }
-  }, [playgroundStrategyId, strategyMode, code, config, cpcvNGroups, cpcvPurgeBars]);
+  }, [code, config, cpcvNGroups, cpcvPurgeBars, paramDefs]);
+
+  // ─── Factor attribution ────────────────────────────────────────────
 
   const handleRunFactorAttribution = useCallback(async () => {
     if (!lastBacktestId) return;
@@ -276,6 +277,8 @@ export function useAnalytics({
       setFactorLoading(false);
     }
   }, [lastBacktestId]);
+
+  // ─── Monte Carlo ───────────────────────────────────────────────────
 
   const handleRunMonteCarlo = useCallback(async () => {
     if (!lastBacktestId) return;
