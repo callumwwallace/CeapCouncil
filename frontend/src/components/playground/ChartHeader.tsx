@@ -93,7 +93,7 @@ export default function ChartHeader({
         {isRunning ? (
           <button
             onClick={onCancel}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-md text-amber-400 hover:bg-amber-900/30 border border-amber-700/50 text-sm font-medium"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-md text-amber-600 hover:bg-amber-50 border border-amber-300 text-sm font-medium"
           >
             <Loader2 className="h-4 w-4 animate-spin" />
             Cancel
@@ -109,9 +109,9 @@ export default function ChartHeader({
             Run
           </button>
         )}
-        <div className="h-4 w-px bg-gray-600" aria-hidden />
+        <div className="h-4 w-px bg-gray-200" aria-hidden />
         {onReset && (
-          <button onClick={onReset} className="p-2 rounded text-gray-500 hover:text-gray-300 hover:bg-gray-700/60 transition" title="Reset">
+          <button onClick={onReset} className="p-2 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition" title="Reset">
             <RotateCcw className="h-4 w-4" />
           </button>
         )}

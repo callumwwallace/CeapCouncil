@@ -24,6 +24,12 @@ import {
   ForumActivityItem,
   ForumSearchResult,
   NotificationResponse,
+  OptimizeResults,
+  WalkForwardResults,
+  OosResults,
+  MonteCarloResults,
+  CpcvResults,
+  FactorResults,
 } from '@/types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
@@ -372,12 +378,12 @@ class ApiClient {
     return response.data;
   }
 
-  async getOosResult(taskId: string): Promise<any> {
+  async getOosResult(taskId: string): Promise<OosResults & { status: string }> {
     const response = await this.client.get(`/backtests/oos-validate/${taskId}`);
     return response.data;
   }
 
-  async getOptimizationResult(taskId: string): Promise<any> {
+  async getOptimizationResult(taskId: string): Promise<OptimizeResults & { status: string }> {
     const response = await this.client.get(`/backtests/optimize/${taskId}`);
     return response.data;
   }
@@ -393,7 +399,7 @@ class ApiClient {
     return response.data;
   }
 
-  async getWalkForwardResult(taskId: string): Promise<any> {
+  async getWalkForwardResult(taskId: string): Promise<WalkForwardResults & { status: string }> {
     const response = await this.client.get(`/backtests/walk-forward/${taskId}`);
     return response.data;
   }
@@ -404,7 +410,7 @@ class ApiClient {
     return response.data;
   }
 
-  async getMonteCarloResult(taskId: string): Promise<any> {
+  async getMonteCarloResult(taskId: string): Promise<MonteCarloResults & { status: string }> {
     const response = await this.client.get(`/backtests/monte-carlo/${taskId}`);
     return response.data;
   }
@@ -420,7 +426,7 @@ class ApiClient {
     return response.data;
   }
 
-  async getCpcvResult(taskId: string): Promise<any> {
+  async getCpcvResult(taskId: string): Promise<CpcvResults & { status: string }> {
     const response = await this.client.get(`/backtests/cpcv/${taskId}`);
     return response.data;
   }
@@ -431,7 +437,7 @@ class ApiClient {
     return response.data;
   }
 
-  async getFactorAttributionResult(taskId: string): Promise<any> {
+  async getFactorAttributionResult(taskId: string): Promise<FactorResults & { status: string }> {
     const response = await this.client.get(`/backtests/factor-attribution/${taskId}`);
     return response.data;
   }

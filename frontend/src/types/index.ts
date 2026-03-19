@@ -403,3 +403,85 @@ export interface RegisterData {
   password: string;
   full_name?: string;
 }
+
+// Analytics result types
+
+export interface OptimizeResults {
+  status?: string;
+  error?: string;
+  results?: Array<{
+    params: Record<string, number>;
+    sharpe_ratio?: number;
+    total_return?: number;
+    max_drawdown?: number;
+    [key: string]: unknown;
+  }>;
+  heatmap?: Array<{ x: number; y: number; value: number }>;
+}
+
+export interface WalkForwardResults {
+  status?: string;
+  error?: string;
+  avg_oos_return?: number;
+  windows?: Array<{ train_start: string; train_end: string; oos_start: string; oos_end: string; oos_return: number; oos_sharpe: number }>;
+  splits?: Array<{ train_start: string; train_end: string; oos_start: string; oos_end: string; oos_return: number; oos_sharpe: number }>;
+}
+
+export interface OosResults {
+  status?: string;
+  error?: string;
+  is_result?: { total_return: number; sharpe_ratio?: number } | null;
+  is_period?: string;
+  is_sharpe?: number | null;
+  oos_result?: { total_return: number; sharpe_ratio?: number } | null;
+  oos_period?: string;
+  oos_sharpe?: number | null;
+  n_folds?: number;
+  oos_sharpe_mean?: number | null;
+  oos_sharpe_std?: number | null;
+  oos_return_mean?: number | null;
+  oos_return_std?: number | null;
+  multiple_testing_note?: string | null;
+  overfit_score?: number | null;
+  best_params?: Record<string, number> | null;
+}
+
+export interface MonteCarloResults {
+  status?: string;
+  error?: string;
+  percentiles?: Record<string, number>;
+}
+
+export interface CpcvResults {
+  status?: string;
+  error?: string;
+  valid_paths?: number;
+  total_paths?: number;
+  oos_sharpe_mean?: number | null;
+  oos_sharpe_std?: number | null;
+  oos_sharpe_median?: number | null;
+  oos_return_mean?: number | null;
+  train_sharpe_mean?: number | null;
+  prob_oos_loss?: number | null;
+  overfit_score?: number | null;
+  paths?: Array<{ path_id: number; oos_sharpe: number; oos_return: number }>;
+}
+
+export interface FactorResults {
+  status?: string;
+  error?: string;
+  alpha_significant?: boolean;
+  alpha_annual_pct?: number | null;
+  alpha_t_stat?: number | null;
+  alpha_p_value?: number | null;
+  r_squared?: number | null;
+  strategy_annual_return_pct?: number | null;
+  n_observations?: number | null;
+  factors?: Array<{
+    name: string;
+    coefficient: number;
+    t_stat: number;
+    p_value: number;
+    exposure_pct: number;
+  }>;
+}
