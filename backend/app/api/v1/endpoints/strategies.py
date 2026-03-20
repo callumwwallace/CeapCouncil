@@ -218,6 +218,28 @@ async def list_my_strategies(
     return result.scalars().all()
 
 
+@router.get("/embed/{share_token}", response_model=StrategyResponse)
+async def get_strategy_by_token(
+    share_token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Token-based lookup for forum embed cards. The share_token is a UUID
+    that cannot be guessed. Only returns data for public strategies."""
+    result = await db.execute(select(Strategy).where(Strategy.share_token == share_token))
+    strategy = result.scalar_one_or_none()
+
+    if not strategy:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strategy not found")
+
+    if not strategy.is_public:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Strategy is private")
+
+    strategy.view_count += 1
+    await db.flush()
+
+    return strategy
+
+
 @router.get("/{strategy_id}", response_model=StrategyResponse)
 async def get_strategy(
     strategy_id: int,

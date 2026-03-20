@@ -213,6 +213,7 @@ export default function PlaygroundPage() {
   const [uiScale, setUiScale] = useState(1); // 0.75–1.25, applied to sidebars only (not chart)
   const [showCodeEditor, setShowCodeEditor] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [lastBacktestShareToken, setLastBacktestShareToken] = useState<string | null>(null);
   const runCancelledRef = useRef(false);
   const playgroundRef = useRef<HTMLDivElement>(null);
   const chartAreaRef = useRef<HTMLDivElement>(null);
@@ -420,6 +421,7 @@ export default function PlaygroundPage() {
         
         if (result.status === 'completed') {
           setLastBacktestId(result.id);
+          setLastBacktestShareToken(result.share_token);
           const r = result.results;
           // Use real benchmark from backend (buy & hold over actual market data)
           const benchmarkReturn = r?.benchmark_return ?? undefined;
@@ -903,6 +905,8 @@ export default function PlaygroundPage() {
               expanded={resultsBarExpanded}
               onToggle={() => setResultsBarExpanded((v) => !v)}
               onExport={handleExportResults}
+              backtestShareToken={lastBacktestShareToken}
+              symbol={config.symbol}
               renderContent={() => (
                 <ResultsTabContent
                   results={results}

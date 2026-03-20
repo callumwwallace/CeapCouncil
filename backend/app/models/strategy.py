@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from sqlalchemy import String, Text, Boolean, DateTime, ForeignKey, Integer, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -9,6 +10,7 @@ class Strategy(Base):
     __tablename__ = "strategies"
     
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    share_token: Mapped[str] = mapped_column(String(36), unique=True, index=True, default=lambda: str(uuid.uuid4()))
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     code: Mapped[str] = mapped_column(Text, nullable=False)

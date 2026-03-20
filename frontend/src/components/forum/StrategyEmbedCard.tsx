@@ -4,23 +4,24 @@ import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-  GitBranch, Code2, Loader2, X, Play, Copy, Check,
+  GitBranch, Code2, Loader2, Play, Copy, Check,
   ChevronDown, ChevronUp, Eye, Share2,
 } from 'lucide-react';
 import api from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 
 interface StrategyEmbedCardProps {
-  strategyId: number;
+  shareToken: string;
   title: string;
   className?: string;
 }
 
-export default function StrategyEmbedCard({ strategyId, title, className = '' }: StrategyEmbedCardProps) {
+export default function StrategyEmbedCard({ shareToken, title, className = '' }: StrategyEmbedCardProps) {
   const router = useRouter();
   const { isAuthenticated } = useAuthStore();
   const [expanded, setExpanded] = useState(false);
   const [code, setCode] = useState<string | null>(null);
+  const [strategyId, setStrategyId] = useState<number | null>(null);
   const [codeLoading, setCodeLoading] = useState(false);
   const [codeError, setCodeError] = useState<string | null>(null);
   const [forking, setForking] = useState(false);
@@ -34,14 +35,17 @@ export default function StrategyEmbedCard({ strategyId, title, className = '' }:
     setCodeError(null);
     setCodeLoading(true);
     api
-      .getStrategy(strategyId)
-      .then((s) => setCode(s.code))
+      .getStrategyByToken(shareToken)
+      .then((s) => {
+        setCode(s.code);
+        setStrategyId(s.id);
+      })
       .catch((err) => {
         const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
         setCodeError(typeof msg === 'string' ? msg : 'Could not load strategy — it may be private');
       })
       .finally(() => setCodeLoading(false));
-  }, [strategyId, code]);
+  }, [shareToken, code]);
 
   const handleToggleCode = () => {
     if (!expanded) loadCode();
@@ -49,7 +53,7 @@ export default function StrategyEmbedCard({ strategyId, title, className = '' }:
   };
 
   const handleFork = async () => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !strategyId) return;
     setForking(true);
     setForkSuccess(null);
     setForkError(null);
@@ -74,9 +78,10 @@ export default function StrategyEmbedCard({ strategyId, title, className = '' }:
       // Need to fetch first
       setCodeLoading(true);
       api
-        .getStrategy(strategyId)
+        .getStrategyByToken(shareToken)
         .then((s) => {
           setCode(s.code);
+          setStrategyId(s.id);
           sessionStorage.setItem('playground_inject_code', s.code);
           sessionStorage.setItem('playground_inject_template', 'custom');
           router.push('/playground');
@@ -97,8 +102,8 @@ export default function StrategyEmbedCard({ strategyId, title, className = '' }:
   };
 
   const handleCopyLink = () => {
-    const url = `${window.location.origin}/playground?strategy=${strategyId}`;
-    navigator.clipboard.writeText(url);
+    const embed = `[strategy:${shareToken}|${title}]`;
+    navigator.clipboard.writeText(embed);
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 2000);
   };
@@ -121,14 +126,13 @@ export default function StrategyEmbedCard({ strategyId, title, className = '' }:
           </div>
           <div className="min-w-0">
             <div className="font-semibold text-gray-900 text-sm truncate">{title}</div>
-            <div className="text-[10px] text-gray-400">Strategy #{strategyId}</div>
           </div>
         </div>
         <button
           type="button"
           onClick={handleCopyLink}
           className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition"
-          title="Copy share link"
+          title="Copy embed"
         >
           {linkCopied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Share2 className="h-3.5 w-3.5" />}
         </button>
@@ -153,10 +157,10 @@ export default function StrategyEmbedCard({ strategyId, title, className = '' }:
               Open in Playground
             </button>
 
-            {/* Fork */}
+            {/* Fork — only enabled after code is loaded */}
             <button
               type="button"
-              onClick={handleFork}
+              onClick={() => { if (!strategyId) { loadCode(); } else { handleFork(); } }}
               disabled={forking}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 transition disabled:opacity-50"
             >
@@ -206,7 +210,7 @@ export default function StrategyEmbedCard({ strategyId, title, className = '' }:
         <div className="mx-4 mb-3 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-700">
           Forked as &quot;{forkSuccess.title}&quot;.{' '}
           <Link href="/playground" className="font-medium underline hover:text-emerald-900">
-            Open Playground →
+            Open Playground &rarr;
           </Link>
         </div>
       )}
@@ -246,13 +250,13 @@ export default function StrategyEmbedCard({ strategyId, title, className = '' }:
               </pre>
               {codeLines > 0 && (
                 <div className="flex items-center justify-between px-4 py-2 bg-gray-800 text-[10px] text-gray-400">
-                  <span>{codeLines} lines · Python</span>
+                  <span>{codeLines} lines &middot; Python</span>
                   <button
                     type="button"
                     onClick={handleOpenInPlayground}
                     className="text-emerald-400 hover:text-emerald-300 font-medium transition"
                   >
-                    Run in Playground →
+                    Run in Playground &rarr;
                   </button>
                 </div>
               )}

@@ -228,6 +228,11 @@ class ApiClient {
     return response.data;
   }
 
+  async getStrategyByToken(shareToken: string): Promise<Strategy> {
+    const response = await this.client.get<Strategy>(`/strategies/embed/${shareToken}`);
+    return response.data;
+  }
+
   async createStrategy(data: StrategyCreate): Promise<Strategy> {
     const response = await this.client.post<Strategy>('/strategies', data);
     return response.data;
@@ -274,6 +279,11 @@ class ApiClient {
 
   async createBacktestWithCode(data: Omit<BacktestCreate, 'strategy_id'> & { code: string }): Promise<Backtest> {
     const response = await this.client.post<Backtest>('/backtests/with-code', data);
+    return response.data;
+  }
+
+  async getBacktestEmbed(shareToken: string): Promise<import('@/types').BacktestEmbed> {
+    const response = await this.client.get<import('@/types').BacktestEmbed>(`/backtests/embed/${shareToken}`);
     return response.data;
   }
 

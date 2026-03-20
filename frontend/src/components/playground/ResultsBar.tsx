@@ -1,6 +1,7 @@
 'use client';
 
-import { ChevronDown, ChevronUp, Download } from 'lucide-react';
+import { useState } from 'react';
+import { ChevronDown, ChevronUp, Download, Share2, Check } from 'lucide-react';
 
 export interface ResultsBarProps {
   results: {
@@ -16,13 +17,26 @@ export interface ResultsBarProps {
   expanded: boolean;
   onToggle: () => void;
   onExport?: () => void;
+  /** Backtest share token for forum embed */
+  backtestShareToken?: string | null;
+  /** Symbol for the embed syntax */
+  symbol?: string;
   children?: React.ReactNode; // Full results content when expanded
   renderContent?: () => React.ReactNode; // Alternative: render prop for full content
 }
 
 /** TradingView-style results bar: collapsed shows summary, expanded shows full analysis */
-export default function ResultsBar({ results, expanded, onToggle, onExport, children, renderContent }: ResultsBarProps) {
+export default function ResultsBar({ results, expanded, onToggle, onExport, backtestShareToken, symbol, children, renderContent }: ResultsBarProps) {
   const netProfit = results.final_value - results.initial_capital;
+  const [shareCopied, setShareCopied] = useState(false);
+
+  const handleShareToForum = () => {
+    if (!backtestShareToken || !symbol) return;
+    const embed = `[backtest:${backtestShareToken}|${symbol}]`;
+    navigator.clipboard.writeText(embed);
+    setShareCopied(true);
+    setTimeout(() => setShareCopied(false), 2500);
+  };
 
   return (
     <div className="flex flex-col min-h-0 border-t border-gray-200 bg-white flex-shrink-0">
@@ -67,16 +81,28 @@ export default function ResultsBar({ results, expanded, onToggle, onExport, chil
           </div>
           {expanded ? <ChevronDown className="h-4 w-4 text-gray-500 shrink-0" /> : <ChevronUp className="h-4 w-4 text-gray-500 shrink-0" />}
         </button>
-        {onExport && (
-          <button
-            type="button"
-            onClick={onExport}
-            className="p-1.5 rounded text-gray-500 hover:text-emerald-600 hover:bg-gray-100 transition shrink-0"
-            title="Export report"
-          >
-            <Download className="h-4 w-4" />
-          </button>
-        )}
+        <div className="flex items-center gap-1 shrink-0">
+          {backtestShareToken && symbol && (
+            <button
+              type="button"
+              onClick={handleShareToForum}
+              className="p-1.5 rounded text-gray-500 hover:text-emerald-600 hover:bg-gray-100 transition"
+              title={shareCopied ? 'Embed copied! Paste in a forum post' : 'Copy forum embed'}
+            >
+              {shareCopied ? <Check className="h-4 w-4 text-emerald-500" /> : <Share2 className="h-4 w-4" />}
+            </button>
+          )}
+          {onExport && (
+            <button
+              type="button"
+              onClick={onExport}
+              className="p-1.5 rounded text-gray-500 hover:text-emerald-600 hover:bg-gray-100 transition"
+              title="Export report"
+            >
+              <Download className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Expanded content - explicit height range for reliable scroll */}

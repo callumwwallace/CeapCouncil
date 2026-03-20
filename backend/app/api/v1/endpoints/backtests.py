@@ -11,7 +11,7 @@ from app.api.deps import get_current_active_user
 from app.models.user import User
 from app.models.backtest import Backtest
 from app.models.strategy import Strategy
-from app.schemas.backtest import BacktestCreate, BacktestResponse, BacktestWithCodeCreate
+from app.schemas.backtest import BacktestCreate, BacktestResponse, BacktestWithCodeCreate, BacktestEmbedResponse
 from app.tasks.backtest import (
     run_backtest_task, run_optimization_task, run_bayesian_optimization_task,
     run_genetic_optimization_task, run_multiobjective_optimization_task,
@@ -242,6 +242,26 @@ async def list_my_backtests(
         .order_by(Backtest.created_at.desc())
     )
     return result.scalars().all()
+
+
+@router.get("/embed/{share_token}", response_model=BacktestEmbedResponse)
+async def get_backtest_embed(
+    share_token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Token-based endpoint for forum embed cards. The share_token is a UUID
+    that cannot be guessed, so no auth is required — the token IS the
+    authorization. Only returns summary metrics (no code, no full results)."""
+    result = await db.execute(select(Backtest).where(Backtest.share_token == share_token))
+    backtest = result.scalar_one_or_none()
+
+    if not backtest:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backtest not found")
+
+    if backtest.status != "completed":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backtest not available")
+
+    return backtest
 
 
 @router.get("/{backtest_id}", response_model=BacktestResponse)

@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import StrategyEmbedCard from './StrategyEmbedCard';
+import BacktestEmbedCard from './BacktestEmbedCard';
 
 interface MarkdownContentProps {
   content: string;
@@ -28,23 +29,37 @@ function linkifyMentions(text: string): string {
   return text.replace(/@([a-zA-Z0-9_]+)/g, (_, username) => `[@${username}](/profile/${username})`);
 }
 
-/** Matches [strategy:ID|Title] or [strategy:ID:Title] - pipe/colon separates ID from title. */
-const STRATEGY_EMBED_REGEX = /\[strategy:(\d+)[|:]([^\]]*)\]/g;
+/** Combined regex for strategy and backtest embeds.
+ *  Accepts both old integer IDs and new UUID share tokens:
+ *  [strategy:abc-123|Title] or [backtest:def-456|AAPL] */
+const EMBED_REGEX = /\[(strategy|backtest):([a-zA-Z0-9_-]+)[|:]([^\]]*)\]/g;
+
+type EmbedPart =
+  | { type: 'text'; value: string }
+  | { type: 'strategy'; token: string; title: string }
+  | { type: 'backtest'; token: string; symbol: string };
 
 export default function MarkdownContent({ content, className = '' }: MarkdownContentProps) {
   if (!content?.trim()) return null;
 
-  const parts: Array<{ type: 'text'; value: string } | { type: 'strategy'; id: number; title: string }> = [];
+  const parts: EmbedPart[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
-  STRATEGY_EMBED_REGEX.lastIndex = 0;
-  while ((match = STRATEGY_EMBED_REGEX.exec(content)) !== null) {
+  EMBED_REGEX.lastIndex = 0;
+  while ((match = EMBED_REGEX.exec(content)) !== null) {
     if (match.index > lastIndex) {
       parts.push({ type: 'text', value: content.slice(lastIndex, match.index) });
     }
-    parts.push({ type: 'strategy', id: parseInt(match[1], 10), title: match[2]?.trim() || 'Strategy' });
-    lastIndex = STRATEGY_EMBED_REGEX.lastIndex;
+    const kind = match[1] as 'strategy' | 'backtest';
+    const token = match[2];
+    const label = match[3]?.trim() || (kind === 'strategy' ? 'Strategy' : 'Backtest');
+    if (kind === 'strategy') {
+      parts.push({ type: 'strategy', token, title: label });
+    } else {
+      parts.push({ type: 'backtest', token, symbol: label });
+    }
+    lastIndex = EMBED_REGEX.lastIndex;
   }
   if (lastIndex < content.length) {
     parts.push({ type: 'text', value: content.slice(lastIndex) });
@@ -101,7 +116,10 @@ export default function MarkdownContent({ content, className = '' }: MarkdownCon
             </div>
           );
         }
-        return <StrategyEmbedCard key={i} strategyId={part.id} title={part.title} />;
+        if (part.type === 'strategy') {
+          return <StrategyEmbedCard key={i} shareToken={part.token} title={part.title} />;
+        }
+        return <BacktestEmbedCard key={i} shareToken={part.token} symbol={part.symbol} />;
       })}
     </div>
   );

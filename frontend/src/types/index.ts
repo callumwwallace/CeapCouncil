@@ -24,6 +24,7 @@ export interface NotificationPreferences {
 // Strategy types
 export interface Strategy {
   id: number;
+  share_token: string;
   title: string;
   description: string | null;
   code: string;
@@ -75,6 +76,7 @@ export interface DrawdownPoint {
 
 export interface Backtest {
   id: number;
+  share_token: string;
   strategy_id: number | null;
   user_id: number;
   symbol: string;
@@ -157,6 +159,26 @@ export interface BacktestResults {
   risk_violations?: Array<{timestamp: string; rule: string; description: string; action: string}>;
   custom_charts?: Record<string, Array<{date: string; series: string; value: number}>>;
   alerts?: Array<{timestamp: string; level: string; message: string; data?: any}>;
+}
+
+export interface BacktestEmbed {
+  id: number;
+  user_id: number;
+  symbol: string;
+  start_date: string;
+  end_date: string;
+  initial_capital: number;
+  parameters: Record<string, unknown>;
+  status: BacktestStatus;
+  total_return: number | null;
+  sharpe_ratio: number | null;
+  max_drawdown: number | null;
+  win_rate: number | null;
+  total_trades: number | null;
+  sortino_ratio: number | null;
+  profit_factor: number | null;
+  calmar_ratio: number | null;
+  created_at: string;
 }
 
 export interface BacktestCreate {

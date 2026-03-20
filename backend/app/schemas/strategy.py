@@ -24,6 +24,7 @@ class StrategyUpdate(BaseModel):
 
 class StrategyResponse(StrategyBase):
     id: int
+    share_token: str
     author_id: int
     vote_count: int
     view_count: int

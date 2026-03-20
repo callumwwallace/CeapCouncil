@@ -91,6 +91,7 @@ class BacktestWithCodeCreate(BaseModel):
 
 class BacktestResponse(BaseModel):
     id: int
+    share_token: str
     strategy_id: int | None = None
     user_id: int
     symbol: str
@@ -122,6 +123,35 @@ class BacktestResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
+class BacktestEmbedResponse(BaseModel):
+    """Lightweight response for forum embeds — no code, no full results JSON."""
+    id: int
+    user_id: int
+    symbol: str
+    start_date: datetime
+    end_date: datetime
+    initial_capital: float
+    parameters: dict
+    status: BacktestStatus
+
+    # Summary metrics only
+    total_return: float | None
+    sharpe_ratio: float | None
+    max_drawdown: float | None
+    win_rate: float | None
+    total_trades: int | None
+
+    # Extended metrics
+    sortino_ratio: float | None = None
+    profit_factor: float | None = None
+    calmar_ratio: float | None = None
+
+    created_at: datetime
 
     class Config:
         from_attributes = True

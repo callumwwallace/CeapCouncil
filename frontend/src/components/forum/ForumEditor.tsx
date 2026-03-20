@@ -21,6 +21,7 @@ import MarkdownContent from './MarkdownContent';
 
 export interface StrategyOption {
   id: number;
+  share_token: string;
   title: string;
 }
 
@@ -33,7 +34,7 @@ interface ForumEditorProps {
   disabled?: boolean;
   showPreview?: boolean;
   strategies?: StrategyOption[];
-  backtests?: { id: number; symbol: string; total_return: number | null; sharpe_ratio: number | null }[];
+  backtests?: { id: number; share_token: string; symbol: string; total_return: number | null; sharpe_ratio: number | null }[];
 }
 
 function ToolbarButton({
@@ -169,15 +170,13 @@ export default function ForumEditor({
   const handleMention = () => insertAtCursor('@');
 
   const handleShareStrategy = (s: StrategyOption) => {
-    const embed = `[strategy:${s.id}|${s.title}]`;
+    const embed = `[strategy:${s.share_token}|${s.title}]`;
     insertAtCursor(embed);
     setStrategyDropdownOpen(false);
   };
 
-  const handleShareBacktest = (bt: { id: number; symbol: string; total_return: number | null; sharpe_ratio: number | null }) => {
-    const returnStr = bt.total_return != null ? `${(bt.total_return * 100).toFixed(1)}%` : 'N/A';
-    const sharpeStr = bt.sharpe_ratio != null ? bt.sharpe_ratio.toFixed(2) : 'N/A';
-    const embed = `\n> **My Backtest Results** (${bt.symbol})\n> - Total Return: ${returnStr}\n> - Sharpe Ratio: ${sharpeStr}\n\n`;
+  const handleShareBacktest = (bt: { id: number; share_token: string; symbol: string; total_return: number | null; sharpe_ratio: number | null }) => {
+    const embed = `[backtest:${bt.share_token}|${bt.symbol}]`;
     insertAtCursor(embed);
     setBacktestDropdownOpen(false);
   };

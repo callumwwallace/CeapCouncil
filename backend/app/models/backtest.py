@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from sqlalchemy import String, Text, DateTime, ForeignKey, Float, Enum as SQLEnum, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -17,6 +18,7 @@ class Backtest(Base):
     __tablename__ = "backtests"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    share_token: Mapped[str] = mapped_column(String(36), unique=True, index=True, default=lambda: str(uuid.uuid4()))
 
     # Configuration
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)

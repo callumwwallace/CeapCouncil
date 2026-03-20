@@ -40,15 +40,15 @@ export default function CommunityThreadPage() {
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [myStrategies, setMyStrategies] = useState<{ id: number; title: string }[]>([]);
-  const [myBacktests, setMyBacktests] = useState<{ id: number; symbol: string; total_return: number | null; sharpe_ratio: number | null }[]>([]);
+  const [myStrategies, setMyStrategies] = useState<{ id: number; share_token: string; title: string }[]>([]);
+  const [myBacktests, setMyBacktests] = useState<{ id: number; share_token: string; symbol: string; total_return: number | null; sharpe_ratio: number | null }[]>([]);
 
   useEffect(() => {
     if (isAuthenticated) {
-      api.getMyStrategies().then((s) => setMyStrategies(s.map((x) => ({ id: x.id, title: x.title })))).catch(() => {});
+      api.getMyStrategies().then((s) => setMyStrategies(s.map((x) => ({ id: x.id, share_token: x.share_token, title: x.title })))).catch(() => {});
       api.getMyBacktests().then((bts) => setMyBacktests(
         bts.filter((b) => b.status === 'completed').slice(0, 20).map((b) => ({
-          id: b.id, symbol: b.symbol, total_return: b.total_return, sharpe_ratio: b.sharpe_ratio,
+          id: b.id, share_token: b.share_token, symbol: b.symbol, total_return: b.total_return, sharpe_ratio: b.sharpe_ratio,
         }))
       )).catch(() => {});
     }
