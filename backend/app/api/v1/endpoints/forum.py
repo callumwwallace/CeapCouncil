@@ -8,7 +8,7 @@ from sqlalchemy import select, func, desc, or_, and_
 from app.core.database import get_db
 from app.api.deps import get_current_active_user, get_current_user_optional
 from app.models.user import User
-from app.models.forum import ForumTopic, ForumThread, ForumPost, ThreadVote
+from app.models.forum import ForumTopic, ForumThread, ForumPost, ThreadVote, PostVote
 from app.models.notification import Notification
 from app.websocket.manager import manager
 from app.schemas.forum import (
@@ -21,6 +21,7 @@ from app.schemas.forum import (
     ForumPostUpdate,
     ForumSearchResult,
     ThreadVoteCreate,
+    PostVoteCreate,
     ProposalThreadCreate,
 )
 from app.core.limiter import limiter
@@ -214,7 +215,7 @@ async def list_topics(db: AsyncSession = Depends(get_db)):
 @router.get("/topics/{slug}/threads", response_model=list[ForumThreadSummary])
 async def list_threads(
     slug: str,
-    sort_by: str = Query("updated_at", pattern="^(updated_at|vote_score)$"),
+    sort_by: str = Query("updated_at", pattern="^(updated_at|created_at|vote_score)$"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -225,14 +226,18 @@ async def list_threads(
     if not topic:
         raise HTTPException(404, "Topic not found")
 
-    order_col = ForumThread.vote_score if sort_by == "vote_score" else ForumThread.updated_at
+    order_col = (
+        ForumThread.vote_score if sort_by == "vote_score"
+        else ForumThread.created_at if sort_by == "created_at"
+        else ForumThread.updated_at
+    )
     result = await db.execute(
         select(ForumThread, User.username, func.count(ForumPost.id).label("post_count"))
         .join(User, ForumThread.author_id == User.id)
         .outerjoin(ForumPost, ForumPost.thread_id == ForumThread.id)
         .where(ForumThread.topic_id == topic.id)
         .group_by(ForumThread.id, User.username)
-        .order_by(desc(order_col))
+        .order_by(desc(ForumThread.is_pinned), desc(order_col))
         .offset(skip)
         .limit(limit)
     )
@@ -259,6 +264,7 @@ async def list_threads(
             post_count=pc or 0,
             vote_score=thr.vote_score or 0,
             your_vote=user_votes.get(thr.id),
+            is_pinned=thr.is_pinned or False,
             proposal_data=thr.proposal_data,
             created_at=thr.created_at,
             updated_at=thr.updated_at,
@@ -317,6 +323,7 @@ async def create_thread(
         post_count=1,
         vote_score=0,
         your_vote=None,
+        is_pinned=False,
         proposal_data=thread.proposal_data,
         created_at=thread.created_at,
         updated_at=thread.updated_at,
@@ -420,6 +427,7 @@ async def create_proposal_thread(
         post_count=1,
         vote_score=0,
         your_vote=None,
+        is_pinned=False,
         proposal_data=thread.proposal_data,
         created_at=thread.created_at,
         updated_at=thread.updated_at,
@@ -459,6 +467,20 @@ async def get_thread(
         .where(ForumPost.thread_id == thread_id)
         .order_by(ForumPost.created_at)
     )
+    posts_data = posts_result.all()
+    post_ids = [p.id for p, _ in posts_data]
+
+    # Get user's votes on posts
+    post_vote_map: dict[int, int] = {}
+    if current_user and post_ids:
+        pv_result = await db.execute(
+            select(PostVote.post_id, PostVote.value).where(
+                PostVote.post_id.in_(post_ids),
+                PostVote.user_id == current_user.id,
+            )
+        )
+        post_vote_map = {r[0]: r[1] for r in pv_result.all()}
+
     posts = [
         ForumPostResponse(
             id=p.id,
@@ -466,10 +488,12 @@ async def get_thread(
             author_id=p.author_id,
             author_username=uname,
             content=p.content,
+            vote_score=p.vote_score or 0,
+            your_vote=post_vote_map.get(p.id),
             created_at=p.created_at,
             updated_at=p.updated_at,
         )
-        for p, uname in posts_result.all()
+        for p, uname in posts_data
     ]
 
     return ForumThreadDetail(
@@ -481,6 +505,7 @@ async def get_thread(
         post_count=len(posts),
         vote_score=thread.vote_score or 0,
         your_vote=your_vote,
+        is_pinned=thread.is_pinned or False,
         proposal_data=thread.proposal_data,
         created_at=thread.created_at,
         updated_at=thread.updated_at,
@@ -532,6 +557,68 @@ async def vote_thread(
         return {"vote_score": thread.vote_score or 0, "your_vote": data.value}
 
 
+@router.post("/posts/{post_id}/vote")
+async def vote_post(
+    post_id: int,
+    data: PostVoteCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upvote (+1), downvote (-1), or remove (0) vote on a post."""
+    post = await db.scalar(select(ForumPost).where(ForumPost.id == post_id))
+    if not post:
+        raise HTTPException(404, "Post not found")
+    if post.author_id == current_user.id:
+        raise HTTPException(400, "Cannot vote on your own post")
+
+    existing = await db.scalar(
+        select(PostVote).where(
+            PostVote.post_id == post_id,
+            PostVote.user_id == current_user.id,
+        )
+    )
+
+    if data.value == 0:
+        if existing:
+            post.vote_score = (post.vote_score or 0) - existing.value
+            await db.delete(existing)
+        await db.flush()
+        await db.refresh(post)
+        return {"vote_score": post.vote_score or 0, "your_vote": None}
+    elif existing:
+        old_val = existing.value
+        existing.value = data.value
+        post.vote_score = (post.vote_score or 0) - old_val + data.value
+        await db.flush()
+        await db.refresh(post)
+        return {"vote_score": post.vote_score or 0, "your_vote": data.value}
+    else:
+        vote = PostVote(post_id=post_id, user_id=current_user.id, value=data.value)
+        db.add(vote)
+        post.vote_score = (post.vote_score or 0) + data.value
+        await db.flush()
+        await db.refresh(post)
+        return {"vote_score": post.vote_score or 0, "your_vote": data.value}
+
+
+@router.post("/threads/{thread_id}/pin")
+async def toggle_pin_thread(
+    thread_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pin or unpin a thread. Only thread author or superuser can pin."""
+    thread = await db.scalar(select(ForumThread).where(ForumThread.id == thread_id))
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+    if not current_user.is_superuser:
+        raise HTTPException(403, "Only admins can pin threads")
+    thread.is_pinned = not thread.is_pinned
+    await db.flush()
+    await db.refresh(thread)
+    return {"is_pinned": thread.is_pinned}
+
+
 @router.post("/threads/{thread_id}/posts", response_model=ForumPostResponse, status_code=201)
 @limiter.limit("20/minute")
 async def create_post(
@@ -567,6 +654,8 @@ async def create_post(
         author_id=post.author_id,
         author_username=current_user.username,
         content=post.content,
+        vote_score=0,
+        your_vote=None,
         created_at=post.created_at,
         updated_at=post.updated_at,
     )
@@ -594,6 +683,8 @@ async def update_post(
         author_id=post.author_id,
         author_username=current_user.username,
         content=post.content,
+        vote_score=post.vote_score or 0,
+        your_vote=None,
         created_at=post.created_at,
         updated_at=post.updated_at,
     )

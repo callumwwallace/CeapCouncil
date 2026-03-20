@@ -6,7 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
 import type { ForumTopicResponse, ForumThreadSummary } from '@/types';
-import { ArrowLeft, MessageSquare, Plus, Loader2, ChevronUp, ChevronDown, Lightbulb, X } from 'lucide-react';
+import { ArrowLeft, MessageSquare, Plus, Loader2, Lightbulb, X, Pin } from 'lucide-react';
 import ForumEditor from '@/components/forum/ForumEditor';
 
 const PROPOSAL_TOPIC_SLUG = 'competition-ideas';
@@ -43,46 +43,18 @@ function formatDate(iso: string): string {
 function ThreadRow({
   t,
   topicId,
-  isProposalTopic,
-  onVote,
 }: {
   t: ForumThreadSummary;
   topicId: string;
-  isProposalTopic: boolean;
-  onVote: (threadId: number, value: 1 | -1 | 0) => void;
 }) {
-  const handleVote = (value: 1 | -1 | 0) => () => onVote(t.id, value);
-
   return (
     <div className="flex items-center gap-4 px-6 py-4 hover:bg-gray-50 transition-colors">
-      {isProposalTopic && (
-        <div className="flex flex-col items-center gap-0 w-12 flex-shrink-0">
-          <button
-            type="button"
-            onClick={handleVote(t.your_vote === 1 ? 0 : 1)}
-            className={`p-0.5 rounded hover:bg-gray-100 transition ${
-              t.your_vote === 1 ? 'text-emerald-600' : 'text-gray-400 hover:text-gray-600'
-            }`}
-            title="Upvote"
-          >
-            <ChevronUp className="h-5 w-5" />
-          </button>
-          <span className="text-sm font-medium text-gray-700 tabular-nums">{t.vote_score ?? 0}</span>
-          <button
-            type="button"
-            onClick={handleVote(t.your_vote === -1 ? 0 : -1)}
-            className={`p-0.5 rounded hover:bg-gray-100 transition ${
-              t.your_vote === -1 ? 'text-red-500' : 'text-gray-400 hover:text-gray-600'
-            }`}
-            title="Downvote"
-          >
-            <ChevronDown className="h-5 w-5" />
-          </button>
-        </div>
-      )}
       <Link href={`/community/${topicId}/${t.id}`} className="flex-1 min-w-0 flex items-center gap-4 group">
         <div className="flex-1 min-w-0">
-          <p className="font-medium text-gray-900 truncate group-hover:text-emerald-700">{t.title}</p>
+          <p className="font-medium text-gray-900 truncate group-hover:text-emerald-700 flex items-center gap-1.5">
+            {t.is_pinned && <Pin className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />}
+            <span className="truncate">{t.title}</span>
+          </p>
           <p className="text-sm text-gray-500">by {t.author_username}</p>
           {t.proposal_data && (
             <p className="text-xs text-gray-400 mt-0.5">
@@ -92,6 +64,9 @@ function ThreadRow({
           )}
         </div>
         <div className="flex items-center gap-6 flex-shrink-0">
+          {t.vote_score !== 0 && (
+            <span className="text-sm text-gray-500">{t.vote_score} votes</span>
+          )}
           <span className="text-sm text-gray-500">{t.post_count} posts</span>
           <span className="text-sm text-gray-400">{formatDate(t.updated_at)}</span>
         </div>
@@ -115,6 +90,8 @@ export default function CommunityTopicPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [myStrategies, setMyStrategies] = useState<{ id: number; title: string }[]>([]);
+  const [myBacktests, setMyBacktests] = useState<{ id: number; symbol: string; total_return: number | null; sharpe_ratio: number | null }[]>([]);
+  const [sortBy, setSortBy] = useState<'updated_at' | 'created_at' | 'vote_score'>('updated_at');
 
   // Proposal form state
   const [proposalSymbols, setProposalSymbols] = useState<string[]>(['SPY']);
@@ -131,14 +108,23 @@ export default function CommunityTopicPage() {
   useEffect(() => {
     if (isAuthenticated) {
       api.getMyStrategies().then((s) => setMyStrategies(s.map((x) => ({ id: x.id, title: x.title })))).catch(() => {});
+      api.getMyBacktests().then((bts) => setMyBacktests(
+        bts.filter((b) => b.status === 'completed').slice(0, 20).map((b) => ({
+          id: b.id, symbol: b.symbol, total_return: b.total_return, sharpe_ratio: b.sharpe_ratio,
+        }))
+      )).catch(() => {});
     }
   }, [isAuthenticated]);
+
+  // Set default sort when topic changes
+  useEffect(() => {
+    setSortBy(isProposalTopic ? 'vote_score' : 'updated_at');
+  }, [isProposalTopic]);
 
   useEffect(() => {
     if (!topicId) return;
     setLoading(true);
     setNotFound(false);
-    const sortBy = isProposalTopic ? 'vote_score' : 'updated_at';
     Promise.all([
       api.listForumTopics(),
       api.listForumThreads(topicId, { sort_by: sortBy }),
@@ -154,23 +140,7 @@ export default function CommunityTopicPage() {
       })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
-  }, [topicId, isProposalTopic]);
-
-  const handleVote = async (threadId: number, value: 1 | -1 | 0) => {
-    if (!isAuthenticated) return;
-    try {
-      const res = await api.voteForumThread(threadId, value);
-      setThreads((prev) =>
-        prev.map((t) =>
-          t.id === threadId
-            ? { ...t, vote_score: res.vote_score, your_vote: res.your_vote ?? undefined }
-            : t
-        )
-      );
-    } catch {
-      // Silently fail
-    }
-  };
+  }, [topicId, sortBy]);
 
   const handleCreateThread = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -291,6 +261,7 @@ export default function CommunityTopicPage() {
                   maxLength={10000}
                   disabled={submitting}
                   strategies={myStrategies}
+                  backtests={myBacktests}
                 />
               </div>
 
@@ -482,12 +453,31 @@ export default function CommunityTopicPage() {
         )}
 
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-6 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
-            <MessageSquare className="h-5 w-5 text-gray-500" />
-            <span className="font-medium text-gray-900">Threads</span>
-            {isProposalTopic && (
-              <span className="text-xs text-gray-500">(sorted by votes)</span>
-            )}
+          <div className="px-6 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="h-5 w-5 text-gray-500" />
+              <span className="font-medium text-gray-900">Threads</span>
+            </div>
+            <div className="flex items-center rounded-lg bg-gray-200 p-0.5">
+              {([
+                { value: 'updated_at', label: 'Latest' },
+                { value: 'created_at', label: 'Newest' },
+                { value: 'vote_score', label: 'Best' },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setSortBy(opt.value)}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition ${
+                    sortBy === opt.value
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-800'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
           {threads.length === 0 ? (
             <div className="p-12 text-center text-gray-500">
@@ -500,9 +490,6 @@ export default function CommunityTopicPage() {
               ) : (
                 <>
                   <p>No threads yet. Be the first to start a discussion!</p>
-                  {isProposalTopic && (
-                    <p className="text-sm mt-1">Top 5 proposals each week become hosted competitions.</p>
-                  )}
                   {isAuthenticated && (
                     <button
                       onClick={() => setShowNewThread(true)}
@@ -521,8 +508,6 @@ export default function CommunityTopicPage() {
                   key={t.id}
                   t={t}
                   topicId={topicId}
-                  isProposalTopic={isProposalTopic}
-                  onVote={handleVote}
                 />
               ))}
             </div>

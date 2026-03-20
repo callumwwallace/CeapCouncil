@@ -1,7 +1,7 @@
 """Forum models: topics, threads, posts."""
 
 from datetime import datetime
-from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, JSON, UniqueConstraint
+from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, JSON, UniqueConstraint, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -32,6 +32,7 @@ class ForumThread(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     vote_score: Mapped[int] = mapped_column(Integer, default=0)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     proposal_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     topic: Mapped["ForumTopic"] = relationship("ForumTopic", back_populates="threads")
@@ -51,11 +52,13 @@ class ForumPost(Base):
     thread_id: Mapped[int] = mapped_column(ForeignKey("forum_threads.id"), nullable=False)
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    vote_score: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     thread: Mapped["ForumThread"] = relationship("ForumThread", back_populates="posts")
     author: Mapped["User"] = relationship("User", back_populates="forum_posts")
+    post_votes: Mapped[list["PostVote"]] = relationship("PostVote", back_populates="post", cascade="all, delete-orphan")
 
 
 class ThreadVote(Base):
@@ -72,3 +75,18 @@ class ThreadVote(Base):
 
     thread: Mapped["ForumThread"] = relationship("ForumThread", back_populates="thread_votes")
     user: Mapped["User"] = relationship("User", back_populates="thread_votes")
+
+
+class PostVote(Base):
+    """Upvote (+1) or downvote (-1) on a forum post. One vote per user per post."""
+    __tablename__ = "post_votes"
+    __table_args__ = (UniqueConstraint("post_id", "user_id", name="uq_post_vote_user_post"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    post_id: Mapped[int] = mapped_column(ForeignKey("forum_posts.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    value: Mapped[int] = mapped_column(Integer, nullable=False)  # 1 or -1
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    post: Mapped["ForumPost"] = relationship("ForumPost", back_populates="post_votes")
+    user: Mapped["User"] = relationship("User", back_populates="post_votes")

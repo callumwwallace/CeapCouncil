@@ -17,6 +17,7 @@ import {
   CompetitionHistoryEntry,
   BlogPostSummary,
   BlogPostDetail,
+  BlogComment,
   ForumTopicResponse,
   ForumThreadSummary,
   ForumThreadDetail,
@@ -545,7 +546,7 @@ class ApiClient {
 
   async listForumThreads(
     slug: string,
-    params?: { sort_by?: 'updated_at' | 'vote_score'; skip?: number; limit?: number }
+    params?: { sort_by?: 'updated_at' | 'created_at' | 'vote_score'; skip?: number; limit?: number }
   ): Promise<ForumThreadSummary[]> {
     const response = await this.client.get<ForumThreadSummary[]>(
       '/forum/topics/' + encodeURIComponent(slug) + '/threads',
@@ -616,6 +617,24 @@ class ApiClient {
     await this.client.delete(`/forum/posts/${postId}`);
   }
 
+  async voteForumPost(postId: number, value: 1 | -1 | 0): Promise<{ vote_score: number; your_vote: number | null }> {
+    const response = await this.client.post<{ vote_score: number; your_vote: number | null }>(
+      `/forum/posts/${postId}/vote`,
+      { value }
+    );
+    return response.data;
+  }
+
+  async togglePinThread(threadId: number): Promise<{ is_pinned: boolean }> {
+    const response = await this.client.post<{ is_pinned: boolean }>(`/forum/threads/${threadId}/pin`);
+    return response.data;
+  }
+
+  async getMyBacktests(): Promise<Backtest[]> {
+    const response = await this.client.get<Backtest[]>('/backtests/me');
+    return response.data;
+  }
+
   // Notifications
   async getNotifications(params?: { unread_only?: boolean; skip?: number; limit?: number }): Promise<NotificationResponse[]> {
     const response = await this.client.get<NotificationResponse[]>('/notifications', { params: params ?? {} });
@@ -650,6 +669,23 @@ class ApiClient {
   async getBlogPost(slug: string): Promise<BlogPostDetail> {
     const response = await this.client.get<BlogPostDetail>(`/blog/${slug}`);
     return response.data;
+  }
+
+  async listBlogComments(slug: string): Promise<BlogComment[]> {
+    const response = await this.client.get<BlogComment[]>(`/blog/${encodeURIComponent(slug)}/comments`);
+    return response.data;
+  }
+
+  async createBlogComment(slug: string, content: string, parentId?: number): Promise<BlogComment> {
+    const response = await this.client.post<BlogComment>(
+      `/blog/${encodeURIComponent(slug)}/comments`,
+      { content, parent_id: parentId ?? null }
+    );
+    return response.data;
+  }
+
+  async deleteBlogComment(commentId: number): Promise<void> {
+    await this.client.delete(`/blog/comments/${commentId}`);
   }
 
   // Social

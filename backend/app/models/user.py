@@ -31,6 +31,7 @@ class User(Base):
     comments: Mapped[list["Comment"]] = relationship("Comment", back_populates="user")
     badges: Mapped[list["Badge"]] = relationship("Badge", back_populates="user")
     blog_posts: Mapped[list["BlogPost"]] = relationship("BlogPost", back_populates="author")
+    blog_comments: Mapped[list["BlogComment"]] = relationship("BlogComment", back_populates="author", cascade="all, delete-orphan")
     forum_threads: Mapped[list["ForumThread"]] = relationship(
         "ForumThread", back_populates="author", cascade="all, delete-orphan"
     )
@@ -39,4 +40,7 @@ class User(Base):
     )
     thread_votes: Mapped[list["ThreadVote"]] = relationship(
         "ThreadVote", back_populates="user", cascade="all, delete-orphan"
+    )
+    post_votes: Mapped[list["PostVote"]] = relationship(
+        "PostVote", back_populates="user", cascade="all, delete-orphan"
     )

@@ -2,6 +2,8 @@
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import StrategyEmbedCard from './StrategyEmbedCard';
 
 interface MarkdownContentProps {
@@ -15,7 +17,7 @@ const proseClasses = [
   '[&_p]:my-2 [&_p:first-child]:mt-0',
   '[&_a]:text-emerald-600 [&_a]:no-underline hover:[&_a]:underline',
   '[&_code]:text-emerald-700 [&_code]:bg-emerald-50 [&_code]:px-1 [&_code]:rounded [&_code]:text-xs [&_code]:font-mono',
-  '[&_pre]:bg-gray-900 [&_pre]:text-gray-100 [&_pre]:rounded-lg [&_pre]:p-4 [&_pre]:overflow-x-auto [&_pre]:my-2 [&_pre_code]:bg-transparent [&_pre_code]:text-inherit [&_pre_code]:p-0',
+  '[&_pre]:my-2 [&_pre]:rounded-lg [&_pre]:overflow-x-auto',
   '[&_ul]:my-2 [&_ol]:my-2 [&_li]:my-0.5 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6',
   '[&_img]:rounded-lg [&_img]:max-w-full [&_img]:h-auto',
   '[&_blockquote]:border-l-4 [&_blockquote]:border-gray-300 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-gray-600',
@@ -75,6 +77,23 @@ export default function MarkdownContent({ content, className = '' }: MarkdownCon
                       <img src={src} alt={alt || ''} className="rounded-lg max-w-full h-auto" />
                     </span>
                   ),
+                  code: ({ className: codeClassName, children, ...props }) => {
+                    const codeMatch = /language-(\w+)/.exec(codeClassName || '');
+                    const isInline = !codeMatch;
+                    if (isInline) {
+                      return <code className={codeClassName} {...props}>{children}</code>;
+                    }
+                    return (
+                      <SyntaxHighlighter
+                        style={oneDark}
+                        language={codeMatch[1]}
+                        PreTag="div"
+                        customStyle={{ margin: 0, borderRadius: '0.5rem', fontSize: '0.8rem' }}
+                      >
+                        {String(children).replace(/\n$/, '')}
+                      </SyntaxHighlighter>
+                    );
+                  },
                 }}
               >
                 {linked}

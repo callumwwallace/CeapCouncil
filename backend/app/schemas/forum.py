@@ -26,6 +26,7 @@ class ForumThreadSummary(BaseModel):
     post_count: int
     vote_score: int = 0
     your_vote: int | None = None
+    is_pinned: bool = False
     proposal_data: dict | None = None
     created_at: datetime
     updated_at: datetime
@@ -58,6 +59,7 @@ class ForumThreadDetail(BaseModel):
     post_count: int
     vote_score: int = 0
     your_vote: int | None = None
+    is_pinned: bool = False
     proposal_data: dict | None = None
     created_at: datetime
     updated_at: datetime
@@ -74,11 +76,17 @@ class ForumPostResponse(BaseModel):
     author_id: int
     author_username: str
     content: str
+    vote_score: int = 0
+    your_vote: int | None = None
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class PostVoteCreate(BaseModel):
+    value: int = Field(..., ge=-1, le=1)
 
 
 class ForumPostCreate(BaseModel):

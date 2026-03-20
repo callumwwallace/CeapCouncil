@@ -366,6 +366,7 @@ export interface ForumThreadSummary {
   post_count: number;
   vote_score?: number;
   your_vote?: number | null;
+  is_pinned?: boolean;
   proposal_data?: {
     symbol: string;
     symbols?: string[];
@@ -388,6 +389,7 @@ export interface ForumThreadDetail {
   post_count: number;
   vote_score?: number;
   your_vote?: number | null;
+  is_pinned?: boolean;
   proposal_data?: ForumThreadSummary['proposal_data'];
   created_at: string;
   updated_at: string;
@@ -400,6 +402,8 @@ export interface ForumPostResponse {
   author_id: number;
   author_username: string;
   content: string;
+  vote_score: number;
+  your_vote: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -448,11 +452,24 @@ export interface BlogPostSummary {
   author: { id: number; username: string };
   published_at: string | null;
   created_at: string;
+  comment_count?: number;
 }
 
 export interface BlogPostDetail extends BlogPostSummary {
   content: string;
   updated_at: string;
+}
+
+export interface BlogComment {
+  id: number;
+  blog_post_id: number;
+  author_id: number;
+  author_username: string;
+  author_avatar_url: string | null;
+  content: string;
+  parent_id: number | null;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 // Follow types

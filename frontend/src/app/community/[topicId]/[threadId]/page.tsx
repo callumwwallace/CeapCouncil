@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
 import type { ForumThreadDetail } from '@/types';
-import { ArrowLeft, Loader2, MessageSquare, Quote, Trash2, ChevronUp, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Loader2, MessageSquare, Quote, Trash2, ChevronUp, ChevronDown, Pin } from 'lucide-react';
 import ForumEditor from '@/components/forum/ForumEditor';
 import MarkdownContent from '@/components/forum/MarkdownContent';
 
@@ -41,10 +41,16 @@ export default function CommunityThreadPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [myStrategies, setMyStrategies] = useState<{ id: number; title: string }[]>([]);
+  const [myBacktests, setMyBacktests] = useState<{ id: number; symbol: string; total_return: number | null; sharpe_ratio: number | null }[]>([]);
 
   useEffect(() => {
     if (isAuthenticated) {
       api.getMyStrategies().then((s) => setMyStrategies(s.map((x) => ({ id: x.id, title: x.title })))).catch(() => {});
+      api.getMyBacktests().then((bts) => setMyBacktests(
+        bts.filter((b) => b.status === 'completed').slice(0, 20).map((b) => ({
+          id: b.id, symbol: b.symbol, total_return: b.total_return, sharpe_ratio: b.sharpe_ratio,
+        }))
+      )).catch(() => {});
     }
   }, [isAuthenticated]);
 
@@ -75,11 +81,28 @@ export default function CommunityThreadPage() {
     }
   };
 
-  const handleVote = async (value: 1 | -1 | 0) => {
+  const handlePostVote = async (postId: number, value: 1 | -1 | 0) => {
     if (!isAuthenticated) return;
     try {
-      const res = await api.voteForumThread(threadId, value);
-      setThread((prev) => (prev ? { ...prev, vote_score: res.vote_score, your_vote: res.your_vote ?? undefined } : null));
+      const res = await api.voteForumPost(postId, value);
+      setThread((prev) =>
+        prev ? {
+          ...prev,
+          posts: prev.posts.map((p) =>
+            p.id === postId ? { ...p, vote_score: res.vote_score, your_vote: res.your_vote } : p
+          ),
+        } : null
+      );
+    } catch {
+      // Silently fail
+    }
+  };
+
+  const handleTogglePin = async () => {
+    if (!isAuthenticated) return;
+    try {
+      const res = await api.togglePinThread(threadId);
+      setThread((prev) => prev ? { ...prev, is_pinned: res.is_pinned } : null);
     } catch {
       // Silently fail
     }
@@ -149,42 +172,25 @@ export default function CommunityThreadPage() {
         </Link>
 
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-6">
-          <div className="px-6 py-4 border-b border-gray-200 flex items-start gap-4">
-            {thread.proposal_data && (
-              <div className="flex flex-col items-center gap-0 flex-shrink-0">
-                {isAuthenticated && user?.username !== thread.author_username ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => handleVote(thread.your_vote === 1 ? 0 : 1)}
-                      className={`p-0.5 rounded hover:bg-gray-100 transition ${
-                        thread.your_vote === 1 ? 'text-emerald-600' : 'text-gray-400 hover:text-gray-600'
-                      }`}
-                      title="Upvote"
-                    >
-                      <ChevronUp className="h-6 w-6" />
-                    </button>
-                    <span className="text-base font-semibold text-gray-700 tabular-nums">{thread.vote_score ?? 0}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleVote(thread.your_vote === -1 ? 0 : -1)}
-                      className={`p-0.5 rounded hover:bg-gray-100 transition ${
-                        thread.your_vote === -1 ? 'text-red-500' : 'text-gray-400 hover:text-gray-600'
-                      }`}
-                      title="Downvote"
-                    >
-                      <ChevronDown className="h-6 w-6" />
-                    </button>
-                  </>
-                ) : (
-                  <span className="text-base font-semibold text-gray-700 tabular-nums py-2">{thread.vote_score ?? 0}</span>
-                )}
-              </div>
-            )}
+          <div className="px-6 py-4 border-b border-gray-200">
             <div className="flex-1 min-w-0">
               <h1 className="text-xl font-bold text-gray-900">{thread.title}</h1>
-              <p className="text-sm text-gray-500 mt-1">
-                Started by {thread.author_username} · {formatDate(thread.created_at)} · {thread.post_count} posts
+              <p className="text-sm text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
+                <span>Started by {thread.author_username} · {formatDate(thread.created_at)} · {thread.post_count} posts</span>
+                {thread.is_pinned && <span className="inline-flex items-center gap-1 text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full"><Pin className="h-3 w-3" /> Pinned</span>}
+                {isAuthenticated && user?.is_superuser && (
+                  <button
+                    type="button"
+                    onClick={handleTogglePin}
+                    className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition ${
+                      thread.is_pinned ? 'text-amber-600 border-amber-200 hover:bg-amber-50' : 'text-gray-500 border-gray-200 hover:bg-gray-50'
+                    }`}
+                    title={thread.is_pinned ? 'Unpin thread' : 'Pin thread'}
+                  >
+                    <Pin className="h-3 w-3" />
+                    {thread.is_pinned ? 'Unpin' : 'Pin'}
+                  </button>
+                )}
               </p>
               {thread.proposal_data && (
                 <p className="text-sm text-gray-600 mt-2">
@@ -209,6 +215,36 @@ export default function CommunityThreadPage() {
           {thread.posts[0] && (
             <div className="px-6 py-5">
               <div className="flex items-start gap-4">
+                {/* Vote column */}
+                <div className="flex flex-col items-center gap-0 flex-shrink-0">
+                  {isAuthenticated && user?.username !== thread.posts[0].author_username ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handlePostVote(thread.posts[0].id, thread.posts[0].your_vote === 1 ? 0 : 1)}
+                        className={`p-0.5 rounded hover:bg-gray-100 transition ${
+                          thread.posts[0].your_vote === 1 ? 'text-emerald-600' : 'text-gray-400 hover:text-gray-600'
+                        }`}
+                        title="Upvote"
+                      >
+                        <ChevronUp className="h-4 w-4" />
+                      </button>
+                      <span className="text-xs font-medium text-gray-600 tabular-nums">{thread.posts[0].vote_score ?? 0}</span>
+                      <button
+                        type="button"
+                        onClick={() => handlePostVote(thread.posts[0].id, thread.posts[0].your_vote === -1 ? 0 : -1)}
+                        className={`p-0.5 rounded hover:bg-gray-100 transition ${
+                          thread.posts[0].your_vote === -1 ? 'text-red-500' : 'text-gray-400 hover:text-gray-600'
+                        }`}
+                        title="Downvote"
+                      >
+                        <ChevronDown className="h-4 w-4" />
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-xs font-medium text-gray-500 tabular-nums py-1">{thread.posts[0].vote_score ?? 0}</span>
+                  )}
+                </div>
                 <Link
                   href={`/profile/${thread.posts[0].author_username}`}
                   className="flex-shrink-0 w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 font-medium"
@@ -256,6 +292,36 @@ export default function CommunityThreadPage() {
                 {thread.posts.slice(1).map((post) => (
                   <div key={post.id} className="py-4 first:pt-0">
                     <div className="flex items-start gap-4">
+                      {/* Vote column */}
+                      <div className="flex flex-col items-center gap-0 flex-shrink-0">
+                        {isAuthenticated && user?.username !== post.author_username ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handlePostVote(post.id, post.your_vote === 1 ? 0 : 1)}
+                              className={`p-0.5 rounded hover:bg-gray-100 transition ${
+                                post.your_vote === 1 ? 'text-emerald-600' : 'text-gray-400 hover:text-gray-600'
+                              }`}
+                              title="Upvote"
+                            >
+                              <ChevronUp className="h-4 w-4" />
+                            </button>
+                            <span className="text-xs font-medium text-gray-600 tabular-nums">{post.vote_score ?? 0}</span>
+                            <button
+                              type="button"
+                              onClick={() => handlePostVote(post.id, post.your_vote === -1 ? 0 : -1)}
+                              className={`p-0.5 rounded hover:bg-gray-100 transition ${
+                                post.your_vote === -1 ? 'text-red-500' : 'text-gray-400 hover:text-gray-600'
+                              }`}
+                              title="Downvote"
+                            >
+                              <ChevronDown className="h-4 w-4" />
+                            </button>
+                          </>
+                        ) : (
+                          <span className="text-xs font-medium text-gray-500 tabular-nums py-1">{post.vote_score ?? 0}</span>
+                        )}
+                      </div>
                       <Link
                         href={`/profile/${post.author_username}`}
                         className="flex-shrink-0 w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 font-medium text-sm"
@@ -319,6 +385,7 @@ export default function CommunityThreadPage() {
                 maxLength={10000}
                 disabled={submitting}
                 strategies={myStrategies}
+                backtests={myBacktests}
               />
               {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
               <button

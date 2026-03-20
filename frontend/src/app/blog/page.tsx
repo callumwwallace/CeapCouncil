@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { FileText, Calendar, User } from 'lucide-react';
+import { FileText, Calendar, User, MessageSquare } from 'lucide-react';
 import api from '@/lib/api';
 import type { BlogPostSummary } from '@/types';
 
@@ -85,6 +85,10 @@ export default function BlogPage() {
                       {formatDate(post.published_at || post.created_at)}
                     </span>
                   )}
+                  <span className="flex items-center gap-1">
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    {post.comment_count ?? 0}
+                  </span>
                 </div>
               </Link>
             ))}
