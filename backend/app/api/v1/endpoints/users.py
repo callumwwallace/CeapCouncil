@@ -1,11 +1,12 @@
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.api.deps import get_current_active_user, get_current_user_optional
 from app.models.user import User
 from app.models.competition import Badge, CompetitionEntry, Competition
@@ -28,21 +29,26 @@ class RepGive(BaseModel):
 
 
 @router.get("/me", response_model=UserPrivateResponse)
-async def get_current_user_info(current_user: User = Depends(get_current_active_user)):
+@limiter.limit("60/minute")
+async def get_current_user_info(request: Request, current_user: User = Depends(get_current_active_user)):
     return current_user
 
 
 @router.patch("/me", response_model=UserPrivateResponse)
+@limiter.limit("30/minute")
 async def update_current_user(
+    request: Request,
     user_update: UserUpdate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     update_data = user_update.model_dump(exclude_unset=True)
-    
-    for field, value in update_data.items():
-        setattr(current_user, field, value)
-    
+    if "full_name" in update_data:
+        current_user.full_name = update_data["full_name"]
+    if "bio" in update_data:
+        current_user.bio = update_data["bio"]
+    if "avatar_url" in update_data:
+        current_user.avatar_url = update_data["avatar_url"]
     await db.flush()
     await db.refresh(current_user)
     
@@ -50,7 +56,9 @@ async def update_current_user(
 
 
 @router.patch("/me/email", response_model=UserPrivateResponse)
+@limiter.limit("30/minute")
 async def change_email(
+    request: Request,
     data: EmailChange,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -68,22 +76,30 @@ async def change_email(
 
 
 @router.patch("/me/notification-preferences", response_model=UserPrivateResponse)
+@limiter.limit("30/minute")
 async def update_notification_preferences(
+    request: Request,
     data: NotificationPreferencesUpdate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Update notification preferences (mentions, emails)."""
     update_data = data.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(current_user, field, value)
+    if "notify_on_mention" in update_data:
+        current_user.notify_on_mention = update_data["notify_on_mention"]
+    if "email_on_mention" in update_data:
+        current_user.email_on_mention = update_data["email_on_mention"]
+    if "email_marketing" in update_data:
+        current_user.email_marketing = update_data["email_marketing"]
     await db.flush()
     await db.refresh(current_user)
     return current_user
 
 
 @router.patch("/me/password", response_model=dict)
+@limiter.limit("30/minute")
 async def change_password(
+    request: Request,
     data: PasswordChange,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -97,7 +113,9 @@ async def change_password(
 
 
 @router.get("/me/badges")
+@limiter.limit("60/minute")
 async def get_my_badges(
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -119,7 +137,9 @@ async def get_my_badges(
 
 
 @router.get("/{username}/forum-stats")
+@limiter.limit("60/minute")
 async def get_user_forum_stats(
+    request: Request,
     username: str,
     db: AsyncSession = Depends(get_db),
 ):
@@ -134,7 +154,9 @@ async def get_user_forum_stats(
 
 
 @router.get("/{username}/forum-activity")
+@limiter.limit("60/minute")
 async def get_user_forum_activity(
+    request: Request,
     username: str,
     limit: int = 10,
     db: AsyncSession = Depends(get_db),
@@ -195,7 +217,9 @@ async def get_user_forum_activity(
 
 
 @router.get("/{username}/strategy-count")
+@limiter.limit("60/minute")
 async def get_user_strategy_count(
+    request: Request,
     username: str,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
@@ -216,7 +240,9 @@ async def get_user_strategy_count(
 
 
 @router.get("/{username}/competition-history")
+@limiter.limit("60/minute")
 async def get_user_competition_history(
+    request: Request,
     username: str,
     db: AsyncSession = Depends(get_db),
 ):
@@ -255,7 +281,9 @@ async def get_user_competition_history(
 
 
 @router.get("/{username}/badges")
+@limiter.limit("60/minute")
 async def get_user_badges(
+    request: Request,
     username: str,
     db: AsyncSession = Depends(get_db),
 ):
@@ -281,7 +309,9 @@ async def get_user_badges(
 
 
 @router.get("/{username}/achievements")
+@limiter.limit("60/minute")
 async def get_user_achievements(
+    request: Request,
     username: str,
     db: AsyncSession = Depends(get_db),
 ):
@@ -316,7 +346,9 @@ async def get_user_achievements(
 
 
 @router.get("/{username}/rep")
+@limiter.limit("60/minute")
 async def get_user_rep(
+    request: Request,
     username: str,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
@@ -350,7 +382,9 @@ async def get_user_rep(
 
 
 @router.post("/{username}/rep")
+@limiter.limit("20/minute")
 async def give_rep(
+    request: Request,
     username: str,
     body: RepGive,
     current_user: User = Depends(get_current_active_user),
@@ -425,7 +459,12 @@ async def give_rep(
 
 
 @router.get("/{username}", response_model=UserResponse)
-async def get_user_by_username(username: str, db: AsyncSession = Depends(get_db)):
+@limiter.limit("60/minute")
+async def get_user_by_username(
+    request: Request,
+    username: str,
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(User).where(User.username == username))
     user = result.scalar_one_or_none()
 

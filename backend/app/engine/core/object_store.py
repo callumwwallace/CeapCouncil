@@ -3,6 +3,10 @@
 Allows strategies to save and load state between backtests.
 Supports serialization of basic Python types, numpy arrays, and DataFrames.
 
+Uses JSON-based storage (no pickle) for security. numpy arrays and DataFrames
+are serialized via safe formats (numpy save with allow_pickle=False, DataFrame
+to_dict).
+
 Usage:
     class MyStrategy(StrategyBase):
         def on_init(self):
@@ -16,12 +20,70 @@ Usage:
 
 from __future__ import annotations
 
+import base64
 import json
-import pickle
-import hashlib
+import re
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
+
+_NAMESPACE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _serialize_value(value: Any) -> dict[str, Any]:
+    """Serialize a value to a JSON-safe dict. Returns {_t: type, _v: data}."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return {"_t": "json", "_v": value}
+    if isinstance(value, (list, dict)):
+        return {"_t": "json", "_v": value}
+    if isinstance(value, bytes):
+        return {"_t": "bytes", "_v": base64.b64encode(value).decode("ascii")}
+    try:
+        import numpy as np
+
+        if isinstance(value, np.ndarray):
+            buf = BytesIO()
+            np.save(buf, value, allow_pickle=False)
+            return {"_t": "ndarray", "_v": base64.b64encode(buf.getvalue()).decode("ascii")}
+    except ImportError:
+        pass
+    try:
+        import pandas as pd
+
+        if isinstance(value, pd.DataFrame):
+            return {"_t": "dataframe", "_v": value.to_dict(orient="split")}
+    except ImportError:
+        pass
+    # Fallback: try JSON (e.g. nested dicts with lists)
+    try:
+        json.dumps(value)
+        return {"_t": "json", "_v": value}
+    except (TypeError, ValueError):
+        raise TypeError(
+            f"ObjectStore supports JSON-serializable types, numpy arrays, pandas DataFrames, and bytes. "
+            f"Got {type(value).__name__}"
+        ) from None
+
+
+def _deserialize_value(data: dict[str, Any]) -> Any:
+    """Deserialize a value from {_t, _v} dict."""
+    t = data.get("_t", "json")
+    v = data.get("_v")
+    if t == "json":
+        return v
+    if t == "bytes":
+        return base64.b64decode(v.encode("ascii"))
+    if t == "ndarray":
+        import numpy as np
+
+        buf = BytesIO(base64.b64decode(v.encode("ascii")))
+        return np.load(buf, allow_pickle=False)
+    if t == "dataframe":
+        import pandas as pd
+
+        return pd.DataFrame(**v)
+    return v
 
 
 class ObjectStore:
@@ -29,11 +91,13 @@ class ObjectStore:
 
     Storage backends:
     - memory: dict-based, lost when process ends (default for backtesting)
-    - file: JSON/pickle-based, persisted to disk
+    - file: JSON-based (no pickle), persisted to disk
     - redis: Redis-based (for production)
     """
 
     def __init__(self, namespace: str = "default", backend: str = "memory", base_path: str | None = None):
+        if not _NAMESPACE_RE.match(namespace):
+            raise ValueError("Invalid namespace: only alphanumeric, underscore, hyphen allowed")
         self._namespace = namespace
         self._backend = backend
         self._store: dict[str, Any] = {}
@@ -78,7 +142,7 @@ class ObjectStore:
     def keys(self) -> list[str]:
         """List all keys in this namespace."""
         prefix = f"{self._namespace}:"
-        return [k[len(prefix):] for k in self._store if k.startswith(prefix)]
+        return [k[len(prefix) :] for k in self._store if k.startswith(prefix)]
 
     def clear(self) -> None:
         """Clear all keys in this namespace."""
@@ -125,23 +189,29 @@ class ObjectStore:
 
     def _estimate_size(self, value: Any) -> int:
         try:
-            return len(pickle.dumps(value))
-        except Exception:
+            encoded = _serialize_value(value)
+            return len(json.dumps(encoded))
+        except (TypeError, ValueError):
             return 0
 
     def _save_to_disk(self) -> None:
         if not self._base_path:
             return
-        data_path = self._base_path / f"{self._namespace}.pkl"
-        with open(data_path, "wb") as f:
-            pickle.dump({"store": self._store, "metadata": self._metadata}, f)
+        data_path = self._base_path / f"{self._namespace}.json"
+        serialized: dict[str, Any] = {
+            "store": {k: _serialize_value(v) for k, v in self._store.items()},
+            "metadata": self._metadata,
+        }
+        with open(data_path, "w", encoding="utf-8") as f:
+            json.dump(serialized, f, default=str)
 
     def _load_from_disk(self) -> None:
         if not self._base_path:
             return
-        data_path = self._base_path / f"{self._namespace}.pkl"
+        data_path = self._base_path / f"{self._namespace}.json"
         if data_path.exists():
-            with open(data_path, "rb") as f:
-                data = pickle.load(f)  # noqa: S301
-                self._store = data.get("store", {})
-                self._metadata = data.get("metadata", {})
+            with open(data_path, encoding="utf-8") as f:
+                data = json.load(f)
+            store_enc = data.get("store", {})
+            self._store = {k: _deserialize_value(v) for k, v in store_enc.items()}
+            self._metadata = data.get("metadata", {})

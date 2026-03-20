@@ -25,6 +25,14 @@ const CATEGORY_ICONS: Record<NotificationCategory, typeof Trophy> = {
   system: Megaphone,
 };
 
+/** Sanitize notification link to prevent javascript:, data:, etc. */
+function safeNotificationLink(link: string | null | undefined): string {
+  if (!link || typeof link !== 'string') return '/';
+  const s = link.trim();
+  if (s.startsWith('/') || s.startsWith('https://') || s.startsWith('http://')) return s;
+  return '/';
+}
+
 function formatNotificationTime(iso: string): string {
   try {
     const d = new Date(iso);
@@ -51,7 +59,7 @@ function NotificationItem({
 }) {
   return (
     <Link
-      href={n.link}
+      href={safeNotificationLink(n.link)}
       onClick={() => {
         if (!n.read_at) onMarkRead(n.id);
         onClose();
@@ -70,7 +78,7 @@ function NotificationItem({
 }
 
 export default function NotificationBell() {
-  const { isAuthenticated, accessToken } = useAuthStore();
+  const { isAuthenticated } = useAuthStore();
   const [grouped, setGrouped] = useState<GroupedNotifications | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
@@ -121,18 +129,21 @@ export default function NotificationBell() {
 
   // Real-time WebSocket for notifications
   useEffect(() => {
-    if (!isAuthenticated || !accessToken) return;
+    if (!isAuthenticated) return;
 
     let delay = 1000;
     const maxDelay = 30000;
 
     const connect = () => {
       try {
+        // Cookies are sent during the WebSocket handshake automatically.
+        // Backend reads access_token from cookie; falls back to Bearer message.
         const ws = new WebSocket(`${WS_URL}/ws/notifications`);
         wsRef.current = ws;
 
         ws.onopen = () => {
-          ws.send(`Bearer ${accessToken}`);
+          // Auth is handled via HTTP-only cookies sent during WebSocket handshake.
+          // No token message needed.
         };
 
         ws.onmessage = (event) => {
@@ -194,7 +205,7 @@ export default function NotificationBell() {
         wsRef.current = null;
       }
     };
-  }, [isAuthenticated, accessToken]);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (open) {

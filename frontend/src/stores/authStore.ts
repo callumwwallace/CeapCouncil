@@ -11,8 +11,9 @@ interface AuthState {
   isAuthenticated: boolean;
   
   // Actions
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<{ requires2FA: { pendingToken: string } } | void>;
   register: (email: string, username: string, password: string, fullName?: string) => Promise<void>;
+  totpVerify: (pendingToken: string, code: string) => Promise<void>;
   logout: () => void;
   fetchUser: () => Promise<void>;
   setTokens: (tokens: Token) => void;
@@ -28,19 +29,21 @@ export const useAuthStore = create<AuthState>()(
       isLoading: false,
       isAuthenticated: false,
 
-      login: async (email: string, password: string) => {
+      login: async (email: string, password: string): Promise<{ requires2FA: { pendingToken: string } } | void> => {
         set({ isLoading: true });
         try {
-          const tokens = await api.login({ username: email, password });
+          const data = await api.login({ username: email, password });
+          if ('requires_2fa' in data && data.requires_2fa && 'pending_token' in data) {
+            return { requires2FA: { pendingToken: data.pending_token } };
+          }
+          const tokens = data as { access_token: string; refresh_token: string };
           api.setToken(tokens.access_token);
           api.setRefreshToken(tokens.refresh_token);
-          
           set({
             accessToken: tokens.access_token,
             refreshToken: tokens.refresh_token,
             isAuthenticated: true,
           });
-          
           await get().fetchUser();
         } finally {
           set({ isLoading: false });
@@ -51,8 +54,23 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true });
         try {
           await api.register({ email, username, password, full_name: fullName });
-          // Auto-login after registration
-          await get().login(email, password);
+        } finally {
+          set({ isLoading: false });
+        }
+      },
+
+      totpVerify: async (pendingToken: string, code: string) => {
+        set({ isLoading: true });
+        try {
+          const tokens = await api.totpVerify(pendingToken, code);
+          api.setToken(tokens.access_token);
+          api.setRefreshToken(tokens.refresh_token);
+          set({
+            accessToken: tokens.access_token,
+            refreshToken: tokens.refresh_token,
+            isAuthenticated: true,
+          });
+          await get().fetchUser();
         } finally {
           set({ isLoading: false });
         }

@@ -113,9 +113,10 @@ def evaluate_competition_entry_task(self, entry_id: int):
         _recompute_ranks(db, competition.id)
         db.commit()
         return {"status": "completed", "entry_id": entry_id}
-    except Exception as e:
+    except Exception:
         db.rollback()
-        return {"status": "failed", "error": str(e)}
+        logger.exception("Competition entry evaluation failed")
+        return {"status": "failed", "error": "Evaluation failed"}
     finally:
         db.close()
 
@@ -396,7 +397,7 @@ def post_competition_archive_task(self, competition_id: int):
         try:
             self.retry(exc=e)
         except self.MaxRetriesExceededError:
-            return {"error": str(e), "competition_id": competition_id, "retries_exhausted": True}
+            return {"error": "Archive failed", "competition_id": competition_id, "retries_exhausted": True}
     finally:
         db.close()
 
@@ -424,9 +425,10 @@ def expire_competitions_task():
             post_competition_archive_task.delay(comp.id)
 
         return {"expired": len(expired), "ids": [c.id for c in expired]}
-    except Exception as e:
+    except Exception:
         db.rollback()
-        return {"error": str(e)}
+        logger.exception("Expire competitions task failed")
+        return {"error": "Task failed"}
     finally:
         db.close()
 
@@ -601,9 +603,10 @@ def promote_top_proposals_task():
             "competition_ids": promoted,
             "start_date": start_date.isoformat(),
         }
-    except Exception as e:
+    except Exception:
         db.rollback()
-        return {"error": str(e)}
+        logger.exception("Promote proposals task failed")
+        return {"error": "Task failed"}
     finally:
         db.close()
 
@@ -688,8 +691,9 @@ def activate_weekly_competitions_task():
             comp.status = CompetitionStatus.ACTIVE
         db.commit()
         return {"activated": len(drafts), "ids": [c.id for c in drafts]}
-    except Exception as e:
+    except Exception:
         db.rollback()
-        return {"error": str(e)}
+        logger.exception("Activate weekly competitions task failed")
+        return {"error": "Task failed"}
     finally:
         db.close()

@@ -18,9 +18,10 @@ from datetime import datetime, timedelta
 
 import redis
 import yfinance as yf
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.core.config import settings
+from app.core.limiter import limiter
 from app.engine.data.calendar import filter_to_trading_days
 
 router = APIRouter()
@@ -60,12 +61,23 @@ def _validate_and_cache_symbol(symbol: str) -> bool:
     """Validate a symbol via yfinance and cache if valid."""
     if _is_valid_symbol(symbol):
         return True
+    import signal
+
+    def _timeout_handler(signum, frame):
+        raise TimeoutError("Symbol validation timed out")
+
     try:
-        info = yf.Ticker(symbol).info
-        if info and info.get("regularMarketPrice") is not None:
-            _validated_symbols.add(symbol)
-            return True
-    except Exception:
+        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(5)  # 5-second timeout on yfinance call
+        try:
+            info = yf.Ticker(symbol).info
+            if info and info.get("regularMarketPrice") is not None:
+                _validated_symbols.add(symbol)
+                return True
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+    except (TimeoutError, Exception):
         pass
     return False
 
@@ -112,7 +124,9 @@ def _effective_interval(requested: str, start: str, end: str) -> str:
 
 
 @router.get("/search")
+@limiter.limit("60/minute")
 def search_symbols(
+    request: Request,
     q: str = Query(..., min_length=1, max_length=20, description="Search query"),
 ):
     """Search for valid ticker symbols. Returns matching known symbols
@@ -134,7 +148,9 @@ def search_symbols(
 
 
 @router.get("/ohlcv")
+@limiter.limit("60/minute")
 def get_market_data(
+    request: Request,
     symbol: str = Query(..., description="Ticker symbol"),
     start: str = Query(..., description="Start date YYYY-MM-DD"),
     end: str = Query(..., description="End date YYYY-MM-DD"),
@@ -145,10 +161,10 @@ def get_market_data(
     if not _is_valid_symbol(symbol):
         # Try to validate it dynamically
         if not _validate_and_cache_symbol(symbol):
-            raise HTTPException(status_code=400, detail=f"Symbol '{symbol}' is not valid")
+            raise HTTPException(status_code=400, detail="Invalid symbol")
 
     if interval not in ("1d", "1h", "15m", "5m", "1m"):
-        raise HTTPException(status_code=400, detail=f"Invalid interval '{interval}'")
+        raise HTTPException(status_code=400, detail="Invalid interval")
 
     # Validate dates
     try:
@@ -177,11 +193,11 @@ def get_market_data(
     try:
         ticker = yf.Ticker(symbol)
         df = ticker.history(start=fetch_start, end=fetch_end, interval=effective_interval)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch market data: {e}")
+    except Exception:
+        raise HTTPException(status_code=502, detail="Failed to fetch market data. Try again later.")
 
     if df.empty:
-        raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
+        raise HTTPException(status_code=404, detail="No data found for this symbol")
 
     # Strip timezone so date formatting is consistent with the Celery task
     if df.index.tz is not None:
@@ -190,7 +206,7 @@ def get_market_data(
     # Filter to valid trading days per asset type (equities: exclude weekends/holidays)
     df = filter_to_trading_days(df, symbol)
     if df.empty:
-        raise HTTPException(status_code=404, detail=f"No trading-day data found for {symbol}")
+        raise HTTPException(status_code=404, detail="No trading-day data found")
 
     # Build response - forex needs higher precision (pips) so candle colors render correctly
     is_forex = symbol.endswith("=X")

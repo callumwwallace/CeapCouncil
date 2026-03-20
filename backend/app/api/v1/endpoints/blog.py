@@ -1,22 +1,27 @@
 """Blog API endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
+from app.core.sanitize import sanitize_user_content
+from app.core.limiter import limiter
 from app.api.deps import get_current_active_user, get_current_user_optional
 from app.models.blog import BlogPost, BlogComment
 from app.models.user import User
+from app.schemas.blog import BlogCommentCreate
 
 router = APIRouter()
 
 
 @router.get("/")
+@limiter.limit("60/minute")
 async def list_blog_posts(
-    limit: int = 20,
-    offset: int = 0,
+    request: Request,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
     """List published blog posts, newest first."""
@@ -58,7 +63,9 @@ async def list_blog_posts(
 
 
 @router.get("/{slug}")
+@limiter.limit("60/minute")
 async def get_blog_post(
+    request: Request,
     slug: str,
     db: AsyncSession = Depends(get_db),
 ):
@@ -91,7 +98,9 @@ async def get_blog_post(
 
 
 @router.get("/{slug}/comments")
+@limiter.limit("60/minute")
 async def list_blog_comments(
+    request: Request,
     slug: str,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
@@ -129,9 +138,11 @@ async def list_blog_comments(
 
 
 @router.post("/{slug}/comments", status_code=201)
+@limiter.limit("30/minute")
 async def create_blog_comment(
+    request: Request,
     slug: str,
-    data: dict,
+    data: BlogCommentCreate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -142,11 +153,8 @@ async def create_blog_comment(
     if not post:
         raise HTTPException(404, "Post not found")
 
-    content = (data.get("content") or "").strip()
-    if not content or len(content) > 5000:
-        raise HTTPException(400, "Comment content must be 1-5000 characters")
-
-    parent_id = data.get("parent_id")
+    content = sanitize_user_content(data.content)
+    parent_id = data.parent_id
     if parent_id is not None:
         parent = await db.scalar(
             select(BlogComment).where(
@@ -181,7 +189,9 @@ async def create_blog_comment(
 
 
 @router.delete("/comments/{comment_id}", status_code=204)
+@limiter.limit("30/minute")
 async def delete_blog_comment(
+    request: Request,
     comment_id: int,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),

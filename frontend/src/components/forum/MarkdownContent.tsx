@@ -76,10 +76,16 @@ export default function MarkdownContent({ content, className = '' }: MarkdownCon
                 remarkPlugins={[remarkGfm]}
                 components={{
                   a: ({ href, children, ...props }) => {
+                    const safe =
+                      href &&
+                      (href.startsWith('/') ||
+                        href.startsWith('https://') ||
+                        href.startsWith('http://'));
+                    const safeHref = safe ? href : '#';
                     const isInternal = href?.startsWith('/');
                     return (
                       <a
-                        href={href}
+                        href={safeHref}
                         {...(isInternal ? {} : { target: '_blank', rel: 'noopener noreferrer' })}
                         {...props}
                       >
@@ -87,11 +93,22 @@ export default function MarkdownContent({ content, className = '' }: MarkdownCon
                       </a>
                     );
                   },
-                  img: ({ src, alt }) => (
-                    <span className="block my-2">
-                      <img src={src} alt={alt || ''} className="rounded-lg max-w-full h-auto" />
-                    </span>
-                  ),
+                  img: ({ src, alt }) => {
+                    const safeSrc =
+                      (typeof src === 'string' &&
+                      (src.startsWith('/') ||
+                        src.startsWith('https://') ||
+                        src.startsWith('http://')));
+                    return (
+                      <span className="block my-2">
+                        <img
+                          src={safeSrc ? src : ''}
+                          alt={alt || ''}
+                          className="rounded-lg max-w-full h-auto"
+                        />
+                      </span>
+                    );
+                  },
                   code: ({ className: codeClassName, children, ...props }) => {
                     const codeMatch = /language-(\w+)/.exec(codeClassName || '');
                     const isInline = !codeMatch;

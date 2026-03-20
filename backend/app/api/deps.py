@@ -37,11 +37,21 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
 
-    result = await db.execute(select(User).where(User.id == int(token_data.sub)))
+    try:
+        user_id = int(token_data.sub)
+    except (ValueError, TypeError):
+        raise credentials_exception
+
+    result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
 
     if user is None or not user.is_active:
         raise credentials_exception
+
+    if user.password_changed_at:
+        iat = payload.get("iat")
+        if iat is not None and iat < int(user.password_changed_at.timestamp()):
+            raise credentials_exception
 
     return user
 
@@ -59,9 +69,19 @@ async def get_current_user_optional(
             return None
         if await is_token_blocked(payload):
             return None
-        result = await db.execute(select(User).where(User.id == int(token_data.sub)))
+        try:
+            user_id = int(token_data.sub)
+        except (ValueError, TypeError):
+            return None
+        result = await db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
-        return user if user and user.is_active else None
+        if not user or not user.is_active:
+            return None
+        if user.password_changed_at:
+            iat = payload.get("iat")
+            if iat is not None and iat < int(user.password_changed_at.timestamp()):
+                return None
+        return user
     except (JWTError, ValueError):
         return None
 

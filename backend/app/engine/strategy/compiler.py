@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ast
+import signal
 from typing import Any
 
+from app.core.config import settings
 from app.engine.strategy.base import StrategyBase
 from app.engine.broker.order import Order, OrderSide, OrderType, TimeInForce
 from app.engine.data.feed import BarData
@@ -96,7 +98,11 @@ def compile_strategy(code: str, params: dict[str, Any] | None = None) -> type[St
     import numpy as np
     import math
 
-    _validate_no_dunder_access(code)
+    try:
+        _validate_no_dunder_access(code)
+    except SyntaxError as e:
+        line_info = f" (line {e.lineno})" if e.lineno else ""
+        raise ValueError(f"SyntaxError{line_info}: {e.msg}") from e
 
     safe_globals: dict = {
         "__builtins__": _build_safe_builtins(),
@@ -154,9 +160,22 @@ def compile_strategy(code: str, params: dict[str, Any] | None = None) -> type[St
         "ConsolidatedBar": ConsolidatedBar,
     }
 
+    timeout = settings.COMPILE_TIMEOUT_SECONDS
+
+    def _timeout_handler(signum, frame):
+        raise TimeoutError("Strategy compilation timed out")
+
     try:
         compiled = compile(code, "<strategy>", "exec")
-        exec(compiled, safe_globals)
+        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(timeout)
+        try:
+            exec(compiled, safe_globals)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+    except TimeoutError as e:
+        raise ValueError(str(e)) from e
     except SyntaxError as e:
         line_info = f" (line {e.lineno})" if e.lineno else ""
         raise ValueError(f"SyntaxError{line_info}: {e.msg}") from e

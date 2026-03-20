@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 class StrategyBase(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
-    code: str
+    code: str = Field(..., max_length=50000)
     parameters: dict = Field(default_factory=dict)
     is_public: bool = False
 

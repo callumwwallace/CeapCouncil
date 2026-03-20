@@ -17,6 +17,9 @@ class User(Base):
     avatar_url: Mapped[str | None] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    totp_secret_encrypted: Mapped[str | None] = mapped_column(String(255), default=None)
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
     notify_on_mention: Mapped[bool] = mapped_column(Boolean, default=True)
     email_on_mention: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -45,3 +48,6 @@ class User(Base):
         "PostVote", back_populates="user", cascade="all, delete-orphan"
     )
     achievements: Mapped[list["UserAchievement"]] = relationship("UserAchievement", back_populates="user", cascade="all, delete-orphan")
+    recovery_codes: Mapped[list["RecoveryCode"]] = relationship(
+        "RecoveryCode", back_populates="user", cascade="all, delete-orphan"
+    )

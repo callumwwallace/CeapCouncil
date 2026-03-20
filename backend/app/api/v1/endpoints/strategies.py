@@ -49,11 +49,12 @@ class ValidationResult(BaseModel):
 
 
 class ValidateRequest(BaseModel):
-    code: str
+    code: str = Field(..., max_length=50000)
 
 
 @router.post("/validate", response_model=ValidationResult)
-async def validate_strategy(body: ValidateRequest):
+@limiter.limit("30/minute")
+async def validate_strategy(request: Request, body: ValidateRequest):
     """Validate strategy code without executing it.
 
     Checks:
@@ -281,8 +282,16 @@ async def update_strategy(
     
     # Save = update working copy only. No version created. Use POST /versions to commit.
     update_data = strategy_update.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(strategy, field, value)
+    if "title" in update_data:
+        strategy.title = update_data["title"]
+    if "description" in update_data:
+        strategy.description = update_data["description"]
+    if "code" in update_data:
+        strategy.code = update_data["code"]
+    if "parameters" in update_data:
+        strategy.parameters = update_data["parameters"]
+    if "is_public" in update_data:
+        strategy.is_public = update_data["is_public"]
     
     await db.flush()
     await db.refresh(strategy)
@@ -329,7 +338,7 @@ async def restore_strategy_version(
     )
     ver = result.scalar_one_or_none()
     if not ver:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Version {version} not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
     
     # Restore working copy to this version. No new commit created.
     strategy.code = ver.code

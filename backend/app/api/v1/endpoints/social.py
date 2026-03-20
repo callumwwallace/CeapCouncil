@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.api.deps import get_current_active_user
 from app.models.user import User
 from app.models.strategy import Strategy
@@ -15,7 +16,9 @@ router = APIRouter()
 
 # Votes
 @router.post("/votes", response_model=VoteResponse)
+@limiter.limit("60/minute")
 async def vote_on_strategy(
+    request: Request,
     vote_in: VoteCreate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -69,7 +72,9 @@ async def vote_on_strategy(
 
 # Comments
 @router.post("/comments", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("30/minute")
 async def create_comment(
+    request: Request,
     comment_in: CommentCreate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -133,7 +138,9 @@ async def create_comment(
 
 
 @router.get("/strategies/{strategy_id}/comments", response_model=list[CommentResponse])
+@limiter.limit("60/minute")
 async def list_strategy_comments(
+    request: Request,
     strategy_id: int,
     db: AsyncSession = Depends(get_db),
 ):
@@ -146,7 +153,9 @@ async def list_strategy_comments(
 
 
 @router.patch("/comments/{comment_id}", response_model=CommentResponse)
+@limiter.limit("30/minute")
 async def update_comment(
+    request: Request,
     comment_id: int,
     comment_update: CommentUpdate,
     current_user: User = Depends(get_current_active_user),
@@ -169,7 +178,9 @@ async def update_comment(
 
 
 @router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("30/minute")
 async def delete_comment(
+    request: Request,
     comment_id: int,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),

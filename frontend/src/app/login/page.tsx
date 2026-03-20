@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { BarChart3, ArrowRight, AlertCircle } from 'lucide-react';
+import api from '@/lib/api';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,16 +14,30 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [resendSent, setResendSent] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     
     try {
-      await login(email, password);
+      const result = await login(email, password);
+      if (result?.requires2FA) {
+        router.push(`/login/two-factor?pending_token=${encodeURIComponent(result.requires2FA.pendingToken)}`);
+        return;
+      }
       router.push('/dashboard');
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Invalid email or password');
+    } catch (err: unknown) {
+      const res = err as { response?: { status?: number; data?: { detail?: string | { message?: string } } } };
+      const detail = res?.response?.data?.detail;
+      if (res?.response?.status === 403 && detail && typeof detail === 'object' && 'requires_verification' in detail) {
+        setNeedsVerification(true);
+        setError('Please verify your email before signing in.');
+        return;
+      }
+      const msg = typeof detail === 'string' ? detail : (detail as { message?: string })?.message ?? 'Invalid email or password';
+      setError(msg);
     }
   };
 
@@ -50,9 +65,29 @@ export default function LoginPage() {
         <div className="bg-white py-8 px-4 shadow-sm border border-gray-200 sm:rounded-xl sm:px-10">
           <form className="space-y-6" onSubmit={handleSubmit}>
             {error && (
-              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                {error}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                  {error}
+                </div>
+                {needsVerification && (
+                  <div className="text-sm">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await api.resendVerification(email);
+                          setResendSent(true);
+                        } catch {
+                          setResendSent(false);
+                        }
+                      }}
+                      className="text-emerald-600 hover:text-emerald-500 font-medium"
+                    >
+                      {resendSent ? 'Verification email sent' : 'Resend verification email'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
             

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -19,11 +19,26 @@ from app.tasks.backtest import (
     run_batch_backtest_task, run_oos_validation_task, run_cpcv_task,
     run_factor_attribution_task,
 )
+from app.services.task_ownership import set_task_owner, verify_task_ownership
 
 router = APIRouter()
 
 # In-memory dataset cache (production would use S3/database)
 _dataset_cache: dict[str, dict] = {}
+_DATASET_MAX_PER_USER = 5
+
+
+def _safe_poll_error(result) -> str:
+    raw = result.result
+    if isinstance(raw, dict) and "error" in raw:
+        msg = str(raw["error"])
+    else:
+        msg = str(raw) if raw is not None else ""
+    if any(x in msg for x in ("Traceback", 'File "', "  File ", ".py\"", "\\app\\", "/app/")):
+        return "Task failed"
+    if len(msg) > 500:
+        return msg[:500]
+    return msg if msg else "Task failed"
 
 
 # ---------------------------------------------------------------------------
@@ -232,20 +247,28 @@ async def _create_backtest_impl(
 
 
 @router.get("/", response_model=list[BacktestResponse])
+@limiter.limit("60/minute")
 async def list_my_backtests(
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
 ):
     result = await db.execute(
         select(Backtest)
         .where(Backtest.user_id == current_user.id)
         .order_by(Backtest.created_at.desc())
+        .offset(skip)
+        .limit(limit)
     )
     return result.scalars().all()
 
 
 @router.get("/embed/{share_token}", response_model=BacktestEmbedResponse)
+@limiter.limit("60/minute")
 async def get_backtest_embed(
+    request: Request,
     share_token: str,
     db: AsyncSession = Depends(get_db),
 ):
@@ -265,7 +288,9 @@ async def get_backtest_embed(
 
 
 @router.get("/{backtest_id}", response_model=BacktestResponse)
+@limiter.limit("60/minute")
 async def get_backtest(
+    request: Request,
     backtest_id: int,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -283,7 +308,9 @@ async def get_backtest(
 
 
 @router.delete("/{backtest_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("30/minute")
 async def delete_backtest(
+    request: Request,
     backtest_id: int,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -348,6 +375,7 @@ async def optimize_strategy(
         constraints=body.constraints,
         interval=body.interval,
     )
+    await set_task_owner(task.id, current_user.id)
     return {"task_id": task.id, "status": "queued"}
 
 
@@ -357,6 +385,8 @@ async def get_optimization_result(
     current_user: User = Depends(get_current_active_user),
 ):
     """Poll optimization task result."""
+    if not await verify_task_ownership(task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
     from celery.result import AsyncResult
     result = AsyncResult(task_id)
     if result.state == "PROGRESS":
@@ -364,7 +394,7 @@ async def get_optimization_result(
     elif result.state == "SUCCESS":
         return {"status": "completed", **result.result}
     elif result.state == "FAILURE":
-        return {"status": "failed", "error": str(result.result)}
+        return {"status": "failed", "error": _safe_poll_error(result)}
     return {"status": result.state.lower()}
 
 
@@ -393,6 +423,7 @@ async def bayesian_optimize_strategy(
         constraints=body.constraints,
         interval=body.interval,
     )
+    await set_task_owner(task.id, current_user.id)
     return {"task_id": task.id, "status": "queued"}
 
 
@@ -421,6 +452,7 @@ async def genetic_optimize_strategy(
         constraints=body.constraints,
         interval=body.interval,
     )
+    await set_task_owner(task.id, current_user.id)
     return {"task_id": task.id, "status": "queued"}
 
 
@@ -447,6 +479,7 @@ async def multiobjective_optimize_strategy(
         constraints=body.constraints,
         interval=body.interval,
     )
+    await set_task_owner(task.id, current_user.id)
     return {"task_id": task.id, "status": "queued"}
 
 
@@ -471,6 +504,7 @@ async def parameter_heatmap(
         metric=body.metric, constraints=body.constraints,
         interval=body.interval,
     )
+    await set_task_owner(task.id, current_user.id)
     return {"task_id": task.id, "status": "queued"}
 
 
@@ -505,6 +539,7 @@ async def walk_forward_analysis(
         param_ranges=body.param_ranges,
         n_trials=body.n_trials,
     )
+    await set_task_owner(task.id, current_user.id)
     return {"task_id": task.id, "status": "queued"}
 
 
@@ -514,6 +549,8 @@ async def get_walk_forward_result(
     current_user: User = Depends(get_current_active_user),
 ):
     """Poll walk-forward task result."""
+    if not await verify_task_ownership(task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
     from celery.result import AsyncResult
     result = AsyncResult(task_id)
     if result.state == "PROGRESS":
@@ -521,7 +558,7 @@ async def get_walk_forward_result(
     elif result.state == "SUCCESS":
         return {"status": "completed", **result.result}
     elif result.state == "FAILURE":
-        return {"status": "failed", "error": str(result.result)}
+        return {"status": "failed", "error": _safe_poll_error(result)}
     return {"status": result.state.lower()}
 
 
@@ -553,6 +590,7 @@ async def monte_carlo_simulation(
         initial_capital=backtest.initial_capital,
         n_simulations=body.n_simulations,
     )
+    await set_task_owner(task.id, current_user.id)
     return {"task_id": task.id, "status": "queued"}
 
 
@@ -562,6 +600,8 @@ async def get_monte_carlo_result(
     current_user: User = Depends(get_current_active_user),
 ):
     """Poll Monte Carlo task result."""
+    if not await verify_task_ownership(task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
     from celery.result import AsyncResult
     result = AsyncResult(task_id)
     if result.state == "PROGRESS":
@@ -569,7 +609,7 @@ async def get_monte_carlo_result(
     elif result.state == "SUCCESS":
         return {"status": "completed", **result.result}
     elif result.state == "FAILURE":
-        return {"status": "failed", "error": str(result.result)}
+        return {"status": "failed", "error": _safe_poll_error(result)}
     return {"status": result.state.lower()}
 
 
@@ -606,6 +646,7 @@ async def batch_run(
         slippage=body.slippage,
         interval=body.interval,
     )
+    await set_task_owner(task.id, current_user.id)
     return {"task_id": task.id, "status": "queued"}
 
 
@@ -651,6 +692,7 @@ async def oos_validate(
         n_trials=body.n_trials,
         interval=body.interval,
     )
+    await set_task_owner(task.id, current_user.id)
     return {"task_id": task.id, "status": "queued"}
 
 
@@ -660,6 +702,8 @@ async def get_oos_result(
     current_user: User = Depends(get_current_active_user),
 ):
     """Poll out-of-sample validation task result."""
+    if not await verify_task_ownership(task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
     from celery.result import AsyncResult
     result = AsyncResult(task_id)
     if result.state == "PROGRESS":
@@ -667,7 +711,7 @@ async def get_oos_result(
     elif result.state == "SUCCESS":
         return {"status": "completed", **result.result}
     elif result.state == "FAILURE":
-        return {"status": "failed", "error": str(result.result)}
+        return {"status": "failed", "error": _safe_poll_error(result)}
     return {"status": result.state.lower()}
 
 
@@ -720,6 +764,7 @@ async def cpcv_analysis(
         n_trials=body.n_trials,
         interval=body.interval,
     )
+    await set_task_owner(task.id, current_user.id)
     return {"task_id": task.id, "status": "queued"}
 
 
@@ -729,6 +774,8 @@ async def get_cpcv_result(
     current_user: User = Depends(get_current_active_user),
 ):
     """Poll CPCV task result."""
+    if not await verify_task_ownership(task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
     from celery.result import AsyncResult
     result = AsyncResult(task_id)
     if result.state == "PROGRESS":
@@ -736,7 +783,7 @@ async def get_cpcv_result(
     elif result.state == "SUCCESS":
         return {"status": "completed", **result.result}
     elif result.state == "FAILURE":
-        return {"status": "failed", "error": str(result.result)}
+        return {"status": "failed", "error": _safe_poll_error(result)}
     return {"status": result.state.lower()}
 
 
@@ -770,6 +817,7 @@ async def factor_attribution(
         end_date=str(backtest.end_date)[:10],
         interval=(backtest.parameters or {}).get("interval", "1d"),
     )
+    await set_task_owner(task.id, current_user.id)
     return {"task_id": task.id, "status": "queued"}
 
 
@@ -779,6 +827,8 @@ async def get_factor_attribution_result(
     current_user: User = Depends(get_current_active_user),
 ):
     """Poll factor attribution task result."""
+    if not await verify_task_ownership(task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
     from celery.result import AsyncResult
     result = AsyncResult(task_id)
     if result.state == "PROGRESS":
@@ -786,7 +836,7 @@ async def get_factor_attribution_result(
     elif result.state == "SUCCESS":
         return {"status": "completed", **result.result}
     elif result.state == "FAILURE":
-        return {"status": "failed", "error": str(result.result)}
+        return {"status": "failed", "error": _safe_poll_error(result)}
     return {"status": result.state.lower()}
 
 
@@ -810,8 +860,10 @@ async def upload_dataset(
     import io
     import pandas as pd
     
-    if not file.filename or not file.filename.endswith('.csv'):
+    if not file.filename or not file.filename.lower().endswith('.csv'):
         raise HTTPException(status_code=400, detail="Only CSV files are supported")
+    if file.content_type and file.content_type not in ("text/csv", "application/vnd.ms-excel", "application/octet-stream"):
+        raise HTTPException(status_code=400, detail="Invalid file type. Only CSV files are supported")
     
     contents = await file.read()
     if len(contents) > 10 * 1024 * 1024:  # 10MB limit
@@ -819,8 +871,8 @@ async def upload_dataset(
     
     try:
         df = pd.read_csv(io.BytesIO(contents))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid CSV format")
     
     # Validate required columns
     required = {"Open", "High", "Low", "Close"}
@@ -836,7 +888,7 @@ async def upload_dataset(
         if not found:
             raise HTTPException(
                 status_code=400,
-                detail=f"Missing required column: {req}. Found: {list(df.columns)}"
+                detail="Missing required columns. CSV must include Open, High, Low, Close."
             )
     
     # Rename columns to standard names
@@ -872,9 +924,14 @@ async def upload_dataset(
         else:
             df["Volume"] = 0
     
-    # Store in a simple in-memory cache (keyed by user + symbol)
-    # In production, this would go to S3/MinIO or database
+    # Store in a simple in memory cache (keyed by user + symbol)
+    # In production this would go to ugh S3/MinIO or database
     cache_key = f"user_{current_user.id}_{symbol}"
+    prefix = f"user_{current_user.id}_"
+    user_keys = [k for k in _dataset_cache if k.startswith(prefix)]
+    if cache_key not in _dataset_cache and len(user_keys) >= _DATASET_MAX_PER_USER:
+        oldest_key = min(user_keys, key=lambda k: _dataset_cache[k].get("uploaded_at", ""))
+        del _dataset_cache[oldest_key]
     _dataset_cache[cache_key] = {
         "data": df.to_json(),
         "rows": len(df),
@@ -897,7 +954,9 @@ async def upload_dataset(
 
 
 @router.get("/datasets")
+@limiter.limit("60/minute")
 async def list_datasets(
+    request: Request,
     current_user: User = Depends(get_current_active_user),
 ):
     """List uploaded datasets for the current user."""
@@ -921,7 +980,9 @@ async def list_datasets(
 # ---------------------------------------------------------------------------
 
 @router.get("/{backtest_id}/tearsheet")
+@limiter.limit("30/minute")
 async def generate_tearsheet(
+    request: Request,
     backtest_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -939,8 +1000,16 @@ async def generate_tearsheet(
     from app.engine.analytics.tearsheet import generate_tearsheet as gen_tearsheet
     from fastapi.responses import HTMLResponse
 
-    html = gen_tearsheet(backtest.results, title=f"Backtest #{backtest_id}: {backtest.symbol}")
-    return HTMLResponse(content=html)
+    html_content, nonce = gen_tearsheet(backtest.results, title=f"Backtest #{backtest_id}: {backtest.symbol}")
+    csp = (
+        f"default-src 'none'; script-src 'nonce-{nonce}'; "
+        f"style-src 'nonce-{nonce}'; img-src data:; "
+        f"frame-ancestors 'none'"
+    )
+    return HTMLResponse(
+        content=html_content,
+        headers={"Content-Security-Policy": csp},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -948,7 +1017,9 @@ async def generate_tearsheet(
 # ---------------------------------------------------------------------------
 
 @router.get("/{backtest_id}/monthly-returns")
+@limiter.limit("60/minute")
 async def get_monthly_returns(
+    request: Request,
     backtest_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -967,7 +1038,9 @@ async def get_monthly_returns(
 
 
 @router.get("/{backtest_id}/trade-distribution")
+@limiter.limit("60/minute")
 async def get_trade_distribution(
+    request: Request,
     backtest_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),

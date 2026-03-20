@@ -139,13 +139,75 @@ class ApiClient {
     return response.data;
   }
 
-  async login(credentials: LoginCredentials): Promise<Token> {
+  async login(
+    credentials: LoginCredentials
+  ): Promise<Token | { requires_2fa: true; pending_token: string }> {
     const formData = new URLSearchParams();
     formData.append('username', credentials.username);
     formData.append('password', credentials.password);
 
-    const response = await this.client.post<Token>('/auth/login', formData, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    const response = await this.client.post<Token | { requires_2fa: true; pending_token: string }>(
+      '/auth/login',
+      formData,
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      }
+    );
+    return response.data;
+  }
+
+  async verifyEmail(token: string): Promise<{ message: string }> {
+    const response = await this.client.post<{ message: string }>('/auth/verify-email', { token });
+    return response.data;
+  }
+
+  async resendVerification(email: string): Promise<{ message: string }> {
+    const response = await this.client.post<{ message: string }>('/auth/resend-verification', { email });
+    return response.data;
+  }
+
+  async forgotPassword(email: string): Promise<{ message: string }> {
+    const response = await this.client.post<{ message: string }>('/auth/forgot-password', { email });
+    return response.data;
+  }
+
+  async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+    const response = await this.client.post<{ message: string }>('/auth/reset-password', {
+      token,
+      new_password: newPassword,
+    });
+    return response.data;
+  }
+
+  async totpVerify(pendingToken: string, code: string): Promise<Token> {
+    const response = await this.client.post<Token>('/auth/totp/verify', {
+      pending_token: pendingToken,
+      code,
+    });
+    return response.data;
+  }
+
+  async totpStatus(): Promise<{ totp_enabled: boolean }> {
+    const response = await this.client.get<{ totp_enabled: boolean }>('/auth/totp/status');
+    return response.data;
+  }
+
+  async totpSetup(): Promise<{ qr_uri: string; secret: string }> {
+    const response = await this.client.post<{ qr_uri: string; secret: string }>('/auth/totp/setup');
+    return response.data;
+  }
+
+  async totpConfirm(code: string): Promise<{ recovery_codes: string[]; message: string }> {
+    const response = await this.client.post<{ recovery_codes: string[]; message: string }>('/auth/totp/confirm', {
+      code,
+    });
+    return response.data;
+  }
+
+  async totpDisable(password: string, code: string): Promise<{ message: string }> {
+    const response = await this.client.post<{ message: string }>('/auth/totp/disable', {
+      password,
+      code,
     });
     return response.data;
   }

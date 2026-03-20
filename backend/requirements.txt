@@ -19,6 +19,12 @@ email-validator>=2.0.0
 # Auth
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.0,<4.1.0  # passlib incompatible with bcrypt 4.1+ (no __about__)
+zxcvbn>=4.4.0
+pyotp>=2.9.0
+qrcode[pil]>=7.4.0
+aiosmtplib>=3.0.0
+cryptography>=41.0.0
 
 # Security
 slowapi>=0.1.9
@@ -47,3 +53,4 @@ python-dotenv>=1.0.0
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
 aiosqlite>=0.20.0
+fakeredis>=2.20.0

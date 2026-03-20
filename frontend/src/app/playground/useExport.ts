@@ -130,13 +130,14 @@ export function useExport(results: BacktestResult | null, config: BacktestConfig
     const vp = (x: number | undefined | null, d = 2) => (x ?? 0) >= 0 ? '+' + (x ?? 0).toFixed(d) + '%' : (x ?? 0).toFixed(d) + '%';
     const cls = (x: number | undefined | null) => (x ?? 0) >= 0 ? 'pos' : 'neg';
     const money = (x: number) => x < 0 ? '-$' + Math.abs(x).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '$' + x.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+    const esc = (s: unknown) => { if (s == null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;'); };
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Backtest Report — ${config.symbol}</title>
+<title>Backtest Report — ${esc(config.symbol)}</title>
 <style>
 :root {
   --bg: #ffffff; --fg: #111827; --muted: #6b7280; --border: #e5e7eb;
@@ -221,9 +222,9 @@ td.mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; }
 
 <!-- Header -->
 <div class="header">
-  <h1>${config.symbol} Backtest Report</h1>
+  <h1>${esc(config.symbol)} Backtest Report</h1>
   <div class="sub">
-    <span>${config.startDate} &mdash; ${config.endDate}</span>
+    <span>${esc(config.startDate)} &mdash; ${esc(config.endDate)}</span>
     <span>&bull;</span>
     <span>Initial Capital: $${config.initialCapital.toLocaleString()}</span>
     <span>&bull;</span>
@@ -591,18 +592,19 @@ function renderHeatmap() {
 }
 
 // === Trade log ===
+function esc(s) { if (s == null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;'); }
 function renderTrades() {
   var el = document.getElementById('trade-body'); if (!el || !TRADES.length) return;
   var html = '';
   TRADES.forEach(function(t) {
     var cls = t.pnl >= 0 ? 'pos' : 'neg';
     html += '<tr>'
-      + '<td class="mono">' + t.entry + '</td>'
-      + '<td class="mono">' + t.exit + '</td>'
-      + '<td><span style="display:inline-block;padding:1px 8px;border-radius:9999px;font-size:10px;font-weight:600;' + (t.type==='LONG' ? 'background:#ecfdf5;color:#059669' : 'background:#fef2f2;color:#dc2626') + '">' + t.type + '</span></td>'
+      + '<td class="mono">' + esc(t.entry) + '</td>'
+      + '<td class="mono">' + esc(t.exit) + '</td>'
+      + '<td><span style="display:inline-block;padding:1px 8px;border-radius:9999px;font-size:10px;font-weight:600;' + (t.type==='LONG' ? 'background:#ecfdf5;color:#059669' : 'background:#fef2f2;color:#dc2626') + '">' + esc(t.type) + '</span></td>'
       + '<td class="right mono">$' + t.ep.toFixed(2) + '</td>'
       + '<td class="right mono">$' + t.xp.toFixed(2) + '</td>'
-      + '<td class="right">' + t.sz + '</td>'
+      + '<td class="right">' + esc(t.sz) + '</td>'
       + '<td class="right ' + cls + ' mono" style="font-weight:600">' + (t.pnl>=0?'+':'') + '$' + t.pnl.toFixed(2) + '</td>'
       + '<td class="right ' + cls + ' mono">' + (t.pct>=0?'+':'') + t.pct.toFixed(2) + '%</td>'
       + '<td class="right mono">$' + t.comm.toFixed(2) + '</td>'

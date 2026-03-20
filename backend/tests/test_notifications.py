@@ -48,12 +48,14 @@ async def seeded_db(test_engine):
             username="user1",
             hashed_password=get_password_hash("TestPass123"),
             is_active=True,
+            is_verified=True,
         )
         u2 = User(
             email="user2@example.com",
             username="user2",
             hashed_password=get_password_hash("TestPass123"),
             is_active=True,
+            is_verified=True,
         )
         session.add_all([u1, u2])
         await session.flush()

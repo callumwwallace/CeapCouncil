@@ -94,7 +94,6 @@ describe('NotificationBell', () => {
     jest.clearAllMocks();
     mockUseAuthStore.mockReturnValue({
       isAuthenticated: true,
-      accessToken: 'fake-token',
     });
     mockGetUnreadCount.mockResolvedValue(2);
     mockGetNotifications.mockResolvedValue(groupedNotifications);
@@ -104,7 +103,6 @@ describe('NotificationBell', () => {
     it('still renders the bell but does not connect WebSocket', () => {
       mockUseAuthStore.mockReturnValue({
         isAuthenticated: false,
-        accessToken: null,
       });
       render(<NotificationBell />);
       expect(screen.getByTestId('bell-icon')).toBeInTheDocument();
@@ -249,6 +247,51 @@ describe('NotificationBell', () => {
 
       fireEvent.click(screen.getByText('user2 mentioned you in a post'));
       expect(mockMarkRead).toHaveBeenCalledWith(2);
+    });
+  });
+
+  describe('link sanitization', () => {
+    it('sanitizes javascript: and other unsafe links to /', async () => {
+      mockGetNotifications.mockResolvedValue({
+        competition: [],
+        forum: [
+          {
+            id: 99,
+            type: 'mention',
+            category: 'forum',
+            message: 'Unsafe link test',
+            link: 'javascript:alert(1)',
+            actor_username: 'evil',
+            read_at: null,
+            created_at: new Date().toISOString(),
+          },
+        ],
+        strategy: [],
+        system: [],
+      });
+      render(<NotificationBell />);
+      fireEvent.click(screen.getByTitle('Notifications'));
+
+      await waitFor(() => {
+        expect(mockGetNotifications).toHaveBeenCalled();
+      });
+
+      const link = screen.getByText('Unsafe link test').closest('a');
+      expect(link).toBeInTheDocument();
+      expect(link?.getAttribute('href')).toBe('/');
+    });
+
+    it('allows safe relative and absolute links', async () => {
+      mockGetNotifications.mockResolvedValue(groupedNotifications);
+      render(<NotificationBell />);
+      fireEvent.click(screen.getByTitle('Notifications'));
+
+      await waitFor(() => {
+        expect(mockGetNotifications).toHaveBeenCalled();
+      });
+
+      const compLink = screen.getByText('Competition ended. You placed 1st!').closest('a');
+      expect(compLink?.getAttribute('href')).toBe('/competitions/1');
     });
   });
 

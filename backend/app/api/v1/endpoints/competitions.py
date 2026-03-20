@@ -4,7 +4,7 @@ import random
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import joinedload
 
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.api.deps import get_current_active_user, get_current_user_optional
 from app.models.user import User
 from app.models.competition import Competition, CompetitionEntry, CompetitionStatus
@@ -62,7 +63,9 @@ class CompetitionEntryCreate(BaseModel):
 # ─── Competition CRUD ───────────────────────────────────────────────
 
 @router.get("/")
+@limiter.limit("60/minute")
 async def list_competitions(
+    request: Request,
     status: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
@@ -100,7 +103,9 @@ async def list_competitions(
 
 
 @router.get("/upcoming-preview")
+@limiter.limit("60/minute")
 async def get_upcoming_preview(
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """Live top 5 competition proposals from the last 7 days (by vote_score).
@@ -230,7 +235,9 @@ async def get_upcoming_preview(
 
 
 @router.post("/")
+@limiter.limit("10/minute")
 async def create_competition(
+    request: Request,
     data: CompetitionCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -276,7 +283,9 @@ async def create_competition(
 # ─── Competition Detail Routes ──────────────────────────────────────
 
 @router.get("/{competition_id}")
+@limiter.limit("60/minute")
 async def get_competition(
+    request: Request,
     competition_id: int,
     db: AsyncSession = Depends(get_db),
 ):
@@ -310,7 +319,9 @@ async def get_competition(
 
 
 @router.post("/{competition_id}/enter")
+@limiter.limit("20/minute")
 async def enter_competition(
+    request: Request,
     competition_id: int,
     data: CompetitionEntryCreate,
     db: AsyncSession = Depends(get_db),
@@ -328,12 +339,19 @@ async def enter_competition(
     if competition.end_date and datetime.utcnow() >= competition.end_date:
         raise HTTPException(status_code=400, detail="Competition entry period has ended")
 
-    if competition.max_entries:
-        from sqlalchemy import func as sa_func
+    # Lock the competition row to prevent race conditions on entry count
+    from sqlalchemy import func as sa_func
+    locked_comp = await db.scalar(
+        select(Competition).where(Competition.id == competition_id).with_for_update()
+    )
+    if not locked_comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    if locked_comp.max_entries:
         entry_count = await db.scalar(
             select(sa_func.count(CompetitionEntry.id)).where(CompetitionEntry.competition_id == competition_id)
         )
-        if (entry_count or 0) >= competition.max_entries:
+        if (entry_count or 0) >= locked_comp.max_entries:
             raise HTTPException(status_code=400, detail="Competition is full")
 
     existing_entry = await db.execute(
@@ -365,7 +383,9 @@ async def enter_competition(
 
 
 @router.get("/{competition_id}/leaderboard")
+@limiter.limit("60/minute")
 async def get_leaderboard(
+    request: Request,
     competition_id: int,
     db: AsyncSession = Depends(get_db),
 ):
@@ -412,7 +432,9 @@ async def get_leaderboard(
 
 
 @router.patch("/{competition_id}/status")
+@limiter.limit("30/minute")
 async def update_competition_status(
+    request: Request,
     competition_id: int,
     body: dict,
     db: AsyncSession = Depends(get_db),
@@ -437,7 +459,9 @@ async def update_competition_status(
 
 
 @router.get("/{competition_id}/equity-curves")
+@limiter.limit("60/minute")
 async def get_competition_equity_curves(
+    request: Request,
     competition_id: int,
     db: AsyncSession = Depends(get_db),
 ):

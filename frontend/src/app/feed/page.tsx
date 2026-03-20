@@ -16,6 +16,14 @@ import {
   FileText,
 } from 'lucide-react';
 
+function safeFeedLink(link: string | null | undefined): string {
+  if (!link || typeof link !== 'string') return '/';
+  const s = link.trim();
+  const lower = s.toLowerCase();
+  if (s.startsWith('/') || lower.startsWith('https://') || lower.startsWith('http://')) return s;
+  return '/';
+}
+
 function formatDate(iso: string | null): string {
   if (!iso) return '';
   try {
@@ -164,7 +172,7 @@ export default function FeedPage() {
                       </span>
                       <span className="text-gray-300 text-xs ml-auto shrink-0">{formatDate(item.created_at)}</span>
                     </div>
-                    <Link href={item.link} className="group">
+                    <Link href={safeFeedLink(item.link)} className="group">
                       <p className="font-medium text-gray-800 mt-1 group-hover:text-emerald-600 transition flex items-center gap-1">
                         {item.title}
                         <ArrowUpRight className="h-3.5 w-3.5 text-gray-300 group-hover:text-emerald-500 transition" />

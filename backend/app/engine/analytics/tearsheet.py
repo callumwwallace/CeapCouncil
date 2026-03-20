@@ -10,15 +10,17 @@ Generates a standalone HTML report with:
 
 from __future__ import annotations
 
+import html
 import json
 import math
+import secrets
 from datetime import datetime
 from typing import Any
 
 import numpy as np
 
 
-def generate_tearsheet(results: dict, title: str = "Backtest Report") -> str:
+def generate_tearsheet(results: dict, title: str = "Backtest Report") -> tuple[str, str]:
     """Generate a standalone HTML tear sheet from backtest results.
 
     Args:
@@ -26,23 +28,30 @@ def generate_tearsheet(results: dict, title: str = "Backtest Report") -> str:
         title: Report title
 
     Returns:
-        Complete HTML string
+        Tuple of (HTML string, CSP nonce)
     """
+    nonce = secrets.token_urlsafe(16)
     metrics = _format_metrics(results)
     monthly_returns = _compute_monthly_returns(results.get("equity_curve", []))
     trade_dist = _compute_trade_distribution(results.get("trades", []))
-    equity_data = json.dumps(results.get("equity_curve", []))
-    drawdown_data = json.dumps(results.get("drawdown_series", []))
-    monthly_data = json.dumps(monthly_returns)
-    trade_dist_data = json.dumps(trade_dist)
+    # Escape </ sequences to prevent breaking out of <script> context
+    def _safe_json(obj: Any) -> str:
+        return json.dumps(obj).replace("</", r"<\/")
 
-    html = f"""<!DOCTYPE html>
+    equity_data = _safe_json(results.get("equity_curve", []))
+    drawdown_data = _safe_json(results.get("drawdown_series", []))
+    monthly_data = _safe_json(monthly_returns)
+    trade_dist_data = _safe_json(trade_dist)
+
+    safe_title = html.escape(title, quote=True)
+
+    html_str = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{title}</title>
-<style>
+<title>{safe_title}</title>
+<style nonce="{nonce}">
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0f; color: #e0e0e0; padding: 24px; }}
 .container {{ max-width: 1200px; margin: 0 auto; }}
@@ -70,7 +79,7 @@ canvas {{ width: 100%; height: 200px; }}
 </head>
 <body>
 <div class="container">
-<h1>{title}</h1>
+<h1>{safe_title}</h1>
 <div class="subtitle">Generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')} &middot; Ceap Council</div>
 
 <h2>Performance Summary</h2>
@@ -107,7 +116,7 @@ canvas {{ width: 100%; height: 200px; }}
 <div class="footer">Ceap Council Backtesting Platform &middot; {datetime.utcnow().year}</div>
 </div>
 
-<script>
+<script nonce="{nonce}">
 const equityData = {equity_data};
 const drawdownData = {drawdown_data};
 const monthlyData = {monthly_data};
@@ -198,7 +207,7 @@ drawHistogram('tradeDistChart', tradeDistData);
 </script>
 </body>
 </html>"""
-    return html
+    return html_str, nonce
 
 
 def _format_metrics(results: dict) -> str:
@@ -286,17 +295,20 @@ def _format_trade_table(trades: list[dict]) -> str:
     if not trades:
         return '<p style="color:#666">No trades to display.</p>'
 
-    html = '<table class="trade-table"><thead><tr>'
-    html += '<th>#</th><th>Entry</th><th>Exit</th><th>Side</th><th>P&L</th><th>Return %</th></tr></thead><tbody>'
+    out = '<table class="trade-table"><thead><tr>'
+    out += '<th>#</th><th>Entry</th><th>Exit</th><th>Side</th><th>P&L</th><th>Return %</th></tr></thead><tbody>'
 
     for i, t in enumerate(trades):
         pnl = t.get("pnl", 0)
         pnl_class = "positive" if pnl >= 0 else "negative"
         ret = t.get("return_pct", 0)
-        html += f'<tr><td>{i+1}</td><td>{t.get("entry_date", "-")}</td><td>{t.get("exit_date", "-")}</td>'
-        html += f'<td>{t.get("side", "-")}</td>'
-        html += f'<td class="{pnl_class}">${pnl:,.2f}</td>'
-        html += f'<td class="{pnl_class}">{ret:.2f}%</td></tr>'
+        entry = html.escape(str(t.get("entry_date", "-")))
+        exit_ = html.escape(str(t.get("exit_date", "-")))
+        side = html.escape(str(t.get("side", "-")))
+        out += f'<tr><td>{i+1}</td><td>{entry}</td><td>{exit_}</td>'
+        out += f'<td>{side}</td>'
+        out += f'<td class="{pnl_class}">${pnl:,.2f}</td>'
+        out += f'<td class="{pnl_class}">{ret:.2f}%</td></tr>'
 
-    html += '</tbody></table>'
-    return html
+    out += '</tbody></table>'
+    return out

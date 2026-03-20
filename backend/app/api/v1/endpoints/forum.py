@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, or_, and_
 
 from app.core.database import get_db
+from app.core.sanitize import sanitize_user_content
 from app.api.deps import get_current_active_user, get_current_user_optional
 from app.models.user import User
 from app.models.forum import ForumTopic, ForumThread, ForumPost, ThreadVote, PostVote
@@ -66,7 +67,9 @@ async def create_mention_notifications(
 
 
 @router.get("/search", response_model=list[ForumSearchResult])
+@limiter.limit("60/minute")
 async def search_threads(
+    request: Request,
     q: str | None = Query(None, description="Keywords to search in thread title and post content"),
     sections: str | None = Query(None, description="Comma-separated sections: official,community,competitions,education,support"),
     date_from: str | None = Query(None, description="Start date (YYYY-MM-DD)"),
@@ -97,14 +100,14 @@ async def search_threads(
             dt = datetime.strptime(date_from, "%Y-%m-%d")
             filters.append(ForumThread.created_at >= dt)
         except ValueError:
-            pass
+            raise HTTPException(400, "Invalid date format. Use YYYY-MM-DD")
     if date_to:
         try:
             dt = datetime.strptime(date_to, "%Y-%m-%d")
             dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
             filters.append(ForumThread.created_at <= dt)
         except ValueError:
-            pass
+            raise HTTPException(400, "Invalid date format. Use YYYY-MM-DD")
 
     if posted_by and posted_by.strip():
         match = f"%{_escape_like(posted_by.strip())}%"
@@ -154,7 +157,8 @@ async def search_threads(
 
 
 @router.get("/topics", response_model=list[ForumTopicResponse])
-async def list_topics(db: AsyncSession = Depends(get_db)):
+@limiter.limit("60/minute")
+async def list_topics(request: Request, db: AsyncSession = Depends(get_db)):
     """List all forum topics with thread/post counts and latest thread."""
     result = await db.execute(
         select(ForumTopic).order_by(ForumTopic.sort_order, ForumTopic.id)
@@ -205,7 +209,9 @@ async def list_topics(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/topics/{slug}/threads", response_model=list[ForumThreadSummary])
+@limiter.limit("60/minute")
 async def list_threads(
+    request: Request,
     slug: str,
     sort_by: str = Query("updated_at", pattern="^(updated_at|created_at|vote_score)$"),
     skip: int = Query(0, ge=0),
@@ -295,7 +301,7 @@ async def create_thread(
     post = ForumPost(
         thread_id=thread.id,
         author_id=current_user.id,
-        content=data.body,
+        content=sanitize_user_content(data.body),
     )
     db.add(post)
     await db.flush()
@@ -379,7 +385,7 @@ async def create_proposal_thread(
         "ranking_metrics": metrics_list if len(metrics_list) > 1 else None,
     }
 
-    body_parts = [data.body.strip(), ""]
+    body_parts = [sanitize_user_content(data.body.strip()), ""]
     body_parts.append("---")
     body_parts.append("**Proposal details:**")
     body_parts.append(f"- Symbol(s): {', '.join(symbols_list)}")
@@ -429,7 +435,9 @@ async def create_proposal_thread(
 
 
 @router.get("/threads/{thread_id}", response_model=ForumThreadDetail)
+@limiter.limit("60/minute")
 async def get_thread(
+    request: Request,
     thread_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
@@ -508,7 +516,9 @@ async def get_thread(
 
 
 @router.post("/threads/{thread_id}/vote")
+@limiter.limit("60/minute")
 async def vote_thread(
+    request: Request,
     thread_id: int,
     data: ThreadVoteCreate,
     current_user: User = Depends(get_current_active_user),
@@ -528,31 +538,47 @@ async def vote_thread(
         )
     )
 
+    from sqlalchemy import update as sql_update
+
     if data.value == 0:
         if existing:
-            thread.vote_score = (thread.vote_score or 0) - existing.value
+            await db.execute(
+                sql_update(ForumThread)
+                .where(ForumThread.id == thread_id)
+                .values(vote_score=ForumThread.vote_score - existing.value)
+            )
             await db.delete(existing)
         await db.flush()
         await db.refresh(thread)
         return {"vote_score": thread.vote_score or 0, "your_vote": None}
     elif existing:
-        old_val = existing.value
+        delta = data.value - existing.value
         existing.value = data.value
-        thread.vote_score = (thread.vote_score or 0) - old_val + data.value
+        await db.execute(
+            sql_update(ForumThread)
+            .where(ForumThread.id == thread_id)
+            .values(vote_score=ForumThread.vote_score + delta)
+        )
         await db.flush()
         await db.refresh(thread)
         return {"vote_score": thread.vote_score or 0, "your_vote": data.value}
     else:
         vote = ThreadVote(thread_id=thread_id, user_id=current_user.id, value=data.value)
         db.add(vote)
-        thread.vote_score = (thread.vote_score or 0) + data.value
+        await db.execute(
+            sql_update(ForumThread)
+            .where(ForumThread.id == thread_id)
+            .values(vote_score=ForumThread.vote_score + data.value)
+        )
         await db.flush()
         await db.refresh(thread)
         return {"vote_score": thread.vote_score or 0, "your_vote": data.value}
 
 
 @router.post("/posts/{post_id}/vote")
+@limiter.limit("60/minute")
 async def vote_post(
+    request: Request,
     post_id: int,
     data: PostVoteCreate,
     current_user: User = Depends(get_current_active_user),
@@ -572,31 +598,47 @@ async def vote_post(
         )
     )
 
+    from sqlalchemy import update as sql_update
+
     if data.value == 0:
         if existing:
-            post.vote_score = (post.vote_score or 0) - existing.value
+            await db.execute(
+                sql_update(ForumPost)
+                .where(ForumPost.id == post_id)
+                .values(vote_score=ForumPost.vote_score - existing.value)
+            )
             await db.delete(existing)
         await db.flush()
         await db.refresh(post)
         return {"vote_score": post.vote_score or 0, "your_vote": None}
     elif existing:
-        old_val = existing.value
+        delta = data.value - existing.value
         existing.value = data.value
-        post.vote_score = (post.vote_score or 0) - old_val + data.value
+        await db.execute(
+            sql_update(ForumPost)
+            .where(ForumPost.id == post_id)
+            .values(vote_score=ForumPost.vote_score + delta)
+        )
         await db.flush()
         await db.refresh(post)
         return {"vote_score": post.vote_score or 0, "your_vote": data.value}
     else:
         vote = PostVote(post_id=post_id, user_id=current_user.id, value=data.value)
         db.add(vote)
-        post.vote_score = (post.vote_score or 0) + data.value
+        await db.execute(
+            sql_update(ForumPost)
+            .where(ForumPost.id == post_id)
+            .values(vote_score=ForumPost.vote_score + data.value)
+        )
         await db.flush()
         await db.refresh(post)
         return {"vote_score": post.vote_score or 0, "your_vote": data.value}
 
 
 @router.post("/threads/{thread_id}/pin")
+@limiter.limit("30/minute")
 async def toggle_pin_thread(
+    request: Request,
     thread_id: int,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -630,7 +672,7 @@ async def create_post(
     post = ForumPost(
         thread_id=thread_id,
         author_id=current_user.id,
-        content=data.content,
+        content=sanitize_user_content(data.content),
     )
     db.add(post)
     await db.flush()
@@ -671,7 +713,9 @@ async def create_post(
 
 
 @router.patch("/posts/{post_id}", response_model=ForumPostResponse)
+@limiter.limit("30/minute")
 async def update_post(
+    request: Request,
     post_id: int,
     data: ForumPostUpdate,
     current_user: User = Depends(get_current_active_user),
@@ -683,7 +727,7 @@ async def update_post(
         raise HTTPException(404, "Post not found")
     if post.author_id != current_user.id:
         raise HTTPException(403, "Not authorized")
-    post.content = data.content
+    post.content = sanitize_user_content(data.content)
     await db.flush()
     await db.refresh(post)
     return ForumPostResponse(
@@ -700,7 +744,9 @@ async def update_post(
 
 
 @router.delete("/posts/{post_id}", status_code=204)
+@limiter.limit("30/minute")
 async def delete_post(
+    request: Request,
     post_id: int,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),

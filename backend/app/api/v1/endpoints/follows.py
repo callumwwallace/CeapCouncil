@@ -2,12 +2,13 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, union_all
 
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.api.deps import get_current_active_user, get_current_user_optional
 from app.models.user import User
 from app.models.follow import UserFollow, SkillEndorsement, ENDORSABLE_SKILLS, SKILL_LABELS
@@ -29,7 +30,9 @@ class FollowResponse(BaseModel):
 
 
 @router.post("/{username}/follow", response_model=FollowResponse)
+@limiter.limit("30/minute")
 async def follow_user(
+    request: Request,
     username: str,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -77,7 +80,9 @@ async def follow_user(
 
 
 @router.delete("/{username}/follow", response_model=FollowResponse)
+@limiter.limit("30/minute")
 async def unfollow_user(
+    request: Request,
     username: str,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -110,7 +115,9 @@ async def unfollow_user(
 
 
 @router.get("/{username}/follow-stats")
+@limiter.limit("60/minute")
 async def get_follow_stats(
+    request: Request,
     username: str,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
@@ -145,7 +152,9 @@ async def get_follow_stats(
 
 
 @router.get("/{username}/followers")
+@limiter.limit("60/minute")
 async def get_followers(
+    request: Request,
     username: str,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
@@ -177,7 +186,9 @@ async def get_followers(
 
 
 @router.get("/{username}/following")
+@limiter.limit("60/minute")
 async def get_following(
+    request: Request,
     username: str,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
@@ -211,7 +222,9 @@ async def get_following(
 # ─── Activity Feed ────────────────────────────────────────────────
 
 @router.get("/me/feed")
+@limiter.limit("60/minute")
 async def get_feed(
+    request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=50),
     current_user: User = Depends(get_current_active_user),
@@ -357,7 +370,9 @@ class EndorseRequest(BaseModel):
 
 
 @router.get("/{username}/endorsements")
+@limiter.limit("60/minute")
 async def get_user_endorsements(
+    request: Request,
     username: str,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
@@ -403,7 +418,9 @@ async def get_user_endorsements(
 
 
 @router.post("/{username}/endorsements")
+@limiter.limit("30/minute")
 async def endorse_skill(
+    request: Request,
     username: str,
     data: EndorseRequest,
     current_user: User = Depends(get_current_active_user),
@@ -411,7 +428,7 @@ async def endorse_skill(
 ):
     """Endorse a user for a specific skill."""
     if data.skill not in ENDORSABLE_SKILLS:
-        raise HTTPException(400, f"Invalid skill. Valid: {', '.join(ENDORSABLE_SKILLS)}")
+        raise HTTPException(400, "Invalid skill")
 
     target = await db.scalar(select(User).where(User.username == username))
     if not target:
@@ -448,7 +465,9 @@ async def endorse_skill(
 
 
 @router.delete("/{username}/endorsements/{skill}")
+@limiter.limit("30/minute")
 async def remove_endorsement(
+    request: Request,
     username: str,
     skill: str,
     current_user: User = Depends(get_current_active_user),

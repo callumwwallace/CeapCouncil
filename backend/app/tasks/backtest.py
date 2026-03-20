@@ -1,7 +1,6 @@
 import ast
 import resource
 import signal
-import traceback
 import math
 from datetime import datetime, timedelta, timezone
 
@@ -88,6 +87,16 @@ def _clear_resource_limits():
         pass
 
 
+def _compile_with_timeout(code: str, params: dict | None = None, restore_alarm_after: int | None = 0):
+    timeout = getattr(settings, "COMPILE_TIMEOUT_SECONDS", 30)
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(timeout)
+    try:
+        return compile_strategy(code, params)
+    finally:
+        signal.alarm(restore_alarm_after if restore_alarm_after is not None else 0)
+
+
 def _build_safe_builtins() -> dict:
     if isinstance(__builtins__, dict):
         src = __builtins__
@@ -107,8 +116,18 @@ def _build_safe_builtins() -> dict:
     return safe
 
 
+def _safe_task_error(exc: Exception, generic: str = "Task failed") -> str:
+    msg = str(exc)
+    if any(x in msg for x in ("Traceback", 'File "', "  File ", ".py\"", "\\app\\", "/app/")):
+        return generic
+    if isinstance(exc, ValueError) and len(msg) <= 500:
+        return msg
+    if isinstance(exc, ValueError):
+        return msg[:500]
+    return generic
+
+
 def _extract_user_error(exc: Exception, code: str) -> str:
-    """Extract a clean error message from user strategy code, including line info."""
     import linecache
     import sys
 
@@ -367,7 +386,7 @@ def _run_backtest(
         take_profit_pct=params.get("take_profit_pct"),
     )
 
-    strategy_cls = compile_strategy(code, params)
+    strategy_cls = _compile_with_timeout(code, params=params)
     strategy = strategy_cls(params=params)
 
     engine = Engine(config)
@@ -537,14 +556,17 @@ def run_backtest_task(self, backtest_id: int):
             raise ValueError(f"No trading-day data found for {backtest.symbol} (weekends/holidays excluded)")
 
         try:
-            strategy_cls = compile_strategy(strategy_code)
+            strategy_cls = _compile_with_timeout(
+                strategy_code, params=params, restore_alarm_after=settings.BACKTEST_TIMEOUT_SECONDS
+            )
             strategy = strategy_cls(params=params)
         except (ValueError, Exception) as e:
+            safe_msg = _safe_task_error(e, "Strategy compilation or setup failed")
             backtest.status = BacktestStatus.FAILED
-            backtest.error_message = str(e)[:1000]
+            backtest.error_message = safe_msg[:1000]
             backtest.completed_at = datetime.now(timezone.utc)
             db.commit()
-            return {"status": "failed", "error": str(e)}
+            return {"status": "failed", "error": safe_msg}
 
         is_crypto = any(
             ind in backtest.symbol.upper()
@@ -713,13 +735,14 @@ def run_backtest_task(self, backtest_id: int):
         return {"status": "completed", "backtest_id": backtest_id}
 
     except Exception as e:
+        safe_msg = _safe_task_error(e, "Backtest failed")
         backtest = db.query(Backtest).filter(Backtest.id == backtest_id).first()
         if backtest:
             backtest.status = BacktestStatus.FAILED
-            backtest.error_message = str(e)[:1000]
+            backtest.error_message = safe_msg[:1000]
             backtest.completed_at = datetime.now(timezone.utc)
             db.commit()
-        return {"status": "failed", "error": str(e), "traceback": traceback.format_exc()}
+        return {"status": "failed", "error": safe_msg}
 
     finally:
         _clear_resource_limits()
@@ -777,10 +800,10 @@ def _run_single_backtest(
     ``start_date`` / ``end_date`` to let this helper download it.
     """
     try:
-        strategy_cls = compile_strategy(code)
+        strategy_cls = _compile_with_timeout(code, params=param_combo)
         strategy = strategy_cls(params=param_combo)
     except (ValueError, Exception) as e:
-        return {"params": param_combo, "error": str(e)}
+        return {"params": param_combo, "error": _safe_task_error(e, "Optimization failed")}
 
     # Use pre-fetched data if available, otherwise download
     if data is None:
@@ -809,7 +832,7 @@ def _run_single_backtest(
     try:
         result: EngineResult = engine.run()
     except Exception as e:
-        return {"params": param_combo, "error": str(e)[:200]}
+        return {"params": param_combo, "error": _safe_task_error(e, "Optimization failed")}
 
     m = result.metrics
 

@@ -33,12 +33,27 @@ class Settings(BaseSettings):
 
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
 
+    # Email (SMTP) — set SMTP_HOST to enable sending
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "noreply@quantguild.local"
+    SMTP_TLS: bool = True
+    FRONTEND_URL: str = "http://localhost:3000"
+
+    # TOTP 2FA
+    TOTP_ENCRYPTION_KEY: str = ""  # 32-byte base64 Fernet key; derive from SECRET_KEY if empty
+    TOTP_ISSUER_NAME: str = "QuantGuild"
+
     BACKTEST_TIMEOUT_SECONDS: int = 300
+    COMPILE_TIMEOUT_SECONDS: int = 30  # Strategy compilation timeout (SIGALRM)
     BACKTEST_MAX_MEMORY_MB: int = 1024
 
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"  # Ignore extra env vars (POSTGRES_*, REDIS_PASSWORD, etc.)
 
 
 _INSECURE_DEFAULTS = {"", "your-secret-key-change-in-production", "changeme"}

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { BarChart3, ArrowRight, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { PasswordStrengthMeter } from '@/components/auth/PasswordStrengthMeter';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -25,31 +26,13 @@ export default function RegisterPage() {
       return;
     }
     
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters');
-      return;
-    }
-    
-    if (!/[A-Z]/.test(password)) {
-      setError('Password must contain at least one uppercase letter');
-      return;
-    }
-    
-    if (!/[a-z]/.test(password)) {
-      setError('Password must contain at least one lowercase letter');
-      return;
-    }
-    
-    if (!/[0-9]/.test(password)) {
-      setError('Password must contain at least one number');
-      return;
-    }
-    
     try {
       await register(email, username, password);
-      router.push('/dashboard');
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Registration failed. Please try again.');
+      router.push('/check-email');
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string | string[] } } })?.response?.data?.detail;
+      const msg = Array.isArray(detail) ? detail[0] : typeof detail === 'string' ? detail : 'Registration failed. Please try again.';
+      setError(msg || 'Registration failed. Please try again.');
     }
   };
 
@@ -139,7 +122,7 @@ export default function RegisterPage() {
                   placeholder="••••••••"
                 />
               </div>
-              <p className="mt-1 text-xs text-gray-500">Min 8 characters with uppercase, lowercase, and number</p>
+              <PasswordStrengthMeter password={password} className="mt-1" />
             </div>
 
             <div>

@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
-import { Mail, User, Shield, ChevronRight, Loader2, Bell } from 'lucide-react';
+import { Mail, User, Shield, ChevronRight, Loader2, Bell, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { PasswordStrengthMeter } from '@/components/auth/PasswordStrengthMeter';
+import { QRCodeSVG } from 'qrcode.react';
 
 function formatDate(iso: string): string {
   try {
@@ -31,6 +33,17 @@ export default function DashboardPage() {
   const [emailOnMention, setEmailOnMention] = useState(false);
   const [emailMarketing, setEmailMarketing] = useState(false);
   const [notifSaving, setNotifSaving] = useState(false);
+  const [totpEnabled, setTotpEnabled] = useState(false);
+  const [totpLoading, setTotpLoading] = useState(true);
+  const [totpPhase, setTotpPhase] = useState<'idle' | 'qr' | 'confirm' | 'done'>('idle');
+  const [totpQrUri, setTotpQrUri] = useState('');
+  const [totpSecret, setTotpSecret] = useState('');
+  const [totpConfirmCode, setTotpConfirmCode] = useState('');
+  const [totpRecoveryCodes, setTotpRecoveryCodes] = useState<string[]>([]);
+  const [totpDisablePassword, setTotpDisablePassword] = useState('');
+  const [totpDisableCode, setTotpDisableCode] = useState('');
+  const [totpError, setTotpError] = useState('');
+  const [totpActionLoading, setTotpActionLoading] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated && !isLoading) {
@@ -41,6 +54,10 @@ export default function DashboardPage() {
   useEffect(() => {
     if (isAuthenticated) {
       fetchUser();
+      api.totpStatus()
+        .then((r) => setTotpEnabled(r.totp_enabled))
+        .catch(() => setTotpEnabled(false))
+        .finally(() => setTotpLoading(false));
     }
   }, [isAuthenticated, fetchUser]);
 
@@ -294,9 +311,10 @@ export default function DashboardPage() {
                     value={passwordForm.newPassword}
                     onChange={(e) => setPasswordForm((f) => ({ ...f, newPassword: e.target.value }))}
                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                    placeholder="8+ chars, upper, lower, number"
+                    placeholder="Use a strong password"
                     autoComplete="new-password"
                   />
+                  <PasswordStrengthMeter password={passwordForm.newPassword} className="mt-0.5" />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-600 mb-0.5">Confirm</label>
@@ -320,6 +338,165 @@ export default function DashboardPage() {
                   Update password
                 </button>
               </form>
+              </div>
+
+              {/* Two-factor authentication */}
+              <div className="md:col-span-2 border-t border-gray-200 pt-6 mt-2">
+                <h3 className="text-sm font-medium text-gray-900 mb-3">Two-factor authentication</h3>
+                {totpError && (
+                  <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm mb-3">
+                    <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                    {totpError}
+                  </div>
+                )}
+                {totpLoading ? (
+                  <div className="flex justify-center py-4">
+                    <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                  </div>
+                ) : totpPhase === 'done' ? (
+                  <div>
+                    <div className="flex items-center gap-2 text-emerald-600 mb-2">
+                      <CheckCircle2 className="h-5 w-5" />
+                      <span className="font-medium">2FA enabled</span>
+                    </div>
+                    <p className="text-sm text-gray-600 mb-3">Save these recovery codes in a secure place.</p>
+                    <div className="bg-gray-50 rounded-lg p-4 font-mono text-sm mb-3">
+                      {totpRecoveryCodes.map((c, i) => (
+                        <div key={i}>{c}</div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setTotpPhase('idle'); setTotpRecoveryCodes([]); }}
+                      className="text-sm text-emerald-600 hover:text-emerald-500"
+                    >
+                      I&apos;ve saved these
+                    </button>
+                  </div>
+                ) : totpPhase === 'qr' ? (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      setTotpError('');
+                      setTotpActionLoading(true);
+                      try {
+                        const r = await api.totpConfirm(totpConfirmCode);
+                        setTotpRecoveryCodes(r.recovery_codes);
+                        setTotpEnabled(true);
+                        setTotpPhase('done');
+                      } catch {
+                        setTotpError('Invalid code. Please try again.');
+                      } finally {
+                        setTotpActionLoading(false);
+                      }
+                    }}
+                    className="space-y-3 max-w-sm"
+                  >
+                    <p className="text-sm text-gray-600">Scan the QR code with your authenticator app.</p>
+                    <div className="flex justify-center p-4 bg-white rounded-lg border border-gray-200">
+                      <QRCodeSVG value={totpQrUri} size={160} level="M" />
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      Or enter manually: <code className="bg-gray-100 px-1 rounded">{totpSecret}</code>
+                    </p>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-0.5">6-digit code</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={totpConfirmCode}
+                        onChange={(e) => setTotpConfirmCode(e.target.value.replace(/\D/g, ''))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono"
+                        placeholder="000000"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={totpActionLoading || totpConfirmCode.length !== 6}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg"
+                    >
+                      {totpActionLoading && <Loader2 className="h-4 w-4 animate-spin inline mr-1" />}
+                      Enable 2FA
+                    </button>
+                  </form>
+                ) : totpEnabled ? (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      setTotpError('');
+                      setTotpActionLoading(true);
+                      try {
+                        await api.totpDisable(totpDisablePassword, totpDisableCode);
+                        setTotpEnabled(false);
+                        setTotpDisablePassword('');
+                        setTotpDisableCode('');
+                      } catch {
+                        setTotpError('Invalid password or code.');
+                      } finally {
+                        setTotpActionLoading(false);
+                      }
+                    }}
+                    className="space-y-3 max-w-sm"
+                  >
+                    <p className="text-sm text-gray-600">2FA is enabled. Enter password and code to disable.</p>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-0.5">Password</label>
+                      <input
+                        type="password"
+                        value={totpDisablePassword}
+                        onChange={(e) => setTotpDisablePassword(e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                        placeholder="Your password"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-0.5">6-digit code</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={totpDisableCode}
+                        onChange={(e) => setTotpDisableCode(e.target.value.replace(/\D/g, ''))}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono"
+                        placeholder="000000"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={totpActionLoading || !totpDisablePassword || totpDisableCode.length !== 6}
+                      className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg"
+                    >
+                      Disable 2FA
+                    </button>
+                  </form>
+                ) : (
+                  <div>
+                    <p className="text-sm text-gray-600 mb-2">Add an extra layer of security.</p>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setTotpError('');
+                        setTotpActionLoading(true);
+                        try {
+                          const r = await api.totpSetup();
+                          setTotpQrUri(r.qr_uri);
+                          setTotpSecret(r.secret);
+                          setTotpPhase('qr');
+                        } catch {
+                          setTotpError('Failed to start 2FA setup');
+                        } finally {
+                          setTotpActionLoading(false);
+                        }
+                      }}
+                      disabled={totpActionLoading}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg"
+                    >
+                      {totpActionLoading && <Loader2 className="h-4 w-4 animate-spin inline mr-1" />}
+                      Enable 2FA
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </section>

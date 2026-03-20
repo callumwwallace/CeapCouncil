@@ -2,12 +2,13 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, desc
 from pydantic import BaseModel
 
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.api.deps import get_current_active_user
 from app.models.user import User
 from app.models.notification import Notification, NOTIFICATION_CATEGORIES
@@ -45,7 +46,9 @@ def _to_response(n: Notification, actor_username: str) -> NotificationResponse:
 
 
 @router.get("")
+@limiter.limit("60/minute")
 async def list_notifications(
+    request: Request,
     unread_only: bool = Query(False),
     category: str | None = Query(None, description="Filter by category: competition, forum, strategy, system"),
     group_by: str | None = Query(None, description="Group by 'category' to return grouped dict"),
@@ -86,7 +89,9 @@ async def list_notifications(
 
 
 @router.get("/unread-count")
+@limiter.limit("60/minute")
 async def unread_count(
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -102,7 +107,9 @@ async def unread_count(
 
 
 @router.post("/{notification_id}/read", status_code=204)
+@limiter.limit("30/minute")
 async def mark_read(
+    request: Request,
     notification_id: int,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -121,7 +128,9 @@ async def mark_read(
 
 
 @router.post("/read-all", status_code=204)
+@limiter.limit("10/minute")
 async def mark_all_read(
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -136,7 +145,9 @@ async def mark_all_read(
 
 
 @router.delete("/clear", status_code=204)
+@limiter.limit("10/minute")
 async def clear_all(
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
