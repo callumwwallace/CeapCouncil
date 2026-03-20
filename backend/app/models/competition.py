@@ -1,7 +1,7 @@
 """Competition, leaderboard, and badge models."""
 
 from datetime import datetime
-from sqlalchemy import String, DateTime, ForeignKey, Float, Boolean, JSON, Integer, Text
+from sqlalchemy import String, DateTime, ForeignKey, Float, Boolean, JSON, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 from sqlalchemy import Enum as SQLEnum
@@ -95,6 +95,9 @@ class Badge(Base):
     """Permanent achievement for competition rankings. Survives after competition data is purged."""
 
     __tablename__ = "badges"
+    __table_args__ = (
+        UniqueConstraint("user_id", "competition_id", name="uq_badge_user_competition"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)

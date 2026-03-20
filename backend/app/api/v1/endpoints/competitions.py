@@ -238,14 +238,28 @@ async def create_competition(
     """Create a new competition. Admin only."""
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Only admins can create competitions directly")
+
+    # Validate dates
+    try:
+        start_dt = datetime.fromisoformat(data.start_date)
+        end_dt = datetime.fromisoformat(data.end_date)
+        bt_start = datetime.fromisoformat(data.backtest_start)
+        bt_end = datetime.fromisoformat(data.backtest_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use ISO format (YYYY-MM-DD)")
+    if start_dt >= end_dt:
+        raise HTTPException(status_code=400, detail="start_date must be before end_date")
+    if bt_start >= bt_end:
+        raise HTTPException(status_code=400, detail="backtest_start must be before backtest_end")
+
     competition = Competition(
         title=data.title,
         description=data.description,
         symbol=data.symbol,
-        start_date=datetime.fromisoformat(data.start_date),
-        end_date=datetime.fromisoformat(data.end_date),
-        backtest_start=datetime.fromisoformat(data.backtest_start),
-        backtest_end=datetime.fromisoformat(data.backtest_end),
+        start_date=start_dt,
+        end_date=end_dt,
+        backtest_start=bt_start,
+        backtest_end=bt_end,
         initial_capital=data.initial_capital,
         ranking_metric=data.ranking_metric,
         ranking_metrics=data.ranking_metrics,
@@ -310,11 +324,16 @@ async def enter_competition(
     if competition.status != CompetitionStatus.ACTIVE:
         raise HTTPException(status_code=400, detail="Competition is not accepting entries")
 
+    # Reject entries after end_date even if status hasn't been swept to COMPLETED yet
+    if competition.end_date and datetime.utcnow() >= competition.end_date:
+        raise HTTPException(status_code=400, detail="Competition entry period has ended")
+
     if competition.max_entries:
-        existing = await db.execute(
-            select(CompetitionEntry).where(CompetitionEntry.competition_id == competition_id)
+        from sqlalchemy import func as sa_func
+        entry_count = await db.scalar(
+            select(sa_func.count(CompetitionEntry.id)).where(CompetitionEntry.competition_id == competition_id)
         )
-        if len(existing.scalars().all()) >= competition.max_entries:
+        if (entry_count or 0) >= competition.max_entries:
             raise HTTPException(status_code=400, detail="Competition is full")
 
     existing_entry = await db.execute(
@@ -368,7 +387,7 @@ async def get_leaderboard(
     leaderboard = []
     for i, (entry, user, strategy) in enumerate(rows):
         leaderboard.append({
-            "rank": entry.rank or (i + 1),
+            "rank": entry.rank,
             "user_id": entry.user_id,
             "username": user.username,
             "strategy_id": entry.strategy_id,

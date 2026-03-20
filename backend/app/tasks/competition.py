@@ -202,6 +202,7 @@ def award_competition_badges_task(competition_id: int):
         )
 
         title = competition.title
+        awarded = 0
         for entry in entries:
             rank = entry.rank
             tier = "participant"
@@ -220,7 +221,11 @@ def award_competition_badges_task(competition_id: int):
                 )
                 .first()
             )
-            if not existing:
+            if existing:
+                # Update tier/rank if re-run (idempotent)
+                existing.badge_tier = tier
+                existing.rank = rank
+            else:
                 badge = Badge(
                     user_id=entry.user_id,
                     competition_id=competition_id,
@@ -229,8 +234,9 @@ def award_competition_badges_task(competition_id: int):
                     rank=rank,
                 )
                 db.add(badge)
+                awarded += 1
         db.commit()
-        return {"awarded": len(entries)}
+        return {"awarded": awarded, "total_entries": len(entries)}
     finally:
         db.close()
 
@@ -295,18 +301,44 @@ def _build_archive_post_body(competition: Competition, top_entries: list) -> str
     return "\n".join(parts)
 
 
-@celery_app.task
-def post_competition_archive_task(competition_id: int):
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=300)
+def post_competition_archive_task(self, competition_id: int):
     """Post a thread to Past Competition Archives when a competition completes."""
+    import logging
+    logger = logging.getLogger(__name__)
+
     db = SessionLocal()
     try:
         competition = db.query(Competition).filter(Competition.id == competition_id).first()
         if not competition or competition.status != CompetitionStatus.COMPLETED:
             return {"skipped": "Competition not completed"}
 
+        # Check for existing archive thread to prevent duplicates
+        existing_archive = (
+            db.query(ForumThread)
+            .join(ForumTopic, ForumThread.topic_id == ForumTopic.id)
+            .filter(
+                ForumTopic.slug == "archives",
+                ForumThread.title == competition.title[:200],
+            )
+            .first()
+        )
+        if existing_archive:
+            return {"skipped": "Archive thread already exists", "thread_id": existing_archive.id}
+
         topic = db.query(ForumTopic).filter(ForumTopic.slug == "archives").first()
         if not topic:
-            return {"error": "Forum topic 'archives' not found"}
+            # Auto-create the archives topic
+            topic = ForumTopic(
+                slug="archives",
+                name="Past Competition Archives",
+                description="Archived results from completed competitions.",
+                section="competitions",
+                sort_order=99,
+            )
+            db.add(topic)
+            db.flush()
+            logger.info("Auto-created 'archives' forum topic (id=%s)", topic.id)
 
         top_entries = (
             db.query(CompetitionEntry, User, Strategy)
@@ -340,10 +372,15 @@ def post_competition_archive_task(competition_id: int):
         )
         db.add(post)
         db.commit()
+        logger.info("Archived competition %s as forum thread %s", competition_id, thread.id)
         return {"thread_id": thread.id, "competition_id": competition_id}
     except Exception as e:
         db.rollback()
-        return {"error": str(e)}
+        logger.error("Failed to archive competition %s: %s", competition_id, str(e))
+        try:
+            self.retry(exc=e)
+        except self.MaxRetriesExceededError:
+            return {"error": str(e), "competition_id": competition_id, "retries_exhausted": True}
     finally:
         db.close()
 
@@ -447,10 +484,25 @@ def promote_top_proposals_task():
         start_date = _next_monday(now)
         end_date = start_date + timedelta(days=7)
 
+        # Idempotency: skip if competitions already exist for this start_date
+        existing_for_week = (
+            db.query(Competition)
+            .filter(
+                Competition.start_date == start_date,
+                Competition.status.in_([CompetitionStatus.DRAFT, CompetitionStatus.ACTIVE]),
+            )
+            .count()
+        )
+        if existing_for_week > 0:
+            return {"skipped": "Competitions already exist for this week", "start_date": start_date.isoformat(), "existing": existing_for_week}
+
         topic = db.query(ForumTopic).filter(ForumTopic.slug == "competition-ideas").first()
         if not topic:
+            # No forum topic — generate all 5 as fallback instead of silently returning 0
+            system_user_id = 1
+            generated_ids = _generate_fallback_competitions(db, start_date, end_date, 5, system_user_id)
             db.commit()
-            return {"error": "competition-ideas topic not found", "generated": 0}
+            return {"promoted": len(generated_ids), "from_proposals": 0, "competition_ids": generated_ids, "start_date": start_date.isoformat(), "warning": "competition-ideas topic not found, used fallbacks"}
 
         last_week_start = now - timedelta(days=7)
         last_week_end = now

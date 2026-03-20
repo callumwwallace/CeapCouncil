@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -31,12 +31,11 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
-import CompetitionEquityChart, { MiniSparkline } from '@/components/leaderboard/CompetitionEquityChart';
+import { MiniSparkline } from '@/components/leaderboard/CompetitionEquityChart';
 import type {
   CompetitionDetail,
   LeaderboardResponse,
   LeaderboardEntry,
-  EquityCurveEntry,
   Strategy,
 } from '@/types';
 
@@ -48,11 +47,6 @@ const METRIC_LABELS: Record<string, string> = {
   win_rate: 'Win Rate',
   max_drawdown: 'Max DD',
 };
-
-const SPARKLINE_COLORS = [
-  '#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6',
-  '#ec4899', '#06b6d4', '#f97316', '#14b8a6', '#6366f1',
-];
 
 const PODIUM_STYLES = [
   { bg: 'bg-gradient-to-br from-amber-50 to-yellow-50', border: 'border-amber-200', icon: Crown, iconColor: 'text-amber-500', ring: 'ring-amber-200' },
@@ -108,8 +102,6 @@ export default function CompetitionDetailPage() {
 
   const [competition, setCompetition] = useState<CompetitionDetail | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardResponse | null>(null);
-  const [equityCurves, setEquityCurves] = useState<EquityCurveEntry[]>([]);
-  const [curvesLoading, setCurvesLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -122,20 +114,6 @@ export default function CompetitionDetailPage() {
 
   // Expandable row
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
-
-  const curveByUser = useMemo(() => {
-    const map = new Map<string, { date: string; equity: number }[]>();
-    for (const c of equityCurves) map.set(c.username, c.equity_curve);
-    return map;
-  }, [equityCurves]);
-
-  const colorByUser = useMemo(() => {
-    const map = new Map<string, string>();
-    leaderboard?.leaderboard.forEach((e, i) => {
-      map.set(e.username, SPARKLINE_COLORS[i % SPARKLINE_COLORS.length]);
-    });
-    return map;
-  }, [leaderboard]);
 
   const myEntry = useMemo(() => {
     if (!user || !leaderboard) return null;
@@ -152,12 +130,6 @@ export default function CompetitionDetailPage() {
       ]);
       setCompetition(comp);
       setLeaderboard(lb);
-
-      setCurvesLoading(true);
-      api.getCompetitionEquityCurves(competitionId)
-        .then((res) => setEquityCurves(res.curves))
-        .catch(() => setEquityCurves([]))
-        .finally(() => setCurvesLoading(false));
     } catch {
       setError('Competition not found');
     } finally {
@@ -221,8 +193,9 @@ export default function CompetitionDetailPage() {
     );
   }
 
-  const isActive = competition.status === 'active';
-  const isCompleted = competition.status === 'completed';
+  const ended = new Date(competition.end_date).getTime() <= Date.now();
+  const isActive = competition.status === 'active' && !ended;
+  const isCompleted = competition.status === 'completed' || (competition.status === 'active' && ended);
   const rankingLabel = competition.ranking_metrics && competition.ranking_metrics.length > 1
     ? competition.ranking_metrics.map((m) => METRIC_LABELS[m] || m).join(' + ')
     : METRIC_LABELS[competition.ranking_metric] || competition.ranking_metric;
@@ -421,8 +394,6 @@ export default function CompetitionDetailPage() {
               {topThree.map((entry, i) => {
                 const style = PODIUM_STYLES[i];
                 const isMe = user && entry.user_id === user.id;
-                const curve = curveByUser.get(entry.username);
-                const color = colorByUser.get(entry.username) || '#9ca3af';
                 return (
                   <div
                     key={entry.user_id}
@@ -438,9 +409,6 @@ export default function CompetitionDetailPage() {
                         </div>
                         <span className="text-sm font-bold text-gray-500">#{entry.rank}</span>
                       </div>
-                      {curve && curve.length > 0 && (
-                        <MiniSparkline data={curve} color={color} width={100} height={28} />
-                      )}
                     </div>
 
                     <Link
@@ -477,21 +445,6 @@ export default function CompetitionDetailPage() {
           </div>
         )}
 
-        {/* ═══ Equity Curves ═══ */}
-        {curvesLoading ? (
-          <div className="rounded-2xl border border-gray-200 bg-white p-8 flex items-center justify-center gap-2 text-gray-500 mb-8">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            Loading equity curves...
-          </div>
-        ) : equityCurves.length > 0 ? (
-          <div className="mb-8">
-            <CompetitionEquityChart
-              curves={equityCurves}
-              initialCapital={competition.initial_capital}
-            />
-          </div>
-        ) : null}
-
         {/* ═══ Full Leaderboard ═══ */}
         <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden shadow-sm">
           <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
@@ -522,9 +475,6 @@ export default function CompetitionDetailPage() {
                     <th className="px-4 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider w-12">#</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider">User</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Strategy</th>
-                    {equityCurves.length > 0 && (
-                      <th className="px-4 py-3 text-center text-[11px] font-semibold text-gray-500 uppercase tracking-wider w-24">Equity</th>
-                    )}
                     <th className="px-4 py-3 text-right text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Score</th>
                     <th className="px-4 py-3 text-right text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Return</th>
                     <th className="px-4 py-3 text-right text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Sharpe</th>
@@ -537,9 +487,8 @@ export default function CompetitionDetailPage() {
                     const isMe = user && e.user_id === user.id;
                     const isExpanded = expandedRow === i;
                     return (
-                      <>
+                      <React.Fragment key={`${e.user_id}-${e.strategy_id}`}>
                         <tr
-                          key={i}
                           onClick={() => setExpandedRow(isExpanded ? null : i)}
                           className={`border-b border-gray-100 cursor-pointer transition-colors ${
                             e.rank === 1 ? 'bg-amber-50/60 hover:bg-amber-100/60' :
@@ -550,7 +499,9 @@ export default function CompetitionDetailPage() {
                           }`}
                         >
                           <td className="px-4 py-3.5">
-                            {e.rank === 1 ? (
+                            {e.rank == null ? (
+                              <span className="text-sm text-gray-300 font-medium pl-1">—</span>
+                            ) : e.rank === 1 ? (
                               <div className="w-7 h-7 rounded-full bg-amber-100 flex items-center justify-center">
                                 <Crown className="h-3.5 w-3.5 text-amber-600" />
                               </div>
@@ -581,14 +532,6 @@ export default function CompetitionDetailPage() {
                             )}
                           </td>
                           <td className="px-4 py-3.5 text-gray-600 text-sm">{e.strategy_title}</td>
-                          {equityCurves.length > 0 && (
-                            <td className="px-4 py-3.5 text-center">
-                              <MiniSparkline
-                                data={curveByUser.get(e.username) || []}
-                                color={colorByUser.get(e.username) || '#9ca3af'}
-                              />
-                            </td>
-                          )}
                           <td className="px-4 py-3.5 text-right font-mono text-sm">
                             {e.score != null
                               ? leaderboard.ranking_metrics && leaderboard.ranking_metrics.length > 1
@@ -612,13 +555,13 @@ export default function CompetitionDetailPage() {
                           </td>
                         </tr>
                         {isExpanded && (
-                          <tr key={`${i}-detail`} className="bg-gray-50/80">
-                            <td colSpan={equityCurves.length > 0 ? 9 : 8} className="px-6 py-5">
-                              <EntryDetailRow entry={e} curveData={curveByUser.get(e.username)} color={colorByUser.get(e.username) || '#9ca3af'} />
+                          <tr className="bg-gray-50/80">
+                            <td colSpan={8} className="px-6 py-5">
+                              <EntryDetailRow entry={e} color="#9ca3af" />
                             </td>
                           </tr>
                         )}
-                      </>
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
