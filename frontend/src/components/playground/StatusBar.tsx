@@ -111,9 +111,9 @@ export default function StatusBar({ isRunning, results, lastRunTime, onExportRep
             )}
           </div>
         )}
-        <div className="flex items-center gap-1 text-gray-500">
+        <div className="flex items-center gap-1 text-gray-500" title="Keyboard shortcuts">
           <Keyboard className="h-3 w-3" />
-          <span>⌘↵ Run</span>
+          <span>Ctrl+↵ Run · Ctrl+S Save · Ctrl+⇧E Export</span>
         </div>
         {onUiScaleChange && (
           <div className="flex items-center gap-0.5 border-l border-gray-200 pl-3" title="UI scale (panels only, chart unaffected)">

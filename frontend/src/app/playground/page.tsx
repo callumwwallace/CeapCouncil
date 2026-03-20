@@ -83,8 +83,10 @@ import { applyDatePreset, formatRelativeTime, formatCommitTime, extractApiError,
 import type { BacktestConfig, BacktestResult, BrokerPreset } from './types';
 import { SYMBOLS, BROKER_PRESETS } from './types';
 import { useExport } from './useExport';
+import { usePlaygroundShortcuts } from './usePlaygroundShortcuts';
 import { useAnalytics } from './useAnalytics';
 import { extractParamsFromCode, updateCodeWithParams } from './extractParams';
+import { parseErrorLines } from './parseErrorLine';
 import ResultsTabContent from '@/components/playground/results/ResultsTabContent';
 import FloatingCodeEditor from '@/components/playground/FloatingCodeEditor';
 
@@ -332,6 +334,13 @@ export default function PlaygroundPage() {
       setError(null);
     }
   }, [config, code, isRunning]); // eslint-disable-line react-hooks/exhaustive-deps -- error intentionally excluded to avoid loops
+
+  // Auto-open code editor when error has parseable line numbers (code-related failure)
+  useEffect(() => {
+    if (error && parseErrorLines(error).length > 0) {
+      setShowCodeEditor(true);
+    }
+  }, [error]);
 
   const handleRunBacktest = useCallback(async () => {
     if (!isAuthenticated) {
@@ -668,20 +677,16 @@ export default function PlaygroundPage() {
     }
   }, [isAuthenticated, savedStrategyId, code, strategyParams]);
 
-  // Keyboard shortcut: Cmd/Ctrl + Enter to run backtest
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-        e.preventDefault();
-        if (!isRunning && isAuthenticated) {
-          handleRunBacktest();
-        }
-      }
-    };
-    
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isRunning, isAuthenticated, handleRunBacktest]);
+  usePlaygroundShortcuts({
+    isRunning,
+    isAuthenticated,
+    savedStrategyId,
+    isSaving,
+    results,
+    onRun: handleRunBacktest,
+    onSave: handleSave,
+    onExport: handleExportResults,
+  });
 
   // Setup panel: drag and resize
   const handleSetupPanelDragStart = (e: React.MouseEvent) => {
@@ -1368,6 +1373,7 @@ export default function PlaygroundPage() {
         user={user ? { username: user.username } : null}
         onError={setError}
         strategyTitle={displayedSavedStrategies.find(s => s.id === savedStrategyId)?.title ?? 'strategy.py'}
+        error={error}
       />
     </div>
   );

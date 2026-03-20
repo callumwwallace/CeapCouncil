@@ -28,6 +28,7 @@ interface FloatingCodeEditorProps {
   user: { username: string } | null;
   onError: (msg: string) => void;
   strategyTitle: string;
+  error?: string | null;
 }
 
 export default function FloatingCodeEditor({
@@ -42,6 +43,7 @@ export default function FloatingCodeEditor({
   user,
   onError,
   strategyTitle,
+  error,
 }: FloatingCodeEditorProps) {
   const [editorTab, setEditorTab] = useState<'code' | 'version-control'>('code');
   const [editorMinimized, setEditorMinimized] = useState(false);
@@ -224,7 +226,7 @@ export default function FloatingCodeEditor({
               {editorTab === 'code' ? (
                 <div className="flex-1 min-h-0" style={{ height: '480px' }}>
                   <ErrorBoundary label="Code Editor">
-                    <CodeEditor value={code} onChange={onCodeChange} />
+                    <CodeEditor value={code} onChange={onCodeChange} error={error} />
                   </ErrorBoundary>
                 </div>
               ) : savedStrategyId ? (

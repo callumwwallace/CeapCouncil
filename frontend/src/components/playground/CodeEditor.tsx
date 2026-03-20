@@ -1,11 +1,13 @@
 'use client';
 
 import Editor, { OnMount } from '@monaco-editor/react';
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { parseErrorLines } from '@/app/playground/parseErrorLine';
 
 interface CodeEditorProps {
   value: string;
   onChange: (value: string) => void;
+  error?: string | null;
 }
 
 const STRATEGY_COMPLETIONS = [
@@ -93,8 +95,43 @@ const STRATEGY_COMPLETIONS = [
   { label: 'bar.timestamp', kind: 'Property', detail: 'Bar timestamp', insertText: 'bar.timestamp' },
 ];
 
-export default function CodeEditor({ value, onChange }: CodeEditorProps) {
+export default function CodeEditor({ value, onChange, error }: CodeEditorProps) {
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor?.getModel();
+    if (!model || !monaco) return;
+
+    const lineCount = model.getLineCount();
+    const parsed = parseErrorLines(error, lineCount);
+
+    if (parsed.length === 0) {
+      monaco.editor.setModelMarkers(model, 'backtest', []);
+      return;
+    }
+
+    const markers = parsed.map(({ line, message }) => ({
+      severity: monaco.MarkerSeverity.Error,
+      startLineNumber: line,
+      startColumn: 1,
+      endLineNumber: line,
+      endColumn: model.getLineMaxColumn(line),
+      message: message.slice(0, 500),
+    }));
+
+    monaco.editor.setModelMarkers(model, 'backtest', markers);
+
+    if (parsed.length > 0 && editor) {
+      editor.revealLineInCenter(parsed[0].line);
+    }
+  }, [error, value]);
+
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
+    editorRef.current = editor;
+    monacoRef.current = monaco;
     // Register completion provider for Python
     monaco.languages.registerCompletionItemProvider('python', {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
