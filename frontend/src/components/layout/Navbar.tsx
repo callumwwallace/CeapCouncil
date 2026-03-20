@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
-import { BarChart3, LogOut, ChevronDown, LayoutDashboard, User } from 'lucide-react';
+import { BarChart3, LogOut, ChevronDown, LayoutDashboard, User, Rss } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 
 export default function Navbar() {
@@ -66,6 +66,14 @@ export default function Navbar() {
               >
                 Blog
               </Link>
+              {isAuthenticated && (
+                <Link
+                  href="/feed"
+                  className="text-gray-600 hover:text-gray-900 hover:bg-gray-100 px-4 py-2 rounded-lg text-sm font-medium transition"
+                >
+                  Feed
+                </Link>
+              )}
             </div>
           </div>
 
@@ -106,6 +114,14 @@ export default function Navbar() {
                     >
                       <User className="h-4 w-4" />
                       My Profile
+                    </Link>
+                    <Link
+                      href="/feed"
+                      onClick={() => setDropdownOpen(false)}
+                      className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <Rss className="h-4 w-4" />
+                      My Feed
                     </Link>
                     <button
                       onClick={() => {

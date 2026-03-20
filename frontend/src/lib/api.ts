@@ -24,6 +24,10 @@ import {
   ForumActivityItem,
   ForumSearchResult,
   NotificationResponse,
+  FollowStats,
+  FollowUser,
+  FeedItem,
+  SkillEndorsement,
   OptimizeResults,
   WalkForwardResults,
   OosResults,
@@ -705,6 +709,59 @@ class ApiClient {
     const response = await this.client.get('/market-data/search', {
       params: { q: query },
     });
+    return response.data;
+  }
+
+  // Follows
+  async followUser(username: string): Promise<FollowStats> {
+    const response = await this.client.post<FollowStats>(`/users/${username}/follow`);
+    return response.data;
+  }
+
+  async unfollowUser(username: string): Promise<FollowStats> {
+    const response = await this.client.delete<FollowStats>(`/users/${username}/follow`);
+    return response.data;
+  }
+
+  async getFollowStats(username: string): Promise<FollowStats> {
+    const response = await this.client.get<FollowStats>(`/users/${username}/follow-stats`);
+    return response.data;
+  }
+
+  async getFollowers(username: string, skip?: number, limit?: number): Promise<FollowUser[]> {
+    const response = await this.client.get<FollowUser[]>(`/users/${username}/followers`, {
+      params: { skip: skip ?? 0, limit: limit ?? 50 },
+    });
+    return response.data;
+  }
+
+  async getFollowing(username: string, skip?: number, limit?: number): Promise<FollowUser[]> {
+    const response = await this.client.get<FollowUser[]>(`/users/${username}/following`, {
+      params: { skip: skip ?? 0, limit: limit ?? 50 },
+    });
+    return response.data;
+  }
+
+  async getFeed(skip?: number, limit?: number): Promise<FeedItem[]> {
+    const response = await this.client.get<FeedItem[]>('/users/me/feed', {
+      params: { skip: skip ?? 0, limit: limit ?? 20 },
+    });
+    return response.data;
+  }
+
+  // Skill Endorsements
+  async getUserEndorsements(username: string): Promise<SkillEndorsement[]> {
+    const response = await this.client.get<SkillEndorsement[]>(`/users/${username}/endorsements`);
+    return response.data;
+  }
+
+  async endorseSkill(username: string, skill: string): Promise<{ skill: string; count: number; endorsed_by_you: boolean }> {
+    const response = await this.client.post(`/users/${username}/endorsements`, { skill });
+    return response.data;
+  }
+
+  async removeEndorsement(username: string, skill: string): Promise<{ skill: string; count: number; endorsed_by_you: boolean }> {
+    const response = await this.client.delete(`/users/${username}/endorsements/${skill}`);
     return response.data;
   }
 }

@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
-import type { User, Badge, CompetitionHistoryEntry, ForumActivityItem } from '@/types';
+import type { User, Badge, CompetitionHistoryEntry, ForumActivityItem, FollowStats, SkillEndorsement } from '@/types';
 import {
   User as UserIcon,
   Trophy,
@@ -21,6 +21,11 @@ import {
   FileText,
   Target,
   Activity,
+  UserPlus,
+  UserMinus,
+  Users,
+  Star,
+  CheckCircle,
 } from 'lucide-react';
 
 const BADGE_TIER_STYLES: Record<string, string> = {
@@ -56,6 +61,10 @@ export default function ProfileViewPage() {
   const [yourVote, setYourVote] = useState<number | null>(null);
   const [repLoading, setRepLoading] = useState(false);
   const [repError, setRepError] = useState<string | null>(null);
+  const [followStats, setFollowStats] = useState<FollowStats>({ follower_count: 0, following_count: 0, is_following: false });
+  const [followLoading, setFollowLoading] = useState(false);
+  const [endorsements, setEndorsements] = useState<SkillEndorsement[]>([]);
+  const [endorseLoading, setEndorseLoading] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('about');
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -74,9 +83,11 @@ export default function ProfileViewPage() {
       api.getUserForumActivity(username).catch(() => []),
       api.getUserRep(username),
       api.getUserStrategyCount(username),
+      api.getFollowStats(username).catch(() => ({ follower_count: 0, following_count: 0, is_following: false })),
+      api.getUserEndorsements(username).catch(() => []),
     ];
     Promise.all(reqs)
-      .then(([u, b, history, fStats, fActivity, rep, strat]) => {
+      .then(([u, b, history, fStats, fActivity, rep, strat, fFollow, endorse]) => {
         setProfileUser(u);
         setBadges(b);
         setCompetitionHistory(history);
@@ -85,6 +96,8 @@ export default function ProfileViewPage() {
         setRepScore(rep.score);
         setYourVote(rep.your_vote);
         setStrategyCount(strat.count);
+        setFollowStats(fFollow);
+        setEndorsements(endorse);
       })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
@@ -103,6 +116,38 @@ export default function ProfileViewPage() {
       setRepError(Array.isArray(msg) ? msg[0] : (typeof msg === 'string' ? msg : 'Failed to update rep'));
     } finally {
       setRepLoading(false);
+    }
+  };
+
+  const handleFollow = async () => {
+    if (!username || followLoading) return;
+    setFollowLoading(true);
+    try {
+      const res = followStats.is_following
+        ? await api.unfollowUser(username)
+        : await api.followUser(username);
+      setFollowStats(res);
+    } catch {
+      // silently fail
+    } finally {
+      setFollowLoading(false);
+    }
+  };
+
+  const handleEndorse = async (skill: string, currentlyEndorsed: boolean) => {
+    if (!username || endorseLoading) return;
+    setEndorseLoading(skill);
+    try {
+      const res = currentlyEndorsed
+        ? await api.removeEndorsement(username, skill)
+        : await api.endorseSkill(username, skill);
+      setEndorsements((prev) =>
+        prev.map((e) => (e.skill === skill ? { ...e, count: res.count, endorsed_by_you: res.endorsed_by_you } : e))
+      );
+    } catch {
+      // silently fail
+    } finally {
+      setEndorseLoading(null);
     }
   };
 
@@ -174,6 +219,26 @@ export default function ProfileViewPage() {
                       </Link>
                     )}
                     {!isOwnProfile && isAuthenticated && (
+                      <button
+                        onClick={handleFollow}
+                        disabled={followLoading}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition ${
+                          followStats.is_following
+                            ? 'bg-gray-100 text-gray-700 hover:bg-red-50 hover:text-red-600 border border-gray-200'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        }`}
+                      >
+                        {followLoading ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : followStats.is_following ? (
+                          <UserMinus className="h-3.5 w-3.5" />
+                        ) : (
+                          <UserPlus className="h-3.5 w-3.5" />
+                        )}
+                        {followStats.is_following ? 'Unfollow' : 'Follow'}
+                      </button>
+                    )}
+                    {!isOwnProfile && isAuthenticated && (
                       <div className="flex flex-col items-end gap-1">
                         <div className="flex items-center gap-1">
                           <button
@@ -211,6 +276,14 @@ export default function ProfileViewPage() {
                   </div>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                  <span className="flex items-center gap-1.5 text-gray-600">
+                    <Users className="h-3.5 w-3.5 text-indigo-600" />
+                    <strong className="text-gray-900">{followStats.follower_count}</strong> Followers
+                  </span>
+                  <span className="flex items-center gap-1.5 text-gray-600">
+                    <UserPlus className="h-3.5 w-3.5 text-indigo-500" />
+                    <strong className="text-gray-900">{followStats.following_count}</strong> Following
+                  </span>
                   <span className="flex items-center gap-1.5 text-gray-600">
                     <TrendingUp className="h-3.5 w-3.5 text-emerald-600" />
                     <strong className="text-gray-900">{strategyCount ?? 0}</strong> Strategies
@@ -456,17 +529,70 @@ export default function ProfileViewPage() {
         )}
 
         {activeTab === 'about' && (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200 flex items-center gap-2">
-              <UserIcon className="h-5 w-5 text-gray-500" />
-              <h2 className="font-semibold text-gray-900">About</h2>
+          <div className="space-y-5">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center gap-2">
+                <UserIcon className="h-5 w-5 text-gray-500" />
+                <h2 className="font-semibold text-gray-900">About</h2>
+              </div>
+              <div className="p-6">
+                {profileUser.bio ? (
+                  <p className="text-gray-700 whitespace-pre-wrap">{profileUser.bio}</p>
+                ) : (
+                  <p className="text-gray-500">No bio yet.</p>
+                )}
+              </div>
             </div>
-            <div className="p-6">
-              {profileUser.bio ? (
-                <p className="text-gray-700 whitespace-pre-wrap">{profileUser.bio}</p>
-              ) : (
-                <p className="text-gray-500">No bio yet.</p>
-              )}
+
+            {/* Skill Endorsements */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center gap-2">
+                <Star className="h-5 w-5 text-amber-500" />
+                <h2 className="font-semibold text-gray-900">Skill Endorsements</h2>
+              </div>
+              <div className="p-6">
+                {endorsements.length === 0 ? (
+                  <p className="text-gray-500 text-sm">No endorsements yet.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {endorsements.map((e) => {
+                      const hasEndorsements = e.count > 0;
+                      const canEndorse = isAuthenticated && !isOwnProfile;
+                      return (
+                        <button
+                          key={e.skill}
+                          onClick={() => canEndorse && handleEndorse(e.skill, e.endorsed_by_you)}
+                          disabled={!canEndorse || endorseLoading === e.skill}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border transition ${
+                            e.endorsed_by_you
+                              ? 'bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100'
+                              : hasEndorsements
+                                ? 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
+                                : 'bg-white border-dashed border-gray-300 text-gray-400 hover:border-gray-400 hover:text-gray-500'
+                          } ${!canEndorse ? 'cursor-default' : 'cursor-pointer'}`}
+                          title={canEndorse ? (e.endorsed_by_you ? `Remove endorsement for ${e.label}` : `Endorse ${e.label}`) : ''}
+                        >
+                          {endorseLoading === e.skill ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : e.endorsed_by_you ? (
+                            <CheckCircle className="h-3.5 w-3.5 text-emerald-500" />
+                          ) : (
+                            <Plus className="h-3 w-3" />
+                          )}
+                          {e.label}
+                          {e.count > 0 && (
+                            <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                              e.endorsed_by_you ? 'bg-emerald-200 text-emerald-800' : 'bg-gray-200 text-gray-600'
+                            }`}>
+                              {e.count}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}

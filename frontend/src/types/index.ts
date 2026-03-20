@@ -236,7 +236,7 @@ export interface CompetitionCreate {
 }
 
 export interface LeaderboardEntry {
-  rank: number;
+  rank: number | null;
   user_id: number;
   username: string;
   strategy_id: number;
@@ -453,6 +453,40 @@ export interface BlogPostSummary {
 export interface BlogPostDetail extends BlogPostSummary {
   content: string;
   updated_at: string;
+}
+
+// Follow types
+export interface FollowStats {
+  follower_count: number;
+  following_count: number;
+  is_following: boolean;
+}
+
+export interface FollowUser {
+  id: number;
+  username: string;
+  full_name: string | null;
+  avatar_url: string | null;
+}
+
+export interface FeedItem {
+  type: 'strategy' | 'competition_entry' | 'thread' | 'post';
+  id: number;
+  title: string;
+  description: string | null;
+  username: string;
+  user_id: number;
+  created_at: string | null;
+  link: string;
+  extra: Record<string, unknown>;
+}
+
+// Endorsement types
+export interface SkillEndorsement {
+  skill: string;
+  label: string;
+  count: number;
+  endorsed_by_you: boolean;
 }
 
 // Auth types
