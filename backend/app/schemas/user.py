@@ -103,6 +103,7 @@ class UserResponse(BaseModel):
 
 class UserPrivateResponse(UserResponse):
     email: EmailStr
+    is_superuser: bool = False
     notify_on_mention: bool = True
     email_on_mention: bool = False
     email_marketing: bool = False

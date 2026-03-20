@@ -448,6 +448,11 @@ class ApiClient {
     return response.data;
   }
 
+  async getUpcomingPreview(): Promise<import('@/types').UpcomingPreviewItem[]> {
+    const response = await this.client.get<import('@/types').UpcomingPreviewItem[]>('/competitions/upcoming-preview');
+    return response.data;
+  }
+
   async getCompetition(id: number): Promise<CompetitionDetail> {
     const response = await this.client.get<CompetitionDetail>(`/competitions/${id}`);
     return response.data;
@@ -455,6 +460,11 @@ class ApiClient {
 
   async getLeaderboard(competitionId: number): Promise<LeaderboardResponse> {
     const response = await this.client.get<LeaderboardResponse>(`/competitions/${competitionId}/leaderboard`);
+    return response.data;
+  }
+
+  async getCompetitionEquityCurves(competitionId: number): Promise<import('@/types').EquityCurvesResponse> {
+    const response = await this.client.get(`/competitions/${competitionId}/equity-curves`);
     return response.data;
   }
 
@@ -529,10 +539,20 @@ class ApiClient {
     return response.data;
   }
 
-  async listForumThreads(slug: string, skip?: number, limit?: number): Promise<ForumThreadSummary[]> {
-    const response = await this.client.get<ForumThreadSummary[]>('/forum/topics/' + encodeURIComponent(slug) + '/threads', {
-      params: { skip: skip ?? 0, limit: limit ?? 50 },
-    });
+  async listForumThreads(
+    slug: string,
+    params?: { sort_by?: 'updated_at' | 'vote_score'; skip?: number; limit?: number }
+  ): Promise<ForumThreadSummary[]> {
+    const response = await this.client.get<ForumThreadSummary[]>(
+      '/forum/topics/' + encodeURIComponent(slug) + '/threads',
+      {
+        params: {
+          sort_by: params?.sort_by ?? 'updated_at',
+          skip: params?.skip ?? 0,
+          limit: params?.limit ?? 50,
+        },
+      }
+    );
     return response.data;
   }
 
@@ -541,6 +561,35 @@ class ApiClient {
       title,
       body,
     });
+    return response.data;
+  }
+
+  async createProposalThread(
+    slug: string,
+    data: {
+      title: string;
+      body: string;
+      symbol?: string;
+      symbols?: string[];
+      backtest_start: string;
+      backtest_end: string;
+      initial_capital?: number;
+      ranking_metric?: string;
+      ranking_metrics?: string[] | null;
+    }
+  ): Promise<ForumThreadSummary> {
+    const response = await this.client.post<ForumThreadSummary>(
+      '/forum/topics/' + encodeURIComponent(slug) + '/proposals',
+      data
+    );
+    return response.data;
+  }
+
+  async voteForumThread(threadId: number, value: 1 | -1 | 0): Promise<{ vote_score: number; your_vote: number | null }> {
+    const response = await this.client.post<{ vote_score: number; your_vote: number | null }>(
+      `/forum/threads/${threadId}/vote`,
+      { value }
+    );
     return response.data;
   }
 

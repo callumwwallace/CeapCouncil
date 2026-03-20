@@ -8,6 +8,7 @@ export interface User {
   avatar_url: string | null;
   is_active: boolean;
   is_verified: boolean;
+  is_superuser?: boolean;
   notify_on_mention?: boolean;
   email_on_mention?: boolean;
   email_marketing?: boolean;
@@ -183,6 +184,7 @@ export interface CompetitionSummary {
   title: string;
   description: string | null;
   symbol: string;
+  symbols?: string[] | null;
   status: string;
   ranking_metric: string;
   ranking_metrics?: string[] | null;
@@ -198,6 +200,24 @@ export interface CompetitionSummary {
 
 export interface CompetitionDetail extends CompetitionSummary {
   rules: Record<string, unknown> | null;
+}
+
+export interface UpcomingPreviewItem {
+  thread_id: number | null;
+  title: string;
+  description: string | null;
+  symbol: string;
+  symbols?: string[] | null;
+  ranking_metric: string;
+  ranking_metrics?: string[] | null;
+  start_date: string;
+  end_date: string;
+  backtest_start: string;
+  backtest_end: string;
+  initial_capital: number;
+  vote_score: number;
+  author_username: string | null;
+  is_placeholder?: boolean;
 }
 
 export interface CompetitionCreate {
@@ -263,6 +283,42 @@ export interface CompetitionHistoryEntry {
   evaluated_at: string | null;
 }
 
+export interface EquityCurveEntry {
+  username: string;
+  rank: number | null;
+  total_return: number | null;
+  equity_curve: { date: string; equity: number }[];
+}
+
+export interface EquityCurvesResponse {
+  competition_id: number;
+  curves: EquityCurveEntry[];
+}
+
+// Proposal & Voting types
+export interface CompetitionProposal {
+  id: number;
+  title: string;
+  description: string | null;
+  symbol: string;
+  backtest_start: string;
+  backtest_end: string;
+  initial_capital: number;
+  ranking_metric: string;
+  ranking_metrics?: string[] | null;
+  vote_count: number;
+  user_voted: boolean;
+  created_by_username: string | null;
+  created_at: string;
+}
+
+export interface ProposalsResponse {
+  week_year: number;
+  week_number: number;
+  votes_remaining: number;
+  proposals: CompetitionProposal[];
+}
+
 // Social types
 export interface Vote {
   id: number;
@@ -308,6 +364,17 @@ export interface ForumThreadSummary {
   author_username: string;
   title: string;
   post_count: number;
+  vote_score?: number;
+  your_vote?: number | null;
+  proposal_data?: {
+    symbol: string;
+    symbols?: string[];
+    backtest_start: string;
+    backtest_end: string;
+    initial_capital: number;
+    ranking_metric: string;
+    ranking_metrics?: string[] | null;
+  } | null;
   created_at: string;
   updated_at: string;
 }
@@ -319,6 +386,9 @@ export interface ForumThreadDetail {
   author_username: string;
   title: string;
   post_count: number;
+  vote_score?: number;
+  your_vote?: number | null;
+  proposal_data?: ForumThreadSummary['proposal_data'];
   created_at: string;
   updated_at: string;
   posts: ForumPostResponse[];

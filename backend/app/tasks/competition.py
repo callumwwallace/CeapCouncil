@@ -57,36 +57,55 @@ def evaluate_competition_entry_task(self, entry_id: int):
         params.setdefault("interval", "1d")
         params.setdefault("commission", 0.001)
         params.setdefault("slippage", 0.1)
-        backtest = Backtest(
-            symbol=competition.symbol,
-            start_date=competition.backtest_start,
-            end_date=competition.backtest_end,
-            initial_capital=competition.initial_capital,
-            parameters=params,
-            slippage=0.001,
-            commission=0.001,
-            user_id=entry.user_id,
-            strategy_id=entry.strategy_id,
-        )
-        db.add(backtest)
-        db.commit()
-        db.refresh(backtest)
 
-        entry.backtest_id = backtest.id
-        db.commit()
+        symbols = competition.symbols if competition.symbols and len(competition.symbols) > 0 else [competition.symbol]
+        results: list[dict] = []
 
-        run_backtest_task.apply(args=[backtest.id])
-        db.expire_all()
-        backtest = db.query(Backtest).filter(Backtest.id == backtest.id).first()
+        for sym in symbols:
+            backtest = Backtest(
+                symbol=sym,
+                start_date=competition.backtest_start,
+                end_date=competition.backtest_end,
+                initial_capital=competition.initial_capital,
+                parameters=params,
+                slippage=0.001,
+                commission=0.001,
+                user_id=entry.user_id,
+                strategy_id=entry.strategy_id,
+            )
+            db.add(backtest)
+            db.commit()
+            db.refresh(backtest)
+            if entry.backtest_id is None:
+                entry.backtest_id = backtest.id
 
-        if backtest.status.value == "completed":
-            entry.total_return = backtest.total_return
-            entry.sharpe_ratio = backtest.sharpe_ratio
-            entry.max_drawdown = backtest.max_drawdown
-            entry.win_rate = backtest.win_rate
-            entry.sortino_ratio = backtest.sortino_ratio
-            entry.calmar_ratio = backtest.calmar_ratio
-            entry.total_trades = backtest.total_trades
+            run_backtest_task.apply(args=[backtest.id])
+            db.expire_all()
+            bt = db.query(Backtest).filter(Backtest.id == backtest.id).first()
+            if bt and bt.status and bt.status.value == "completed":
+                results.append({
+                    "total_return": bt.total_return,
+                    "sharpe_ratio": bt.sharpe_ratio,
+                    "max_drawdown": bt.max_drawdown,
+                    "win_rate": bt.win_rate,
+                    "sortino_ratio": bt.sortino_ratio,
+                    "calmar_ratio": bt.calmar_ratio,
+                    "total_trades": bt.total_trades,
+                })
+
+        if results:
+            n = len(results)
+            entry.total_return = sum(r["total_return"] or 0 for r in results) / n
+            sr_vals = [r["sharpe_ratio"] for r in results if r.get("sharpe_ratio") is not None]
+            entry.sharpe_ratio = sum(sr_vals) / len(sr_vals) if sr_vals else None
+            entry.max_drawdown = sum(r["max_drawdown"] or 0 for r in results) / n
+            entry.win_rate = sum(r["win_rate"] or 0 for r in results) / n
+            so_vals = [r["sortino_ratio"] for r in results if r.get("sortino_ratio") is not None]
+            entry.sortino_ratio = sum(so_vals) / len(so_vals) if so_vals else None
+            ca_vals = [r["calmar_ratio"] for r in results if r.get("calmar_ratio") is not None]
+            entry.calmar_ratio = sum(ca_vals) / len(ca_vals) if ca_vals else None
+            entry.total_trades = int(sum(r["total_trades"] or 0 for r in results))
+
         entry.evaluated_at = datetime.utcnow()
         db.commit()
 
@@ -303,7 +322,8 @@ def post_competition_archive_task(competition_id: int):
         )
 
         body = _build_archive_post_body(competition, top_entries)
-        author_id = competition.created_by
+        system_user = db.query(User).filter(User.id == 1).first()
+        author_id = system_user.id if system_user else competition.created_by
 
         thread = ForumThread(
             topic_id=topic.id,
@@ -351,6 +371,241 @@ def expire_competitions_task():
             post_competition_archive_task.delay(comp.id)
 
         return {"expired": len(expired), "ids": [c.id for c in expired]}
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+def _next_monday(now: datetime) -> datetime:
+    """Return next Monday 00:00 UTC (the Monday of the upcoming competition week)."""
+    from datetime import timedelta
+    if now.weekday() == 0:  # Monday: next Monday is 7 days ahead
+        d = now + timedelta(days=7)
+    else:
+        days_until = 7 - now.weekday()
+        d = now + timedelta(days=days_until)
+    return d.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _generate_fallback_competitions(db, start_date: datetime, end_date: datetime, count: int, created_by: int) -> list[int]:
+    """Generate count draft competitions from templates. Returns created competition IDs."""
+    import random
+    from dateutil.relativedelta import relativedelta
+
+    created_ids = []
+    now = datetime.utcnow()
+    recent = db.query(Competition.title).filter(Competition.created_at >= now - relativedelta(weeks=8)).all()
+    recent_titles = {r[0] for r in recent}
+
+    templates = list(_PROPOSAL_TEMPLATES)
+    random.shuffle(templates)
+    for tmpl in templates:
+        if len(created_ids) >= count:
+            break
+        symbol = random.choice(tmpl["symbols"])
+        title = tmpl["title"].format(symbol=symbol)
+        if title in recent_titles:
+            continue
+        recent_titles.add(title)
+        end_dt = now - relativedelta(months=1)
+        start_dt = end_dt - relativedelta(months=tmpl["period_months"])
+        comp = Competition(
+            title=title,
+            description=tmpl["description"].format(symbol=symbol),
+            symbol=symbol,
+            backtest_start=start_dt,
+            backtest_end=end_dt,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=tmpl["capital"],
+            ranking_metric=tmpl.get("ranking_metric", "sharpe_ratio"),
+            ranking_metrics=tmpl.get("ranking_metrics"),
+            status=CompetitionStatus.DRAFT,
+            created_by=created_by,
+        )
+        db.add(comp)
+        db.flush()
+        created_ids.append(comp.id)
+    return created_ids
+
+
+@celery_app.task
+def promote_top_proposals_task():
+    """Run weekly: promote top-voted forum proposal threads from LAST week into DRAFT competitions.
+
+    Takes top 5 threads by vote_score from competition-ideas topic.
+    Fills remaining slots (to 5 total) with auto-generated competitions.
+    Creates as DRAFT; activate_weekly_competitions_task promotes to ACTIVE when start_date arrives.
+    """
+    from datetime import timedelta
+
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        start_date = _next_monday(now)
+        end_date = start_date + timedelta(days=7)
+
+        topic = db.query(ForumTopic).filter(ForumTopic.slug == "competition-ideas").first()
+        if not topic:
+            db.commit()
+            return {"error": "competition-ideas topic not found", "generated": 0}
+
+        last_week_start = now - timedelta(days=7)
+        last_week_end = now
+        proposal_threads = (
+            db.query(ForumThread)
+            .filter(
+                ForumThread.topic_id == topic.id,
+                ForumThread.proposal_data.isnot(None),
+                ForumThread.created_at >= last_week_start,
+                ForumThread.created_at < last_week_end,
+            )
+            .order_by(ForumThread.vote_score.desc().nullslast())
+            .limit(5)
+            .all()
+        )
+
+        promoted = []
+        for thr in proposal_threads:
+            pd = thr.proposal_data
+            if not pd or not isinstance(pd, dict):
+                continue
+            symbols = pd.get("symbols")
+            symbol = pd.get("symbol")
+            if symbols and isinstance(symbols, list) and len(symbols) > 0:
+                symbol = symbols[0]
+            backtest_start = pd.get("backtest_start")
+            backtest_end = pd.get("backtest_end")
+            if not all([symbol, backtest_start, backtest_end]):
+                continue
+            try:
+                bs = datetime.strptime(backtest_start, "%Y-%m-%d")
+                be = datetime.strptime(backtest_end, "%Y-%m-%d")
+            except (ValueError, TypeError):
+                continue
+            symbols_list = pd.get("symbols") if isinstance(pd.get("symbols"), list) and len(pd.get("symbols", [])) > 0 else [str(symbol).upper()]
+            symbols_list = [str(s).upper() for s in symbols_list if s]
+            comp = Competition(
+                title=thr.title[:200],
+                description=None,
+                symbol=str(symbol).upper(),
+                symbols=symbols_list if len(symbols_list) > 1 else None,
+                backtest_start=bs,
+                backtest_end=be,
+                start_date=start_date,
+                end_date=end_date,
+                initial_capital=float(pd.get("initial_capital", 10000)),
+                ranking_metric=pd.get("ranking_metric") or "sharpe_ratio",
+                ranking_metrics=pd.get("ranking_metrics") if isinstance(pd.get("ranking_metrics"), list) else None,
+                status=CompetitionStatus.DRAFT,
+                created_by=thr.author_id,
+            )
+            db.add(comp)
+            db.flush()
+            promoted.append(comp.id)
+
+        fill_count = 5 - len(promoted)
+        system_user_id = 1
+        if fill_count > 0:
+            generated_ids = _generate_fallback_competitions(db, start_date, end_date, fill_count, system_user_id)
+            promoted.extend(generated_ids)
+
+        db.commit()
+        return {
+            "promoted": len(promoted),
+            "from_proposals": len(proposal_threads),
+            "competition_ids": promoted,
+            "start_date": start_date.isoformat(),
+        }
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+# ─── Themed proposal templates for auto-generation ──────────────────
+
+_PROPOSAL_TEMPLATES = [
+    {
+        "title": "Blue Chip Showdown — {symbol}",
+        "description": "Classic large-cap challenge. Best risk-adjusted returns on {symbol} over the past year.",
+        "symbols": ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META"],
+        "ranking_metric": "sharpe_ratio",
+        "capital": 100000,
+        "period_months": 12,
+    },
+    {
+        "title": "Momentum Month — {symbol}",
+        "description": "Pure momentum play. Highest total return on {symbol} in a short window wins.",
+        "symbols": ["TSLA", "NVDA", "AMD", "COIN", "MSTR"],
+        "ranking_metric": "total_return",
+        "capital": 25000,
+        "period_months": 3,
+    },
+    {
+        "title": "Drawdown Survivor — {symbol}",
+        "description": "Minimize your drawdown. The strategy that best weathers volatility on {symbol} wins.",
+        "symbols": ["SPY", "QQQ", "IWM", "BTC-USD"],
+        "ranking_metric": "max_drawdown",
+        "capital": 50000,
+        "period_months": 6,
+    },
+    {
+        "title": "Crypto Gauntlet — {symbol}",
+        "description": "Navigate crypto volatility. Best Sortino ratio on {symbol} takes the crown.",
+        "symbols": ["BTC-USD", "ETH-USD", "SOL-USD"],
+        "ranking_metric": "sortino_ratio",
+        "capital": 10000,
+        "period_months": 6,
+    },
+    {
+        "title": "Balanced Returns — {symbol}",
+        "description": "Multi-metric challenge: ranked by average of Sharpe, Return, and Win Rate on {symbol}.",
+        "symbols": ["SPY", "QQQ", "AAPL", "MSFT"],
+        "ranking_metrics": ["sharpe_ratio", "total_return", "win_rate"],
+        "capital": 50000,
+        "period_months": 12,
+    },
+    {
+        "title": "Small Cap Sprint — {symbol}",
+        "description": "Small caps, big moves. Best Calmar ratio on {symbol} wins.",
+        "symbols": ["IWM", "ARKK", "XBI"],
+        "ranking_metric": "calmar_ratio",
+        "capital": 25000,
+        "period_months": 6,
+    },
+    {
+        "title": "Index Tracker — {symbol}",
+        "description": "Beat the index. Highest return on {symbol} with reasonable risk.",
+        "symbols": ["SPY", "DIA", "QQQ", "VTI"],
+        "ranking_metric": "total_return",
+        "capital": 100000,
+        "period_months": 12,
+    },
+]
+
+
+@celery_app.task
+def activate_weekly_competitions_task():
+    """Activate DRAFT competitions whose start_date has arrived."""
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        drafts = (
+            db.query(Competition)
+            .filter(
+                Competition.status == CompetitionStatus.DRAFT,
+                Competition.start_date <= now,
+            )
+            .all()
+        )
+        for comp in drafts:
+            comp.status = CompetitionStatus.ACTIVE
+        db.commit()
+        return {"activated": len(drafts), "ids": [c.id for c in drafts]}
     except Exception as e:
         db.rollback()
         return {"error": str(e)}

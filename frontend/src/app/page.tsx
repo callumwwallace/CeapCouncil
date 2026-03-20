@@ -29,7 +29,7 @@ export default function Home() {
               Build strategies. Backtest. Compete.
             </h1>
             <p className="mt-6 text-xl text-slate-600 leading-relaxed">
-              Write Python strategies in the Playground, run them on real market data, and compete on the Leaderboard. 
+              Write Python strategies in the Playground, run them on real market data, and compete in Competitions. 
               Discuss ideas in the Community. Ceap Council is built for systematic traders who want to validate, benchmark, and improve.
             </p>
             <div className="mt-10 flex flex-wrap gap-4">
@@ -74,13 +74,13 @@ export default function Home() {
             </Link>
 
             <Link
-              href="/leaderboard"
+              href="/competitions"
               className="group rounded-2xl border border-slate-200 bg-white p-8 hover:border-amber-200 hover:shadow-lg hover:shadow-amber-900/5 transition"
             >
               <div className="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center mb-5 group-hover:bg-amber-500/20 transition">
                 <Trophy className="h-6 w-6 text-amber-600" />
               </div>
-              <h3 className="text-lg font-semibold text-slate-900 mb-2">Leaderboard</h3>
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">Competitions</h3>
               <p className="text-slate-600 text-sm leading-relaxed">
                 Enter strategies into time-bound competitions. Same data and rules for everyone. Rankings by Sharpe, 
                 return, drawdown, or custom metrics. Earn badges. Completed competitions auto-archive to the forum.
@@ -124,10 +124,10 @@ export default function Home() {
                 results to Past Competition Archives so the community can learn from them.
               </p>
               <Link
-                href="/leaderboard"
+                href="/competitions"
                 className="inline-flex items-center gap-2 text-emerald-600 hover:text-emerald-700 font-medium"
               >
-                Go to Leaderboard
+                Browse Competitions
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </div>

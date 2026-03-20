@@ -43,10 +43,10 @@ export default function Navbar() {
                 Playground
               </Link>
               <Link
-                href="/leaderboard"
+                href="/competitions"
                 className="text-gray-600 hover:text-gray-900 hover:bg-gray-100 px-4 py-2 rounded-lg text-sm font-medium transition"
               >
-                Leaderboard
+                Competitions
               </Link>
               <Link
                 href="/community"

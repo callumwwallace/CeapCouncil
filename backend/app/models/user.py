@@ -37,3 +37,6 @@ class User(Base):
     forum_posts: Mapped[list["ForumPost"]] = relationship(
         "ForumPost", back_populates="author", cascade="all, delete-orphan"
     )
+    thread_votes: Mapped[list["ThreadVote"]] = relationship(
+        "ThreadVote", back_populates="user", cascade="all, delete-orphan"
+    )

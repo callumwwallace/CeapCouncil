@@ -8,7 +8,7 @@ from sqlalchemy import select, func, desc, or_, and_
 from app.core.database import get_db
 from app.api.deps import get_current_active_user, get_current_user_optional
 from app.models.user import User
-from app.models.forum import ForumTopic, ForumThread, ForumPost
+from app.models.forum import ForumTopic, ForumThread, ForumPost, ThreadVote
 from app.models.notification import Notification
 from app.websocket.manager import manager
 from app.schemas.forum import (
@@ -20,6 +20,8 @@ from app.schemas.forum import (
     ForumPostCreate,
     ForumPostUpdate,
     ForumSearchResult,
+    ThreadVoteCreate,
+    ProposalThreadCreate,
 )
 from app.core.limiter import limiter
 
@@ -212,26 +214,40 @@ async def list_topics(db: AsyncSession = Depends(get_db)):
 @router.get("/topics/{slug}/threads", response_model=list[ForumThreadSummary])
 async def list_threads(
     slug: str,
+    sort_by: str = Query("updated_at", pattern="^(updated_at|vote_score)$"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
-    """List threads in a topic, newest first."""
+    """List threads in a topic. Default sort by updated_at; use sort_by=vote_score for proposal topics."""
     topic = await db.scalar(select(ForumTopic).where(ForumTopic.slug == slug))
     if not topic:
         raise HTTPException(404, "Topic not found")
 
+    order_col = ForumThread.vote_score if sort_by == "vote_score" else ForumThread.updated_at
     result = await db.execute(
         select(ForumThread, User.username, func.count(ForumPost.id).label("post_count"))
         .join(User, ForumThread.author_id == User.id)
         .outerjoin(ForumPost, ForumPost.thread_id == ForumThread.id)
         .where(ForumThread.topic_id == topic.id)
         .group_by(ForumThread.id, User.username)
-        .order_by(desc(ForumThread.updated_at))
+        .order_by(desc(order_col))
         .offset(skip)
         .limit(limit)
     )
     rows = result.all()
+
+    user_votes: dict[int, int] = {}
+    if current_user:
+        thread_ids = [thr.id for thr, _, _ in rows]
+        votes_result = await db.execute(
+            select(ThreadVote.thread_id, ThreadVote.value).where(
+                ThreadVote.thread_id.in_(thread_ids),
+                ThreadVote.user_id == current_user.id,
+            )
+        )
+        user_votes = {r[0]: r[1] for r in votes_result.all()}
 
     return [
         ForumThreadSummary(
@@ -241,11 +257,17 @@ async def list_threads(
             author_username=uname,
             title=thr.title,
             post_count=pc or 0,
+            vote_score=thr.vote_score or 0,
+            your_vote=user_votes.get(thr.id),
+            proposal_data=thr.proposal_data,
             created_at=thr.created_at,
             updated_at=thr.updated_at,
         )
         for thr, uname, pc in rows
     ]
+
+
+ARCHIVES_TOPIC_SLUG = "archives"
 
 
 @router.post("/topics/{slug}/threads", response_model=ForumThreadSummary, status_code=201)
@@ -258,6 +280,8 @@ async def create_thread(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new thread (and its first post as the body)."""
+    if slug == ARCHIVES_TOPIC_SLUG:
+        raise HTTPException(403, "Past Competition Archives are read-only. Threads are added automatically when competitions complete.")
     topic = await db.scalar(select(ForumTopic).where(ForumTopic.slug == slug))
     if not topic:
         raise HTTPException(404, "Topic not found")
@@ -291,6 +315,112 @@ async def create_thread(
         author_username=current_user.username,
         title=thread.title,
         post_count=1,
+        vote_score=0,
+        your_vote=None,
+        proposal_data=thread.proposal_data,
+        created_at=thread.created_at,
+        updated_at=thread.updated_at,
+    )
+
+
+PROPOSAL_TOPIC_SLUG = "competition-ideas"
+
+
+@router.post("/topics/{slug}/proposals", response_model=ForumThreadSummary, status_code=201)
+@limiter.limit("5/minute")
+async def create_proposal_thread(
+    request: Request,
+    slug: str,
+    data: ProposalThreadCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a competition proposal thread. Only available for competition-ideas topic."""
+    if slug != PROPOSAL_TOPIC_SLUG:
+        raise HTTPException(404, "Proposal creation only available for Competition Proposals topic")
+    topic = await db.scalar(select(ForumTopic).where(ForumTopic.slug == slug))
+    if not topic:
+        raise HTTPException(404, "Topic not found")
+
+    from datetime import datetime as dt
+    try:
+        start_dt = dt.strptime(data.backtest_start, "%Y-%m-%d")
+        end_dt = dt.strptime(data.backtest_end, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, "Invalid date format for backtest period")
+    if start_dt >= end_dt:
+        raise HTTPException(400, "backtest_start must be before backtest_end")
+
+    # Normalize symbols: prefer symbols list, fallback to single symbol
+    symbols_list = data.symbols if data.symbols and len(data.symbols) > 0 else (
+        [data.symbol.strip().upper()] if data.symbol and data.symbol.strip() else []
+    )
+    if not symbols_list:
+        raise HTTPException(400, "At least one symbol is required")
+    if len(symbols_list) > 5:
+        raise HTTPException(400, "Maximum 5 symbols allowed")
+    symbols_list = [s.strip().upper() for s in symbols_list if s.strip()][:5]
+    primary_symbol = symbols_list[0]
+
+    VALID_METRICS = {"sharpe_ratio", "total_return", "calmar_ratio", "sortino_ratio", "win_rate", "max_drawdown"}
+    metrics_list = data.ranking_metrics if data.ranking_metrics and len(data.ranking_metrics) > 0 else [data.ranking_metric]
+    metrics_list = [m for m in metrics_list if m in VALID_METRICS]
+    if not metrics_list:
+        raise HTTPException(400, f"At least one valid ranking metric required. Valid: {VALID_METRICS}")
+    primary_metric = metrics_list[0]
+
+    proposal_data = {
+        "symbol": primary_symbol,  # For backward compat; competitions use first symbol
+        "symbols": symbols_list,
+        "backtest_start": data.backtest_start,
+        "backtest_end": data.backtest_end,
+        "initial_capital": data.initial_capital,
+        "ranking_metric": primary_metric,
+        "ranking_metrics": metrics_list if len(metrics_list) > 1 else None,
+    }
+
+    body_parts = [data.body.strip(), ""]
+    body_parts.append("---")
+    body_parts.append("**Proposal details:**")
+    body_parts.append(f"- Symbol(s): {', '.join(symbols_list)}")
+    body_parts.append(f"- Backtest period: {data.backtest_start} to {data.backtest_end}")
+    body_parts.append(f"- Initial capital: ${data.initial_capital:,.0f}")
+    body_parts.append(f"- Ranking metric(s): {', '.join(metrics_list)}")
+    body = "\n".join(body_parts)
+
+    thread = ForumThread(
+        topic_id=topic.id,
+        author_id=current_user.id,
+        title=data.title,
+        proposal_data=proposal_data,
+    )
+    db.add(thread)
+    await db.flush()
+
+    post = ForumPost(
+        thread_id=thread.id,
+        author_id=current_user.id,
+        content=body,
+    )
+    db.add(post)
+    await db.flush()
+    await db.refresh(post)
+    await db.refresh(thread)
+    await create_mention_notifications(
+        db, body, current_user.id, current_user.username,
+        post.id, topic.slug, thread.id,
+    )
+
+    return ForumThreadSummary(
+        id=thread.id,
+        topic_id=thread.topic_id,
+        author_id=thread.author_id,
+        author_username=current_user.username,
+        title=thread.title,
+        post_count=1,
+        vote_score=0,
+        your_vote=None,
+        proposal_data=thread.proposal_data,
         created_at=thread.created_at,
         updated_at=thread.updated_at,
     )
@@ -300,6 +430,7 @@ async def create_thread(
 async def get_thread(
     thread_id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
     """Get thread with all posts."""
     result = await db.execute(
@@ -311,6 +442,16 @@ async def get_thread(
     if not row:
         raise HTTPException(404, "Thread not found")
     thread, author_username = row
+
+    your_vote = None
+    if current_user:
+        vote_row = await db.scalar(
+            select(ThreadVote.value).where(
+                ThreadVote.thread_id == thread_id,
+                ThreadVote.user_id == current_user.id,
+            )
+        )
+        your_vote = vote_row
 
     posts_result = await db.execute(
         select(ForumPost, User.username)
@@ -338,10 +479,57 @@ async def get_thread(
         author_username=author_username,
         title=thread.title,
         post_count=len(posts),
+        vote_score=thread.vote_score or 0,
+        your_vote=your_vote,
+        proposal_data=thread.proposal_data,
         created_at=thread.created_at,
         updated_at=thread.updated_at,
         posts=posts,
     )
+
+
+@router.post("/threads/{thread_id}/vote")
+async def vote_thread(
+    thread_id: int,
+    data: ThreadVoteCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upvote (+1), downvote (-1), or remove (0) vote on a thread."""
+    thread = await db.scalar(select(ForumThread).where(ForumThread.id == thread_id))
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+    if thread.author_id == current_user.id:
+        raise HTTPException(400, "Cannot vote on your own thread")
+
+    existing = await db.scalar(
+        select(ThreadVote).where(
+            ThreadVote.thread_id == thread_id,
+            ThreadVote.user_id == current_user.id,
+        )
+    )
+
+    if data.value == 0:
+        if existing:
+            thread.vote_score = (thread.vote_score or 0) - existing.value
+            await db.delete(existing)
+        await db.flush()
+        await db.refresh(thread)
+        return {"vote_score": thread.vote_score or 0, "your_vote": None}
+    elif existing:
+        old_val = existing.value
+        existing.value = data.value
+        thread.vote_score = (thread.vote_score or 0) - old_val + data.value
+        await db.flush()
+        await db.refresh(thread)
+        return {"vote_score": thread.vote_score or 0, "your_vote": data.value}
+    else:
+        vote = ThreadVote(thread_id=thread_id, user_id=current_user.id, value=data.value)
+        db.add(vote)
+        thread.vote_score = (thread.vote_score or 0) + data.value
+        await db.flush()
+        await db.refresh(thread)
+        return {"vote_score": thread.vote_score or 0, "your_vote": data.value}
 
 
 @router.post("/threads/{thread_id}/posts", response_model=ForumPostResponse, status_code=201)

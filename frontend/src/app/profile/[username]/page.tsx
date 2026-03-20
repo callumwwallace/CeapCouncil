@@ -299,7 +299,7 @@ export default function ProfileViewPage() {
                     Enter competitions to see your history here.
                   </p>
                   <Link
-                    href="/leaderboard"
+                    href="/competitions"
                     className="inline-block mt-4 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition"
                   >
                     Browse competitions
@@ -310,7 +310,7 @@ export default function ProfileViewPage() {
                   {competitionHistory.map((entry) => (
                     <Link
                       key={entry.id}
-                      href="/leaderboard"
+                      href={`/competitions/${entry.competition_id}`}
                       className="flex items-center justify-between gap-4 p-4 rounded-lg border border-gray-100 hover:border-emerald-200 hover:bg-emerald-50/30 transition"
                     >
                       <div className="min-w-0 flex-1">
@@ -359,7 +359,7 @@ export default function ProfileViewPage() {
                     Enter competitions to earn badges.
                   </p>
                   <Link
-                    href="/leaderboard"
+                    href="/competitions"
                     className="inline-block mt-4 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition"
                   >
                     Browse competitions

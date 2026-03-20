@@ -1,18 +1,23 @@
-"""Competition and leaderboard API endpoints."""
+"""Competition, leaderboard, and proposal/voting API endpoints."""
 
-from datetime import datetime
+import random
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload
 
 from app.core.database import get_db
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, get_current_user_optional
 from app.models.user import User
 from app.models.competition import Competition, CompetitionEntry, CompetitionStatus
+from app.models.forum import ForumTopic, ForumThread
 from app.models.strategy import Strategy
+from app.models.backtest import Backtest
 from app.tasks.competition import (
     evaluate_competition_entry_task,
     award_competition_badges_task,
@@ -21,6 +26,19 @@ from app.tasks.competition import (
 
 router = APIRouter()
 
+# Templates for generated competition previews (matches promote task)
+_PROPOSAL_TEMPLATES = [
+    {"title": "Blue Chip Showdown — {symbol}", "symbols": ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META"], "ranking_metric": "sharpe_ratio", "capital": 100000, "period_months": 12},
+    {"title": "Momentum Month — {symbol}", "symbols": ["TSLA", "NVDA", "AMD", "COIN", "MSTR"], "ranking_metric": "total_return", "capital": 25000, "period_months": 3},
+    {"title": "Drawdown Survivor — {symbol}", "symbols": ["SPY", "QQQ", "IWM", "BTC-USD"], "ranking_metric": "max_drawdown", "capital": 50000, "period_months": 6},
+    {"title": "Crypto Gauntlet — {symbol}", "symbols": ["BTC-USD", "ETH-USD", "SOL-USD"], "ranking_metric": "sortino_ratio", "capital": 10000, "period_months": 6},
+    {"title": "Balanced Returns — {symbol}", "symbols": ["SPY", "QQQ", "AAPL", "MSFT"], "ranking_metric": "sharpe_ratio", "ranking_metrics": ["sharpe_ratio", "total_return", "win_rate"], "capital": 50000, "period_months": 12},
+    {"title": "Small Cap Sprint — {symbol}", "symbols": ["IWM", "ARKK", "XBI"], "ranking_metric": "calmar_ratio", "capital": 25000, "period_months": 6},
+    {"title": "Index Tracker — {symbol}", "symbols": ["SPY", "DIA", "QQQ", "VTI"], "ranking_metric": "total_return", "capital": 100000, "period_months": 12},
+]
+
+
+# ─── Schemas ────────────────────────────────────────────────────────
 
 class CompetitionCreate(BaseModel):
     title: str
@@ -30,7 +48,7 @@ class CompetitionCreate(BaseModel):
     backtest_end: str
     initial_capital: float = 10000
     ranking_metric: str = "sharpe_ratio"
-    ranking_metrics: list[str] | None = None  # Multi-metric: avg of ranks. If set, overrides ranking_metric.
+    ranking_metrics: list[str] | None = None
     start_date: str
     end_date: str
     max_entries: int | None = None
@@ -40,6 +58,8 @@ class CompetitionCreate(BaseModel):
 class CompetitionEntryCreate(BaseModel):
     strategy_id: int
 
+
+# ─── Competition CRUD ───────────────────────────────────────────────
 
 @router.get("/")
 async def list_competitions(
@@ -62,6 +82,7 @@ async def list_competitions(
             "title": c.title,
             "description": c.description,
             "symbol": c.symbol,
+            "symbols": c.symbols if c.symbols and len(c.symbols) > 1 else None,
             "status": c.status.value,
             "ranking_metric": c.ranking_metric,
             "ranking_metrics": c.ranking_metrics,
@@ -78,13 +99,145 @@ async def list_competitions(
     ]
 
 
+@router.get("/upcoming-preview")
+async def get_upcoming_preview(
+    db: AsyncSession = Depends(get_db),
+):
+    """Live top 5 competition proposals from the last 7 days (by vote_score).
+    Updates as votes change. These become next week's competitions when promote runs Monday."""
+    topic = await db.scalar(
+        select(ForumTopic).where(ForumTopic.slug == "competition-ideas")
+    )
+    if not topic:
+        return []
+
+    now = datetime.utcnow()
+    week_ago = now - timedelta(days=7)
+    result = await db.execute(
+        select(ForumThread)
+        .options(joinedload(ForumThread.author))
+        .where(
+            ForumThread.topic_id == topic.id,
+            ForumThread.proposal_data.isnot(None),
+            ForumThread.created_at >= week_ago,
+            ForumThread.created_at <= now,
+        )
+        .order_by(ForumThread.vote_score.desc().nullslast())
+        .limit(5)
+    )
+    threads = result.scalars().all()
+
+    # Next Monday for display
+    days_until_monday = (7 - now.weekday()) % 7
+    if days_until_monday == 0:
+        days_until_monday = 7
+    next_monday = (now + timedelta(days=days_until_monday)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    end_date = next_monday + timedelta(days=7)
+
+    out = []
+    for thr in threads:
+        pd = thr.proposal_data
+        if not pd or not isinstance(pd, dict):
+            continue
+        symbols = pd.get("symbols")
+        symbol = pd.get("symbol")
+        if symbols and isinstance(symbols, list) and len(symbols) > 0:
+            symbol = symbols[0]
+        backtest_start = pd.get("backtest_start")
+        backtest_end = pd.get("backtest_end")
+        if not all([symbol, backtest_start, backtest_end]):
+            continue
+        symbols_list = symbols if symbols and isinstance(symbols, list) else [str(symbol).upper()]
+        symbols_list = [str(s).upper() for s in symbols_list if s]
+        out.append({
+            "thread_id": thr.id,
+            "title": thr.title,
+            "description": None,
+            "symbol": str(symbol).upper(),
+            "symbols": symbols_list if len(symbols_list) > 1 else None,
+            "ranking_metric": pd.get("ranking_metric") or "sharpe_ratio",
+            "ranking_metrics": pd.get("ranking_metrics") if isinstance(pd.get("ranking_metrics"), list) else None,
+            "start_date": next_monday.isoformat(),
+            "end_date": end_date.isoformat(),
+            "backtest_start": str(backtest_start),
+            "backtest_end": str(backtest_end),
+            "initial_capital": float(pd.get("initial_capital", 10000)),
+            "vote_score": thr.vote_score or 0,
+            "author_username": thr.author.username if thr.author else None,
+            "is_placeholder": False,
+        })
+
+    # Fill to 5 with generated placeholders (deterministic per week - only replaced by community proposals)
+    fill_count = 5 - len(out)
+    if fill_count > 0:
+        community_titles = {o["title"] for o in out}
+        recent_titles_result = await db.execute(
+            select(Competition.title).where(
+                Competition.created_at >= now - relativedelta(weeks=8)
+            )
+        )
+        recent_titles = {r[0] for r in recent_titles_result.fetchall()}
+        used_titles = community_titles | recent_titles
+
+        # Deterministic seed from next week's ISO year+week so placeholders stay fixed all week
+        iso = next_monday.isocalendar()
+        seed = iso[0] * 100 + iso[1]
+        rng = random.Random(seed)
+
+        templates = list(_PROPOSAL_TEMPLATES)
+        rng.shuffle(templates)
+        end_dt = now - relativedelta(months=1)
+        placeholder_pool = []
+        for tmpl in templates:
+            if len(placeholder_pool) >= 8:
+                break
+            for symbol in tmpl["symbols"]:
+                if len(placeholder_pool) >= 8:
+                    break
+                title = tmpl["title"].format(symbol=symbol)
+                if title in recent_titles:
+                    continue
+                if any(p["title"] == title for p in placeholder_pool):
+                    continue
+                start_dt = end_dt - relativedelta(months=tmpl["period_months"])
+                placeholder_pool.append({
+                    "thread_id": None,
+                    "title": title,
+                    "description": None,
+                    "symbol": symbol,
+                    "symbols": None,
+                    "ranking_metric": tmpl.get("ranking_metric", "sharpe_ratio"),
+                    "ranking_metrics": tmpl.get("ranking_metrics"),
+                    "start_date": next_monday.isoformat(),
+                    "end_date": end_date.isoformat(),
+                    "backtest_start": start_dt.strftime("%Y-%m-%d"),
+                    "backtest_end": end_dt.strftime("%Y-%m-%d"),
+                    "initial_capital": tmpl.get("capital", 10000),
+                    "vote_score": 0,
+                    "author_username": None,
+                    "is_placeholder": True,
+                })
+
+        for p in placeholder_pool:
+            if len(out) >= 5:
+                break
+            if p["title"] not in used_titles:
+                out.append(p)
+                used_titles.add(p["title"])
+    return out
+
+
 @router.post("/")
 async def create_competition(
     data: CompetitionCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Create a new competition."""
+    """Create a new competition. Admin only."""
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Only admins can create competitions directly")
     competition = Competition(
         title=data.title,
         description=data.description,
@@ -106,6 +259,8 @@ async def create_competition(
     return {"id": competition.id, "title": competition.title, "status": competition.status.value}
 
 
+# ─── Competition Detail Routes ──────────────────────────────────────
+
 @router.get("/{competition_id}")
 async def get_competition(
     competition_id: int,
@@ -125,6 +280,7 @@ async def get_competition(
         "title": competition.title,
         "description": competition.description,
         "symbol": competition.symbol,
+        "symbols": competition.symbols if competition.symbols and len(competition.symbols) > 1 else None,
         "status": competition.status.value,
         "ranking_metric": competition.ranking_metric,
         "ranking_metrics": competition.ranking_metrics,
@@ -154,7 +310,6 @@ async def enter_competition(
     if competition.status != CompetitionStatus.ACTIVE:
         raise HTTPException(status_code=400, detail="Competition is not accepting entries")
 
-    # Check max entries
     if competition.max_entries:
         existing = await db.execute(
             select(CompetitionEntry).where(CompetitionEntry.competition_id == competition_id)
@@ -162,7 +317,6 @@ async def enter_competition(
         if len(existing.scalars().all()) >= competition.max_entries:
             raise HTTPException(status_code=400, detail="Competition is full")
 
-    # Check duplicate entry
     existing_entry = await db.execute(
         select(CompetitionEntry).where(
             CompetitionEntry.competition_id == competition_id,
@@ -172,7 +326,6 @@ async def enter_competition(
     if existing_entry.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="You already have an entry in this competition")
 
-    # Verify strategy exists and user owns it
     strat_result = await db.execute(select(Strategy).where(Strategy.id == data.strategy_id))
     strategy = strat_result.scalar_one_or_none()
     if not strategy:
@@ -197,7 +350,7 @@ async def get_leaderboard(
     competition_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get the competition leaderboard (ranked entries with user and strategy info)."""
+    """Get the competition leaderboard."""
     result = await db.execute(select(Competition).where(Competition.id == competition_id))
     competition = result.scalar_one_or_none()
     if not competition:
@@ -246,7 +399,7 @@ async def update_competition_status(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Update competition status. Creator only. Body: {"status": "active"|"completed"}"""
+    """Update competition status. Creator/admin only."""
     status_val = body.get("status")
     if status_val not in ("draft", "active", "judging", "completed"):
         raise HTTPException(status_code=400, detail="Invalid status")
@@ -254,8 +407,8 @@ async def update_competition_status(
     competition = result.scalar_one_or_none()
     if not competition:
         raise HTTPException(status_code=404, detail="Competition not found")
-    if competition.created_by != current_user.id:
-        raise HTTPException(status_code=403, detail="Only competition creator can update status")
+    if competition.created_by != current_user.id and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Only competition creator or admin can update status")
     competition.status = CompetitionStatus(status_val)
     if status_val == "completed":
         award_competition_badges_task.delay(competition_id)
@@ -264,3 +417,47 @@ async def update_competition_status(
     return {"status": competition.status.value}
 
 
+@router.get("/{competition_id}/equity-curves")
+async def get_competition_equity_curves(
+    competition_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return equity curves for all evaluated entries in a competition."""
+    result = await db.execute(select(Competition).where(Competition.id == competition_id))
+    competition = result.scalar_one_or_none()
+    if not competition:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    entries_result = await db.execute(
+        select(CompetitionEntry, User, Backtest)
+        .join(User, CompetitionEntry.user_id == User.id)
+        .outerjoin(Backtest, CompetitionEntry.backtest_id == Backtest.id)
+        .where(CompetitionEntry.competition_id == competition_id)
+        .order_by(desc(CompetitionEntry.score))
+    )
+    rows = entries_result.all()
+
+    curves = []
+    for entry, user, backtest in rows:
+        if not backtest or not backtest.results:
+            continue
+        equity_curve = backtest.results.get("equity_curve")
+        if not equity_curve or not isinstance(equity_curve, list):
+            continue
+
+        max_points = 200
+        raw = equity_curve
+        if len(raw) > max_points:
+            step = len(raw) / max_points
+            raw = [raw[int(i * step)] for i in range(max_points)]
+            if raw[-1] != equity_curve[-1]:
+                raw[-1] = equity_curve[-1]
+
+        curves.append({
+            "username": user.username,
+            "rank": entry.rank,
+            "total_return": entry.total_return,
+            "equity_curve": raw,
+        })
+
+    return {"competition_id": competition_id, "curves": curves}

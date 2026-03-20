@@ -9,10 +9,20 @@ celery_app = Celery(
     include=["app.tasks.backtest", "app.tasks.competition"],
 )
 
+from celery.schedules import crontab
+
 celery_app.conf.beat_schedule = {
     "expire-competitions": {
         "task": "app.tasks.competition.expire_competitions_task",
         "schedule": 3600.0,  # every hour
+    },
+    "activate-weekly-competitions": {
+        "task": "app.tasks.competition.activate_weekly_competitions_task",
+        "schedule": 3600.0,  # every hour (activates drafts when start_date arrives)
+    },
+    "promote-top-proposals": {
+        "task": "app.tasks.competition.promote_top_proposals_task",
+        "schedule": crontab(hour=0, minute=0, day_of_week=1),  # Every Monday midnight UTC
     },
 }
 

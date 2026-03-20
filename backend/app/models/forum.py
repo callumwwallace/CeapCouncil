@@ -1,7 +1,7 @@
 """Forum models: topics, threads, posts."""
 
 from datetime import datetime
-from sqlalchemy import String, Text, DateTime, ForeignKey, Integer
+from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, JSON, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -31,11 +31,16 @@ class ForumThread(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    vote_score: Mapped[int] = mapped_column(Integer, default=0)
+    proposal_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     topic: Mapped["ForumTopic"] = relationship("ForumTopic", back_populates="threads")
     author: Mapped["User"] = relationship("User", back_populates="forum_threads")
     posts: Mapped[list["ForumPost"]] = relationship(
         "ForumPost", back_populates="thread", cascade="all, delete-orphan", order_by="ForumPost.created_at"
+    )
+    thread_votes: Mapped[list["ThreadVote"]] = relationship(
+        "ThreadVote", back_populates="thread", cascade="all, delete-orphan"
     )
 
 
@@ -51,3 +56,19 @@ class ForumPost(Base):
 
     thread: Mapped["ForumThread"] = relationship("ForumThread", back_populates="posts")
     author: Mapped["User"] = relationship("User", back_populates="forum_posts")
+
+
+class ThreadVote(Base):
+    """Upvote (+1) or downvote (-1) on a forum thread. One vote per user per thread."""
+
+    __tablename__ = "thread_votes"
+    __table_args__ = (UniqueConstraint("thread_id", "user_id", name="uq_thread_vote_user_thread"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("forum_threads.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    value: Mapped[int] = mapped_column(Integer, nullable=False)  # 1 for upvote, -1 for downvote
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    thread: Mapped["ForumThread"] = relationship("ForumThread", back_populates="thread_votes")
+    user: Mapped["User"] = relationship("User", back_populates="thread_votes")

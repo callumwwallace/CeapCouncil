@@ -6,9 +6,18 @@ import { useParams } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
 import type { ForumThreadDetail } from '@/types';
-import { ArrowLeft, Loader2, MessageSquare, Quote, Trash2 } from 'lucide-react';
+import { ArrowLeft, Loader2, MessageSquare, Quote, Trash2, ChevronUp, ChevronDown } from 'lucide-react';
 import ForumEditor from '@/components/forum/ForumEditor';
 import MarkdownContent from '@/components/forum/MarkdownContent';
+
+const METRIC_LABELS: Record<string, string> = {
+  sharpe_ratio: 'Sharpe Ratio',
+  total_return: 'Total Return',
+  sortino_ratio: 'Sortino Ratio',
+  calmar_ratio: 'Calmar Ratio',
+  win_rate: 'Win Rate',
+  max_drawdown: 'Min Drawdown',
+};
 
 function formatDate(iso: string): string {
   try {
@@ -63,6 +72,16 @@ export default function CommunityThreadPage() {
       setError('Failed to delete post');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleVote = async (value: 1 | -1 | 0) => {
+    if (!isAuthenticated) return;
+    try {
+      const res = await api.voteForumThread(threadId, value);
+      setThread((prev) => (prev ? { ...prev, vote_score: res.vote_score, your_vote: res.your_vote ?? undefined } : null));
+    } catch {
+      // Silently fail
     }
   };
 
@@ -130,11 +149,60 @@ export default function CommunityThreadPage() {
         </Link>
 
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-6">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h1 className="text-xl font-bold text-gray-900">{thread.title}</h1>
-            <p className="text-sm text-gray-500 mt-1">
-              Started by {thread.author_username} · {formatDate(thread.created_at)} · {thread.post_count} posts
-            </p>
+          <div className="px-6 py-4 border-b border-gray-200 flex items-start gap-4">
+            {thread.proposal_data && (
+              <div className="flex flex-col items-center gap-0 flex-shrink-0">
+                {isAuthenticated && user?.username !== thread.author_username ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleVote(thread.your_vote === 1 ? 0 : 1)}
+                      className={`p-0.5 rounded hover:bg-gray-100 transition ${
+                        thread.your_vote === 1 ? 'text-emerald-600' : 'text-gray-400 hover:text-gray-600'
+                      }`}
+                      title="Upvote"
+                    >
+                      <ChevronUp className="h-6 w-6" />
+                    </button>
+                    <span className="text-base font-semibold text-gray-700 tabular-nums">{thread.vote_score ?? 0}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleVote(thread.your_vote === -1 ? 0 : -1)}
+                      className={`p-0.5 rounded hover:bg-gray-100 transition ${
+                        thread.your_vote === -1 ? 'text-red-500' : 'text-gray-400 hover:text-gray-600'
+                      }`}
+                      title="Downvote"
+                    >
+                      <ChevronDown className="h-6 w-6" />
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-base font-semibold text-gray-700 tabular-nums py-2">{thread.vote_score ?? 0}</span>
+                )}
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <h1 className="text-xl font-bold text-gray-900">{thread.title}</h1>
+              <p className="text-sm text-gray-500 mt-1">
+                Started by {thread.author_username} · {formatDate(thread.created_at)} · {thread.post_count} posts
+              </p>
+              {thread.proposal_data && (
+                <p className="text-sm text-gray-600 mt-2">
+                  <span className="font-medium">
+                    {(thread.proposal_data.symbols ?? [thread.proposal_data.symbol]).filter(Boolean).join(', ')}
+                  </span>
+                  {' · '}
+                  {thread.proposal_data.backtest_start} → {thread.proposal_data.backtest_end}
+                  {' · '}
+                  ${thread.proposal_data.initial_capital?.toLocaleString()}
+                  {' · '}
+                  {(thread.proposal_data.ranking_metrics ?? [thread.proposal_data.ranking_metric])
+                    .filter(Boolean)
+                    .map((m) => METRIC_LABELS[m] || m)
+                    .join(', ')}
+                </p>
+              )}
+            </div>
           </div>
 
           {/* Main post */}
