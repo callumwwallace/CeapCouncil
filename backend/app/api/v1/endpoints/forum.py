@@ -25,6 +25,7 @@ from app.schemas.forum import (
     ProposalThreadCreate,
 )
 from app.core.limiter import limiter
+from app.services.achievements import check_community_achievements
 
 router = APIRouter()
 
@@ -313,6 +314,7 @@ async def create_thread(
         db, data.body, current_user.id, current_user.username,
         post.id, topic.slug, thread.id,
     )
+    await check_community_achievements(db, current_user.id)
 
     return ForumThreadSummary(
         id=thread.id,
@@ -417,6 +419,7 @@ async def create_proposal_thread(
         db, body, current_user.id, current_user.username,
         post.id, topic.slug, thread.id,
     )
+    await check_community_achievements(db, current_user.id)
 
     return ForumThreadSummary(
         id=thread.id,
@@ -647,6 +650,7 @@ async def create_post(
             db, data.content, current_user.id, current_user.username,
             post.id, topic.slug, thread_id,
         )
+    await check_community_achievements(db, current_user.id)
 
     return ForumPostResponse(
         id=post.id,

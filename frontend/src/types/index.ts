@@ -268,6 +268,16 @@ export interface Badge {
   earned_at: string | null;
 }
 
+export interface Achievement {
+  key: string;
+  title: string;
+  description: string;
+  icon: string;
+  category: 'strategy' | 'backtest' | 'competition' | 'community';
+  earned: boolean;
+  earned_at: string | null;
+}
+
 export interface CompetitionHistoryEntry {
   id: number;
   competition_id: number;

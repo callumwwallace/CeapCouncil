@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
-import type { User, Badge, CompetitionHistoryEntry, ForumActivityItem, FollowStats, SkillEndorsement } from '@/types';
+import type { User, Badge, Achievement, CompetitionHistoryEntry, ForumActivityItem, FollowStats, SkillEndorsement } from '@/types';
 import {
   User as UserIcon,
   Trophy,
@@ -26,6 +26,17 @@ import {
   Users,
   Star,
   CheckCircle,
+  Zap,
+  Shield,
+  Flame,
+  Heart,
+  Flag,
+  Coffee,
+  Layers,
+  GitBranch,
+  Play,
+  BarChart2,
+  Lightbulb,
 } from 'lucide-react';
 
 const BADGE_TIER_STYLES: Record<string, string> = {
@@ -33,6 +44,40 @@ const BADGE_TIER_STYLES: Record<string, string> = {
   top_10: 'bg-emerald-100 text-emerald-800 border-emerald-200',
   top_25: 'bg-blue-100 text-blue-800 border-blue-200',
   participant: 'bg-gray-100 text-gray-700 border-gray-200',
+};
+
+const ACHIEVEMENT_ICONS: Record<string, React.ReactNode> = {
+  'lightbulb': <Lightbulb className="h-5 w-5" />,
+  'layers': <Layers className="h-5 w-5" />,
+  'git-branch': <GitBranch className="h-5 w-5" />,
+  'heart': <Heart className="h-5 w-5" />,
+  'play': <Play className="h-5 w-5" />,
+  'bar-chart-2': <BarChart2 className="h-5 w-5" />,
+  'trending-up': <TrendingUp className="h-5 w-5" />,
+  'shield': <Shield className="h-5 w-5" />,
+  'zap': <Zap className="h-5 w-5" />,
+  'flag': <Flag className="h-5 w-5" />,
+  'trophy': <Trophy className="h-5 w-5" />,
+  'award': <Award className="h-5 w-5" />,
+  'message-square': <MessageSquare className="h-5 w-5" />,
+  'users': <Users className="h-5 w-5" />,
+  'coffee': <Coffee className="h-5 w-5" />,
+  'user-plus': <UserPlus className="h-5 w-5" />,
+  'star': <Star className="h-5 w-5" />,
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  strategy: 'Strategy',
+  backtest: 'Backtesting',
+  competition: 'Competition',
+  community: 'Community',
+};
+
+const CATEGORY_COLORS: Record<string, string> = {
+  strategy: 'text-emerald-600 bg-emerald-50 border-emerald-200',
+  backtest: 'text-blue-600 bg-blue-50 border-blue-200',
+  competition: 'text-amber-600 bg-amber-50 border-amber-200',
+  community: 'text-purple-600 bg-purple-50 border-purple-200',
 };
 
 function formatDate(iso: string): string {
@@ -63,6 +108,7 @@ export default function ProfileViewPage() {
   const [repError, setRepError] = useState<string | null>(null);
   const [followStats, setFollowStats] = useState<FollowStats>({ follower_count: 0, following_count: 0, is_following: false });
   const [followLoading, setFollowLoading] = useState(false);
+  const [achievements, setAchievements] = useState<Achievement[]>([]);
   const [endorsements, setEndorsements] = useState<SkillEndorsement[]>([]);
   const [endorseLoading, setEndorseLoading] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('about');
@@ -85,9 +131,10 @@ export default function ProfileViewPage() {
       api.getUserStrategyCount(username),
       api.getFollowStats(username).catch(() => ({ follower_count: 0, following_count: 0, is_following: false })),
       api.getUserEndorsements(username).catch(() => []),
+      api.getUserAchievements(username).catch(() => []),
     ];
     Promise.all(reqs)
-      .then(([u, b, history, fStats, fActivity, rep, strat, fFollow, endorse]) => {
+      .then(([u, b, history, fStats, fActivity, rep, strat, fFollow, endorse, achievements_data]) => {
         setProfileUser(u);
         setBadges(b);
         setCompetitionHistory(history);
@@ -98,6 +145,7 @@ export default function ProfileViewPage() {
         setStrategyCount(strat.count);
         setFollowStats(fFollow);
         setEndorsements(endorse);
+        setAchievements(achievements_data);
       })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
@@ -288,6 +336,12 @@ export default function ProfileViewPage() {
                     <TrendingUp className="h-3.5 w-3.5 text-emerald-600" />
                     <strong className="text-gray-900">{strategyCount ?? 0}</strong> Strategies
                   </span>
+                  {achievements.filter((a) => a.earned).length > 0 && (
+                    <span className="flex items-center gap-1.5 text-gray-600">
+                      <Zap className="h-3.5 w-3.5 text-yellow-500" />
+                      <strong className="text-gray-900">{achievements.filter((a) => a.earned).length}</strong> Achievements
+                    </span>
+                  )}
                   <span className="flex items-center gap-1.5 text-gray-600">
                     <Award className="h-3.5 w-3.5 text-amber-600" />
                     <strong className="text-gray-900">{badges.length}</strong> Badges
@@ -418,57 +472,111 @@ export default function ProfileViewPage() {
         )}
 
         {activeTab === 'achievements' && (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200 flex items-center gap-2">
-              <Trophy className="h-5 w-5 text-amber-500" />
-              <h2 className="font-semibold text-gray-900">Achievements</h2>
+          <div className="space-y-6">
+            {/* Achievements Grid */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center gap-2">
+                <Award className="h-5 w-5 text-amber-500" />
+                <h2 className="font-semibold text-gray-900">Achievements</h2>
+                {achievements.filter((a) => a.earned).length > 0 && (
+                  <span className="text-sm text-gray-500">
+                    {achievements.filter((a) => a.earned).length}/{achievements.length}
+                  </span>
+                )}
+              </div>
+              <div className="p-6">
+                {achievements.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Award className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                    <p className="text-gray-500">No achievements available.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {(['strategy', 'backtest', 'competition', 'community'] as const).map((category) => {
+                      const categoryAchievements = achievements.filter((a) => a.category === category);
+                      if (categoryAchievements.length === 0) return null;
+                      return (
+                        <div key={category}>
+                          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+                            {CATEGORY_LABELS[category]}
+                          </h3>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {categoryAchievements.map((a) => (
+                              <div
+                                key={a.key}
+                                className={`flex items-center gap-3 p-3 rounded-lg border transition ${
+                                  a.earned
+                                    ? CATEGORY_COLORS[a.category]
+                                    : 'bg-gray-50 border-gray-200 opacity-50'
+                                }`}
+                              >
+                                <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                                  a.earned ? 'bg-white/80' : 'bg-gray-100'
+                                }`}>
+                                  {ACHIEVEMENT_ICONS[a.icon] || <Award className="h-5 w-5" />}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-medium text-sm">{a.title}</p>
+                                  <p className={`text-xs ${a.earned ? 'opacity-80' : 'text-gray-400'}`}>{a.description}</p>
+                                  {a.earned && a.earned_at && (
+                                    <p className="text-xs opacity-60 mt-0.5">
+                                      {formatDate(a.earned_at)}
+                                    </p>
+                                  )}
+                                </div>
+                                {a.earned && (
+                                  <CheckCircle className="h-4 w-4 flex-shrink-0 opacity-70" />
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="p-6">
-              {badges.length === 0 ? (
-                <div className="text-center py-12">
-                  <Award className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                  <p className="text-gray-500">No achievements yet.</p>
-                  <p className="text-sm text-gray-400 mt-1">
-                    Enter competitions to earn badges.
-                  </p>
-                  <Link
-                    href="/competitions"
-                    className="inline-block mt-4 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition"
-                  >
-                    Browse competitions
-                  </Link>
+
+            {/* Competition Badges */}
+            {badges.length > 0 && (
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-200 flex items-center gap-2">
+                  <Trophy className="h-5 w-5 text-amber-500" />
+                  <h2 className="font-semibold text-gray-900">Competition Badges</h2>
                 </div>
-              ) : (
-                <div className="space-y-4">
-                  {badges.map((b) => (
-                    <div
-                      key={b.id}
-                      className={`flex items-center gap-4 p-4 rounded-lg border ${
-                        BADGE_TIER_STYLES[b.badge_tier] ?? BADGE_TIER_STYLES.participant
-                      }`}
-                    >
-                      <div className="w-10 h-10 rounded-full bg-white/80 flex items-center justify-center">
-                        <Trophy className="h-5 w-5 text-amber-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium capitalize">
-                          {b.badge_tier.replace('_', ' ')}
-                        </p>
-                        <p className="text-sm opacity-90">{b.competition_title}</p>
-                        {b.earned_at && (
-                          <p className="text-xs opacity-75 mt-1">
-                            Earned {formatDate(b.earned_at)}
+                <div className="p-6">
+                  <div className="space-y-4">
+                    {badges.map((b) => (
+                      <div
+                        key={b.id}
+                        className={`flex items-center gap-4 p-4 rounded-lg border ${
+                          BADGE_TIER_STYLES[b.badge_tier] ?? BADGE_TIER_STYLES.participant
+                        }`}
+                      >
+                        <div className="w-10 h-10 rounded-full bg-white/80 flex items-center justify-center">
+                          <Trophy className="h-5 w-5 text-amber-600" />
+                        </div>
+                        <div>
+                          <p className="font-medium capitalize">
+                            {b.badge_tier.replace('_', ' ')}
                           </p>
+                          <p className="text-sm opacity-90">{b.competition_title}</p>
+                          {b.earned_at && (
+                            <p className="text-xs opacity-75 mt-1">
+                              Earned {formatDate(b.earned_at)}
+                            </p>
+                          )}
+                        </div>
+                        {b.rank != null && (
+                          <span className="ml-auto text-sm font-medium">Rank #{b.rank}</span>
                         )}
                       </div>
-                      {b.rank != null && (
-                        <span className="ml-auto text-sm font-medium">Rank #{b.rank}</span>
-                      )}
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
 

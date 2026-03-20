@@ -13,6 +13,7 @@ import {
   CompetitionDetail,
   CompetitionCreate,
   LeaderboardResponse,
+  Achievement,
   Badge,
   CompetitionHistoryEntry,
   BlogPostSummary,
@@ -495,6 +496,11 @@ class ApiClient {
 
   async getUserBadges(username: string): Promise<Badge[]> {
     const response = await this.client.get<Badge[]>(`/users/${username}/badges`);
+    return response.data;
+  }
+
+  async getUserAchievements(username: string): Promise<Achievement[]> {
+    const response = await this.client.get<Achievement[]>(`/users/${encodeURIComponent(username)}/achievements`);
     return response.data;
   }
 

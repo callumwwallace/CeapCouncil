@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.api.deps import get_current_active_user, get_current_user_optional
 from app.models.user import User
 from app.models.competition import Badge, CompetitionEntry, Competition
+from app.models.achievement import UserAchievement, ACHIEVEMENTS
 from app.models.strategy import Strategy
 from app.models.forum import ForumThread, ForumPost
 from app.models.reputation import UserReputation
@@ -277,6 +278,41 @@ async def get_user_badges(
         }
         for b in badges
     ]
+
+
+@router.get("/{username}/achievements")
+async def get_user_achievements(
+    username: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get achievements for a user by username."""
+    user = await db.scalar(select(User).where(User.username == username))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    result = await db.execute(
+        select(UserAchievement)
+        .where(UserAchievement.user_id == user.id)
+        .order_by(UserAchievement.earned_at.desc())
+    )
+    earned = result.scalars().all()
+    earned_keys = {ua.achievement_key for ua in earned}
+    earned_map = {ua.achievement_key: ua for ua in earned}
+
+    achievements = []
+    for key, info in ACHIEVEMENTS.items():
+        is_earned = key in earned_keys
+        achievements.append({
+            "key": key,
+            "title": info["title"],
+            "description": info["description"],
+            "icon": info["icon"],
+            "category": info["category"],
+            "earned": is_earned,
+            "earned_at": earned_map[key].earned_at.isoformat() if is_earned and earned_map[key].earned_at else None,
+        })
+
+    return achievements
 
 
 @router.get("/{username}/rep")

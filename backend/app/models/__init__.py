@@ -7,8 +7,10 @@ from app.models.blog import BlogPost
 from app.models.reputation import UserReputation
 from app.models.forum import ForumTopic, ForumThread, ForumPost, ThreadVote
 from app.models.notification import Notification
+from app.models.achievement import UserAchievement
 
 __all__ = [
     "User", "Strategy", "Backtest", "Vote", "Comment", "Competition", "CompetitionEntry", "Badge",
     "BlogPost", "UserReputation", "ForumTopic", "ForumThread", "ForumPost", "ThreadVote", "Notification",
+    "UserAchievement",
 ]

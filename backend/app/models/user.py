@@ -44,3 +44,4 @@ class User(Base):
     post_votes: Mapped[list["PostVote"]] = relationship(
         "PostVote", back_populates="user", cascade="all, delete-orphan"
     )
+    achievements: Mapped[list["UserAchievement"]] = relationship("UserAchievement", back_populates="user", cascade="all, delete-orphan")

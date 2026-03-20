@@ -16,6 +16,7 @@ from app.models.competition import CompetitionEntry, Competition, CompetitionSta
 from app.models.forum import ForumThread, ForumPost, ForumTopic
 from app.models.notification import Notification
 from app.websocket.manager import manager
+from app.services.achievements import check_follower_achievements
 
 router = APIRouter()
 
@@ -72,6 +73,8 @@ async def follow_user(
         "actor_username": current_user.username,
         "created_at": notification.created_at.isoformat() if notification.created_at else "",
     })
+
+    await check_follower_achievements(db, target.id)
 
     follower_count = await db.scalar(
         select(func.count(UserFollow.id)).where(UserFollow.following_id == target.id)
