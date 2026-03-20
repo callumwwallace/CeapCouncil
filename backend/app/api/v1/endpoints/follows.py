@@ -14,9 +14,8 @@ from app.models.follow import UserFollow, SkillEndorsement, ENDORSABLE_SKILLS, S
 from app.models.strategy import Strategy
 from app.models.competition import CompetitionEntry, Competition, CompetitionStatus
 from app.models.forum import ForumThread, ForumPost, ForumTopic
-from app.models.notification import Notification
-from app.websocket.manager import manager
 from app.services.achievements import check_follower_achievements
+from app.services.notifications import create_notification
 
 router = APIRouter()
 
@@ -55,24 +54,15 @@ async def follow_user(
     db.add(follow)
 
     # Notify the followed user
-    notification = Notification(
-        user_id=target.id,
+    await create_notification(
+        db,
+        target.id,
+        "follow",
+        f"{current_user.username} started following you",
+        f"/profile/{current_user.username}",
+        category="system",
         actor_id=current_user.id,
-        type="follow",
-        message=f"{current_user.username} started following you",
-        link=f"/profile/{current_user.username}",
     )
-    db.add(notification)
-    await db.flush()
-
-    await manager.send_personal(target.id, {
-        "type": "notification",
-        "id": notification.id,
-        "message": notification.message,
-        "link": notification.link,
-        "actor_username": current_user.username,
-        "created_at": notification.created_at.isoformat() if notification.created_at else "",
-    })
 
     await check_follower_achievements(db, target.id)
 

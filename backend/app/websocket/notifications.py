@@ -46,7 +46,7 @@ async def notifications_websocket(websocket: WebSocket):
         await websocket.close(code=4001)
         return
 
-    await manager.connect(websocket, user_id)
+    manager.connect(websocket, user_id)
     try:
         while True:
             data = await websocket.receive_text()

@@ -134,18 +134,19 @@ export default function ProfileViewPage() {
       api.getUserAchievements(username).catch(() => []),
     ];
     Promise.all(reqs)
-      .then(([u, b, history, fStats, fActivity, rep, strat, fFollow, endorse, achievements_data]) => {
-        setProfileUser(u);
-        setBadges(b);
-        setCompetitionHistory(history);
-        setForumStats(fStats);
-        setForumActivity(fActivity);
-        setRepScore(rep.score);
-        setYourVote(rep.your_vote);
-        setStrategyCount(strat.count);
-        setFollowStats(fFollow);
-        setEndorsements(endorse);
-        setAchievements(achievements_data);
+      .then((res) => {
+        const [u, b, history, fStats, fActivity, rep, strat, fFollow, endorse, achievements_data] = res;
+        setProfileUser(u as User);
+        setBadges(b as Badge[]);
+        setCompetitionHistory(history as CompetitionHistoryEntry[]);
+        setForumStats(fStats as { thread_count: number; post_count: number });
+        setForumActivity(fActivity as ForumActivityItem[]);
+        setRepScore((rep as { score: number; your_vote: number | null }).score);
+        setYourVote((rep as { score: number; your_vote: number | null }).your_vote);
+        setStrategyCount((strat as { count: number }).count);
+        setFollowStats(fFollow as FollowStats);
+        setEndorsements(endorse as SkillEndorsement[]);
+        setAchievements(achievements_data as Achievement[]);
       })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));

@@ -435,12 +435,18 @@ export interface ForumSearchResult {
 export interface NotificationResponse {
   id: number;
   type: string;
+  category?: string;
   message: string;
   link: string;
   actor_username: string;
   read_at: string | null;
   created_at: string;
+  extra_data?: Record<string, unknown>;
 }
+
+export type NotificationCategory = 'competition' | 'forum' | 'strategy' | 'system';
+
+export type GroupedNotifications = Record<NotificationCategory, NotificationResponse[]>;
 
 export interface ForumActivityItem {
   type: 'thread' | 'post';

@@ -14,6 +14,7 @@ from app.models.forum import ForumTopic, ForumThread, ForumPost
 from app.models.user import User
 from app.tasks.celery_app import celery_app
 from app.tasks.backtest import run_backtest_task
+from app.services.notifications import create_notification_sync
 
 
 sync_engine = create_engine(settings.DATABASE_URL.replace("+asyncpg", ""))
@@ -235,6 +236,21 @@ def award_competition_badges_task(competition_id: int):
                 )
                 db.add(badge)
                 awarded += 1
+
+            # Notify entrant of final rank
+            rank_msg = "1st" if rank == 1 else f"{rank}th"
+            title_safe = title or ""
+            create_notification_sync(
+                db,
+                entry.user_id,
+                "competition_rank",
+                f'Competition "{title_safe[:50]}{"..." if len(title_safe) > 50 else ""}" ended. You placed {rank_msg}!',
+                f"/competitions/{competition_id}",
+                category="competition",
+                actor_id=None,
+                extra_data={"competition_id": competition_id, "competition_title": title, "rank": rank},
+            )
+
         db.commit()
         return {"awarded": awarded, "total_entries": len(entries)}
     finally:
@@ -557,6 +573,20 @@ def promote_top_proposals_task():
             db.add(comp)
             db.flush()
             promoted.append(comp.id)
+
+            # Notify proposal author that their proposal was promoted
+            if thr.author_id:
+                thr_title = thr.title or ""
+                create_notification_sync(
+                    db,
+                    thr.author_id,
+                    "proposal_promoted",
+                    f'Your proposal "{thr_title[:50]}{"..." if len(thr_title) > 50 else ""}" was promoted to a competition!',
+                    f"/competitions/{comp.id}",
+                    category="competition",
+                    actor_id=None,
+                    extra_data={"competition_id": comp.id, "competition_title": comp.title, "thread_id": thr.id},
+                )
 
         fill_count = 5 - len(promoted)
         system_user_id = 1

@@ -26,6 +26,7 @@ import {
   ForumActivityItem,
   ForumSearchResult,
   NotificationResponse,
+  GroupedNotifications,
   FollowStats,
   FollowUser,
   FeedItem,
@@ -642,8 +643,16 @@ class ApiClient {
   }
 
   // Notifications
-  async getNotifications(params?: { unread_only?: boolean; skip?: number; limit?: number }): Promise<NotificationResponse[]> {
-    const response = await this.client.get<NotificationResponse[]>('/notifications', { params: params ?? {} });
+  async getNotifications(params?: {
+    unread_only?: boolean;
+    category?: string;
+    group_by?: 'category';
+    skip?: number;
+    limit?: number;
+  }): Promise<NotificationResponse[] | GroupedNotifications> {
+    const response = await this.client.get<NotificationResponse[] | GroupedNotifications>('/notifications', {
+      params: params ?? {},
+    });
     return response.data;
   }
 

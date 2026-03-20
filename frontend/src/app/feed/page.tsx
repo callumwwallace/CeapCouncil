@@ -198,9 +198,10 @@ export default function FeedPage() {
                             )}
                           </>
                         )}
-                        {(item.type === 'thread' || item.type === 'post') && item.extra.topic_name && (
-                          <span className="text-gray-500">in {item.extra.topic_name as string}</span>
-                        )}
+                        {(item.type === 'thread' || item.type === 'post') &&
+                          typeof item.extra?.topic_name === 'string' && (
+                            <span className="text-gray-500">in {item.extra.topic_name}</span>
+                          )}
                       </div>
                     )}
                   </div>

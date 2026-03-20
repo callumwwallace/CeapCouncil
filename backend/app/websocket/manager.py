@@ -12,8 +12,8 @@ class ConnectionManager:
     def __init__(self) -> None:
         self._connections: Dict[int, Set[WebSocket]] = {}
 
-    async def connect(self, websocket: WebSocket, user_id: int) -> None:
-        await websocket.accept()
+    def connect(self, websocket: WebSocket, user_id: int) -> None:
+        """Register a websocket for the user. Caller must accept() before connecting."""
         if user_id not in self._connections:
             self._connections[user_id] = set()
         self._connections[user_id].add(websocket)

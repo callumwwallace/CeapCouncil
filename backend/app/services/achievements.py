@@ -11,8 +11,7 @@ from app.models.competition import CompetitionEntry
 from app.models.forum import ForumPost
 from app.models.follow import UserFollow
 from app.models.social import Vote
-from app.models.notification import Notification
-from app.websocket.manager import manager
+from app.services.notifications import create_notification
 
 
 async def _has(db: AsyncSession, user_id: int, key: str) -> bool:
@@ -36,24 +35,15 @@ async def _award(db: AsyncSession, user_id: int, key: str) -> UserAchievement | 
 
     # Send notification
     info = ACHIEVEMENTS[key]
-    notification = Notification(
-        user_id=user_id,
-        actor_id=user_id,
-        type="achievement",
-        message=f"Achievement unlocked: {info['title']}",
-        link="/profile",
+    await create_notification(
+        db,
+        user_id,
+        "achievement",
+        f"Achievement unlocked: {info['title']}",
+        "/profile",
+        category="system",
+        actor_id=None,
     )
-    db.add(notification)
-    await db.flush()
-
-    await manager.send_personal(user_id, {
-        "type": "notification",
-        "id": notification.id,
-        "message": notification.message,
-        "link": notification.link,
-        "actor_username": "",
-        "created_at": notification.created_at.isoformat() if notification.created_at else "",
-    })
 
     return ua
 

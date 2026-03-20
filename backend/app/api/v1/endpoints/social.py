@@ -8,6 +8,7 @@ from app.models.user import User
 from app.models.strategy import Strategy
 from app.models.social import Vote, Comment
 from app.schemas.social import VoteCreate, VoteResponse, CommentCreate, CommentResponse, CommentUpdate
+from app.services.notifications import create_notification
 
 router = APIRouter()
 
@@ -83,13 +84,13 @@ async def create_comment(
     if not strategy.is_public:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot comment on private strategy")
     
-    # Verify parent comment if provided
+    parent = None
     if comment_in.parent_id:
         result = await db.execute(select(Comment).where(Comment.id == comment_in.parent_id))
         parent = result.scalar_one_or_none()
         if not parent or parent.strategy_id != comment_in.strategy_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid parent comment")
-    
+
     comment = Comment(
         user_id=current_user.id,
         strategy_id=comment_in.strategy_id,
@@ -99,7 +100,35 @@ async def create_comment(
     db.add(comment)
     await db.flush()
     await db.refresh(comment)
-    
+
+    # Notify strategy author when someone comments (unless it's the author)
+    strategy_author_id = strategy.author_id
+    link = f"/strategies/{strategy.id}"
+    if strategy_author_id != current_user.id:
+        await create_notification(
+            db,
+            strategy_author_id,
+            "strategy_comment",
+            f"{current_user.username} commented on your strategy \"{(strategy.title or '')[:50]}{'...' if len(strategy.title or '') > 50 else ''}\"",
+            link,
+            category="strategy",
+            actor_id=current_user.id,
+            extra_data={"strategy_id": strategy.id, "strategy_title": strategy.title, "comment_id": comment.id},
+        )
+
+    # If replying to a comment, also notify the parent comment author
+    if parent and parent.user_id != current_user.id and parent.user_id != strategy_author_id:
+        await create_notification(
+            db,
+            parent.user_id,
+            "strategy_comment_reply",
+                f"{current_user.username} replied to your comment on \"{(strategy.title or '')[:50]}{'...' if len(strategy.title or '') > 50 else ''}\"",
+            link,
+            category="strategy",
+            actor_id=current_user.id,
+            extra_data={"strategy_id": strategy.id, "strategy_title": strategy.title, "comment_id": comment.id, "parent_comment_id": parent.id},
+        )
+
     return comment
 
 

@@ -25,6 +25,7 @@ async def main():
         n = Notification(
             user_id=user.id,
             actor_id=actor_id,
+            category="forum",
             type="mention",
             message=f"{other.username} sent you a test notification" if other else "Test notification",
             link="/community",

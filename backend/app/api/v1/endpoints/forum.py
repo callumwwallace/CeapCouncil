@@ -9,8 +9,6 @@ from app.core.database import get_db
 from app.api.deps import get_current_active_user, get_current_user_optional
 from app.models.user import User
 from app.models.forum import ForumTopic, ForumThread, ForumPost, ThreadVote, PostVote
-from app.models.notification import Notification
-from app.websocket.manager import manager
 from app.schemas.forum import (
     ForumTopicResponse,
     ForumThreadSummary,
@@ -26,6 +24,7 @@ from app.schemas.forum import (
 )
 from app.core.limiter import limiter
 from app.services.achievements import check_community_achievements
+from app.services.notifications import create_notification
 
 router = APIRouter()
 
@@ -54,24 +53,16 @@ async def create_mention_notifications(
     for username in usernames:
         target = await db.scalar(select(User).where(User.username.ilike(username)))
         if target and target.id != actor_id and getattr(target, "notify_on_mention", True):
-            n = Notification(
-                user_id=target.id,
+            await create_notification(
+                db,
+                target.id,
+                "mention",
+                f"{actor_username} mentioned you in a post",
+                link,
+                category="forum",
                 actor_id=actor_id,
-                type="mention",
-                message=f"{actor_username} mentioned you in a post",
-                link=link,
                 post_id=post_id,
             )
-            db.add(n)
-            await db.flush()
-            await manager.send_personal(target.id, {
-                "type": "notification",
-                "id": n.id,
-                "message": n.message,
-                "link": link,
-                "actor_username": actor_username,
-                "created_at": n.created_at.isoformat() if n.created_at else "",
-            })
 
 
 @router.get("/search", response_model=list[ForumSearchResult])
@@ -650,6 +641,20 @@ async def create_post(
             db, data.content, current_user.id, current_user.username,
             post.id, topic.slug, thread_id,
         )
+        # Notify thread author when someone replies (unless it's the OP replying)
+        if thread.author_id != current_user.id:
+            link = f"/community/{topic.slug}/{thread_id}"
+            await create_notification(
+                db,
+                thread.author_id,
+                "forum_reply",
+                f"{current_user.username} replied to your thread \"{(thread.title or '')[:50]}{'...' if len(thread.title or '') > 50 else ''}\"",
+                link,
+                category="forum",
+                actor_id=current_user.id,
+                post_id=post.id,
+                extra_data={"thread_id": thread_id, "thread_title": thread.title},
+            )
     await check_community_achievements(db, current_user.id)
 
     return ForumPostResponse(
