@@ -15,9 +15,51 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const BASE_URL = 'https://ceapcouncil.com';
+const DESCRIPTION =
+  'Ceap Council is a free platform for algorithmic traders to write Python trading strategies, backtest on real historical market data, compete in ranked competitions, and discuss in the community.';
+
 export const metadata: Metadata = {
-  title: "Ceap Council - Build, Backtest & Compete",
-  description: "Write Python strategies in the Playground, run backtests on real data, compete on the Leaderboard, and discuss in the Community.",
+  metadataBase: new URL(BASE_URL),
+  title: {
+    default: 'Ceap Council — Backtest Trading Strategies & Compete',
+    template: '%s — Ceap Council',
+  },
+  description: DESCRIPTION,
+  keywords: [
+    'algorithmic trading',
+    'backtest trading strategy',
+    'python trading strategy',
+    'backtesting platform',
+    'trading competitions',
+    'quantitative trading',
+    'systematic trading',
+    'sharpe ratio',
+    'trading simulator',
+  ],
+  authors: [{ name: 'Ceap Council', url: BASE_URL }],
+  creator: 'Ceap Council',
+  openGraph: {
+    type: 'website',
+    locale: 'en_GB',
+    url: BASE_URL,
+    siteName: 'Ceap Council',
+    title: 'Ceap Council — Backtest Trading Strategies & Compete',
+    description: DESCRIPTION,
+    images: [{ url: '/opengraph-image.png', width: 1200, height: 630, alt: 'Ceap Council' }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Ceap Council — Backtest Trading Strategies & Compete',
+    description: DESCRIPTION,
+    images: ['/opengraph-image.png'],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true, 'max-image-preview': 'large' },
+  },
+  alternates: { canonical: BASE_URL },
 };
 
 export default function RootLayout({

@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import {
   Code2,
@@ -11,6 +12,18 @@ import {
   GitFork,
   Shield,
 } from 'lucide-react';
+
+export const metadata: Metadata = {
+  title: 'Ceap Council — Backtest Trading Strategies & Compete',
+  description:
+    'Free platform for algorithmic traders. Write Python trading strategies, backtest on real historical market data, compete in ranked competitions, and discuss with the community.',
+  alternates: { canonical: 'https://ceapcouncil.com' },
+  openGraph: {
+    title: 'Ceap Council — Backtest Trading Strategies & Compete',
+    description: 'Write Python strategies, run backtests on real market data, and compete in ranked trading competitions.',
+    url: 'https://ceapcouncil.com',
+  },
+};
 
 export default function Home() {
   return (
