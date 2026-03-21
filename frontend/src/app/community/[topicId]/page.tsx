@@ -492,7 +492,7 @@ export default function CommunityTopicPage() {
               ) : (
                 <>
                   <p>No threads yet. Be the first to start a discussion!</p>
-                  {isAuthenticated && (
+                  {isAuthenticated && canPost && (
                     <button
                       onClick={() => setShowNewThread(true)}
                       className="mt-4 text-emerald-600 hover:text-emerald-700 font-medium"
