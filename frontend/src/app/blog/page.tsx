@@ -52,7 +52,6 @@ export default function BlogPage() {
             </Link>
           )}
         </div>
-        </div>
 
         {loading ? (
           <div className="space-y-6">
