@@ -180,6 +180,13 @@ export default function RegisterPage() {
                   </>
                 )}
               </button>
+              <p className="text-xs text-center text-gray-400 mt-3">
+                By creating an account you agree to our{' '}
+                <a href="/terms" className="text-emerald-600 hover:underline">Terms of Service</a>
+                {' '}and{' '}
+                <a href="/privacy" className="text-emerald-600 hover:underline">Privacy Policy</a>.
+                You must be 18 or older to sign up.
+              </p>
             </div>
           </form>
 

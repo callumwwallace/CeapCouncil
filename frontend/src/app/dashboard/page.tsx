@@ -134,13 +134,31 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 md:py-8">
 
+        {/* Mobile tab bar */}
+        <nav className="flex md:hidden bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-5">
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`flex-1 flex flex-col items-center gap-1 px-2 py-3 text-xs font-medium transition ${
+                activeTab === item.id
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <span className={activeTab === item.id ? 'text-emerald-600' : 'text-gray-400'}>
+                {item.icon}
+              </span>
+              {item.label}
+            </button>
+          ))}
+        </nav>
 
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
         <div className="flex gap-6 items-start">
-
-          {/* sidebar */}
-          <nav className="w-48 flex-shrink-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          {/* Desktop sidebar */}
+          <nav className="hidden md:block w-48 flex-shrink-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             {navItems.map((item, i) => (
               <button
                 key={item.id}

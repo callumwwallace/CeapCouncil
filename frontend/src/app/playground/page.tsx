@@ -796,6 +796,23 @@ export default function PlaygroundPage() {
     }
   }, [config.symbol]);
 
+  // Mobile guard — playground requires tablet or larger
+  if (typeof window !== 'undefined' && window.innerWidth < 768) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="text-center max-w-sm">
+          <div className="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <BarChart3 className="h-8 w-8 text-emerald-600" />
+          </div>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Desktop or Tablet Required</h2>
+          <p className="text-gray-500 text-sm leading-relaxed">
+            The Playground is a full-featured code editor and charting environment. Please open it on a tablet or larger screen for the best experience.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div ref={playgroundRef} className="h-full flex flex-col bg-white text-gray-900">
       {/* Chart Header - TradingView style: asset, interval, run, actions */}
