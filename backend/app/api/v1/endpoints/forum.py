@@ -272,6 +272,7 @@ async def list_threads(
 
 
 ARCHIVES_TOPIC_SLUG = "archives"
+ADMIN_ONLY_TOPIC_SLUGS = {"news"}
 
 
 @router.post("/topics/{slug}/threads", response_model=ForumThreadSummary, status_code=201)
@@ -286,6 +287,8 @@ async def create_thread(
     """Create a new thread (and its first post as the body)."""
     if slug == ARCHIVES_TOPIC_SLUG:
         raise HTTPException(403, "Past Competition Archives are read-only. Threads are added automatically when competitions complete.")
+    if slug in ADMIN_ONLY_TOPIC_SLUGS and not current_user.is_superuser:
+        raise HTTPException(403, "Only admins can post in this topic")
     topic = await db.scalar(select(ForumTopic).where(ForumTopic.slug == slug))
     if not topic:
         raise HTTPException(404, "Topic not found")

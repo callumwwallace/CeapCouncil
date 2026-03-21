@@ -79,7 +79,7 @@ export default function CommunityTopicPage() {
   const params = useParams();
   const router = useRouter();
   const topicId = params?.topicId as string;
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, user } = useAuthStore();
   const [topic, setTopic] = useState<ForumTopicResponse | null>(null);
   const [threads, setThreads] = useState<ForumThreadSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,6 +104,8 @@ export default function CommunityTopicPage() {
 
   const isProposalTopic = topicId === PROPOSAL_TOPIC_SLUG;
   const isArchivesTopic = topicId === ARCHIVES_TOPIC_SLUG;
+  const isAdminOnlyTopic = topicId === 'news';
+  const canPost = !isArchivesTopic && (!isAdminOnlyTopic || user?.is_superuser);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -215,7 +217,7 @@ export default function CommunityTopicPage() {
             </h1>
             {topic.description && <p className="text-gray-600 mt-1">{topic.description}</p>}
           </div>
-          {isAuthenticated && !isArchivesTopic && (
+          {isAuthenticated && canPost && (
             <button
               onClick={() => setShowNewThread(!showNewThread)}
               className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg transition"
