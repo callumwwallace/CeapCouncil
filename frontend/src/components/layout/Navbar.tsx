@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
-import { BarChart3, LogOut, ChevronDown, LayoutDashboard, User, Rss } from 'lucide-react';
+import { BarChart3, LogOut, ChevronDown, LayoutDashboard, User, Rss, FileText, Shield } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 
 export default function Navbar() {
@@ -123,6 +123,24 @@ export default function Navbar() {
                       <Rss className="h-4 w-4" />
                       My Feed
                     </Link>
+                    <div className="border-t border-gray-100 my-1" />
+                    <Link
+                      href="/terms"
+                      onClick={() => setDropdownOpen(false)}
+                      className="flex items-center gap-2 px-4 py-2 text-sm text-gray-500 hover:bg-gray-50"
+                    >
+                      <FileText className="h-4 w-4" />
+                      Terms
+                    </Link>
+                    <Link
+                      href="/privacy"
+                      onClick={() => setDropdownOpen(false)}
+                      className="flex items-center gap-2 px-4 py-2 text-sm text-gray-500 hover:bg-gray-50"
+                    >
+                      <Shield className="h-4 w-4" />
+                      Privacy
+                    </Link>
+                    <div className="border-t border-gray-100 my-1" />
                     <button
                       onClick={() => {
                         setDropdownOpen(false);
@@ -140,6 +158,8 @@ export default function Navbar() {
               </>
             ) : (
               <div className="flex items-center space-x-2">
+                <Link href="/terms" className="hidden sm:inline text-gray-400 hover:text-gray-600 px-2 py-2 text-xs transition">Terms</Link>
+                <Link href="/privacy" className="hidden sm:inline text-gray-400 hover:text-gray-600 px-2 py-2 text-xs transition">Privacy</Link>
                 <Link
                   href="/login"
                   className="text-gray-600 hover:text-gray-900 px-4 py-2 text-sm font-medium transition"
