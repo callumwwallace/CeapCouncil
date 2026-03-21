@@ -251,9 +251,15 @@ export default function ProfileViewPage() {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <h1 className="text-lg font-bold text-gray-900">{displayName}</h1>
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
-                        Member
-                      </span>
+                      {profileUser.is_superuser ? (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                          Admin
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
+                          Member
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-gray-500 mt-0.5">@{profileUser.username} · Joined {profileUser.created_at ? formatDate(profileUser.created_at) : '—'}</p>
                   </div>

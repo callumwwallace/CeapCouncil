@@ -113,6 +113,7 @@ class UserResponse(BaseModel):
     avatar_url: str | None
     is_active: bool
     is_verified: bool
+    is_superuser: bool = False
     created_at: datetime
 
     class Config:
