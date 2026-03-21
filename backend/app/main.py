@@ -123,7 +123,4 @@ app.include_router(ws_router)
 
 @app.get("/health")
 async def health_check():
-    payload = {"status": "healthy", "app": settings.APP_NAME}
-    if not settings.HIDE_VERSION_IN_HEALTH:
-        payload["version"] = settings.APP_VERSION
-    return payload
+    return {"status": "healthy", "app": settings.APP_NAME}
