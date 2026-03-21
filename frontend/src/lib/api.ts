@@ -238,6 +238,15 @@ class ApiClient {
     return response.data;
   }
 
+  async uploadAvatar(file: File): Promise<User> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await this.client.post<User>('/users/me/avatar', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  }
+
   async changeEmail(newEmail: string, currentPassword: string): Promise<User> {
     const response = await this.client.patch<User>('/users/me/email', {
       new_email: newEmail,

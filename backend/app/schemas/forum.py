@@ -22,6 +22,7 @@ class ForumThreadSummary(BaseModel):
     topic_id: int
     author_id: int
     author_username: str
+    author_avatar_url: str | None = None
     title: str
     post_count: int
     vote_score: int = 0
@@ -55,6 +56,7 @@ class ForumThreadDetail(BaseModel):
     topic_id: int
     author_id: int
     author_username: str
+    author_avatar_url: str | None = None
     title: str
     post_count: int
     vote_score: int = 0
@@ -75,6 +77,7 @@ class ForumPostResponse(BaseModel):
     thread_id: int
     author_id: int
     author_username: str
+    author_avatar_url: str | None = None
     content: str
     vote_score: int = 0
     your_vote: int | None = None

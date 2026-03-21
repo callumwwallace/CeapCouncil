@@ -444,14 +444,14 @@ async def get_thread(
 ):
     """Get thread with all posts."""
     result = await db.execute(
-        select(ForumThread, User.username)
+        select(ForumThread, User.username, User.avatar_url)
         .join(User, ForumThread.author_id == User.id)
         .where(ForumThread.id == thread_id)
     )
     row = result.one_or_none()
     if not row:
         raise HTTPException(404, "Thread not found")
-    thread, author_username = row
+    thread, author_username, author_avatar_url = row
 
     your_vote = None
     if current_user:
@@ -464,13 +464,13 @@ async def get_thread(
         your_vote = vote_row
 
     posts_result = await db.execute(
-        select(ForumPost, User.username)
+        select(ForumPost, User.username, User.avatar_url)
         .join(User, ForumPost.author_id == User.id)
         .where(ForumPost.thread_id == thread_id)
         .order_by(ForumPost.created_at)
     )
     posts_data = posts_result.all()
-    post_ids = [p.id for p, _ in posts_data]
+    post_ids = [p.id for p, _, __ in posts_data]
 
     # Get user's votes on posts
     post_vote_map: dict[int, int] = {}
@@ -489,13 +489,14 @@ async def get_thread(
             thread_id=p.thread_id,
             author_id=p.author_id,
             author_username=uname,
+            author_avatar_url=avatar,
             content=p.content,
             vote_score=p.vote_score or 0,
             your_vote=post_vote_map.get(p.id),
             created_at=p.created_at,
             updated_at=p.updated_at,
         )
-        for p, uname in posts_data
+        for p, uname, avatar in posts_data
     ]
 
     return ForumThreadDetail(
@@ -503,6 +504,7 @@ async def get_thread(
         topic_id=thread.topic_id,
         author_id=thread.author_id,
         author_username=author_username,
+        author_avatar_url=author_avatar_url,
         title=thread.title,
         post_count=len(posts),
         vote_score=thread.vote_score or 0,

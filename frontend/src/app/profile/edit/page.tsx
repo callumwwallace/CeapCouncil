@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
 import type { Badge } from '@/types';
-import { ArrowLeft, Save, Loader2, Trophy } from 'lucide-react';
+import { ArrowLeft, Camera, Save, Loader2, Trophy, X } from 'lucide-react';
 
 const BADGE_TIER_STYLES: Record<string, string> = {
   winner: 'bg-amber-100 text-amber-800 border-amber-200',
@@ -21,6 +21,11 @@ export default function ProfileEditPage() {
   const [fullName, setFullName] = useState('');
   const [bio, setBio] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [badges, setBadges] = useState<Badge[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +52,55 @@ export default function ProfileEditPage() {
     }
   }, [user]);
 
+  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setAvatarError(null);
+
+    // Client-side validation
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.type)) {
+      setAvatarError('Only JPEG, PNG, or WebP images are allowed.');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setAvatarError('Image must be 2 MB or smaller.');
+      return;
+    }
+
+    setAvatarFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setAvatarPreview(ev.target?.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const handleAvatarUpload = async () => {
+    if (!avatarFile) return;
+    setAvatarUploading(true);
+    setAvatarError(null);
+    try {
+      const updated = await api.uploadAvatar(avatarFile);
+      setAvatarUrl(updated.avatar_url ?? '');
+      setAvatarPreview(null);
+      setAvatarFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      await fetchUser();
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setAvatarError(typeof msg === 'string' ? msg : 'Upload failed. Please try again.');
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
+  const handleCancelAvatarSelect = () => {
+    setAvatarFile(null);
+    setAvatarPreview(null);
+    setAvatarError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setError(null);
@@ -55,7 +109,6 @@ export default function ProfileEditPage() {
       await api.updateCurrentUser({
         full_name: fullName || undefined,
         bio: bio || undefined,
-        avatar_url: avatarUrl || undefined,
       });
       await fetchUser();
       setSuccess(true);
@@ -93,30 +146,83 @@ export default function ProfileEditPage() {
 
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-8">
           <div className="p-6 space-y-6">
+            {/* Avatar upload */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Avatar URL</label>
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-xl font-bold text-white overflow-hidden flex-shrink-0">
-                  {avatarUrl ? (
-                    <img
-                      src={avatarUrl}
-                      alt=""
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                  ) : (
-                    user?.username?.charAt(0).toUpperCase() ?? '?'
-                  )}
+              <label className="block text-sm font-medium text-gray-700 mb-2">Profile photo</label>
+              <div className="flex items-start gap-5">
+                {/* Avatar preview */}
+                <div className="relative flex-shrink-0">
+                  <div className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-2xl font-bold text-white overflow-hidden ring-2 ring-white shadow-sm">
+                    {(avatarPreview || avatarUrl) ? (
+                      <img
+                        src={avatarPreview ?? avatarUrl}
+                        alt="Avatar preview"
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      user?.username?.charAt(0).toUpperCase() ?? '?'
+                    )}
+                  </div>
                 </div>
-                <input
-                  type="url"
-                  value={avatarUrl}
-                  onChange={(e) => setAvatarUrl(e.target.value)}
-                  placeholder="https://..."
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm"
-                />
+
+                {/* Controls */}
+                <div className="flex-1 space-y-3">
+                  {!avatarFile ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                      >
+                        <Camera className="h-4 w-4" />
+                        {avatarUrl ? 'Change photo' : 'Upload photo'}
+                      </button>
+                      <p className="text-xs text-gray-400">JPEG, PNG or WebP · max 2 MB</p>
+                    </>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-sm text-gray-600 truncate max-w-xs">{avatarFile.name}</p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleAvatarUpload}
+                          disabled={avatarUploading}
+                          className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg disabled:opacity-50 transition"
+                        >
+                          {avatarUploading ? (
+                            <><Loader2 className="h-4 w-4 animate-spin" /> Uploading…</>
+                          ) : (
+                            'Save photo'
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCancelAvatarSelect}
+                          disabled={avatarUploading}
+                          className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition"
+                          title="Cancel"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {avatarError && (
+                    <p className="text-sm text-red-600">{avatarError}</p>
+                  )}
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="hidden"
+                    onChange={handleAvatarFileChange}
+                  />
+                </div>
               </div>
             </div>
 

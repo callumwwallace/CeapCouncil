@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     TOTP_ENCRYPTION_KEY: str = ""  # 32-byte base64 Fernet key; derive from SECRET_KEY if empty
     TOTP_ISSUER_NAME: str = "QuantGuild"
 
+    MEDIA_BASE_URL: str = "http://localhost:9000/ceapcouncil"
+
     BACKTEST_TIMEOUT_SECONDS: int = 300
     COMPILE_TIMEOUT_SECONDS: int = 30  # Strategy compilation timeout (SIGALRM)
     BACKTEST_MAX_MEMORY_MB: int = 1024

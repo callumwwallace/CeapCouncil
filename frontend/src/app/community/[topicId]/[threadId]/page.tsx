@@ -247,9 +247,13 @@ export default function CommunityThreadPage() {
                 </div>
                 <Link
                   href={`/profile/${thread.posts[0].author_username}`}
-                  className="flex-shrink-0 w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 font-medium"
+                  className="flex-shrink-0 w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 font-medium overflow-hidden"
                 >
-                  {thread.posts[0].author_username.charAt(0).toUpperCase()}
+                  {thread.posts[0].author_avatar_url ? (
+                    <img src={thread.posts[0].author_avatar_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                  ) : (
+                    thread.posts[0].author_username.charAt(0).toUpperCase()
+                  )}
                 </Link>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -324,9 +328,13 @@ export default function CommunityThreadPage() {
                       </div>
                       <Link
                         href={`/profile/${post.author_username}`}
-                        className="flex-shrink-0 w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 font-medium text-sm"
+                        className="flex-shrink-0 w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 font-medium text-sm overflow-hidden"
                       >
-                        {post.author_username.charAt(0).toUpperCase()}
+                        {post.author_avatar_url ? (
+                          <img src={post.author_avatar_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                        ) : (
+                          post.author_username.charAt(0).toUpperCase()
+                        )}
                       </Link>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">

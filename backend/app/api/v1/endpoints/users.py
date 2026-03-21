@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -17,6 +18,8 @@ from app.models.reputation import UserReputation
 from app.models.strategy import Strategy
 from app.schemas.user import UserResponse, UserPrivateResponse, UserUpdate, EmailChange, PasswordChange, NotificationPreferencesUpdate
 from app.core.security import verify_password, get_password_hash
+from app.core import storage
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -70,6 +73,100 @@ async def update_current_user(
     await db.flush()
     await db.refresh(current_user)
     
+    return current_user
+
+
+# Allowed MIME types and their magic-byte signatures for avatar uploads
+_AVATAR_ALLOWED: dict[str, tuple[str, bytes]] = {
+    "image/jpeg": ("jpg", bytes([0xFF, 0xD8, 0xFF])),
+    "image/png":  ("png", bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])),
+    "image/webp": ("webp", b"RIFF"),  # full check done in endpoint
+}
+_AVATAR_MAX_BYTES = 2 * 1024 * 1024  # 2 MB
+
+_storage_executor = ThreadPoolExecutor(max_workers=2)
+
+
+@router.post("/me/avatar", response_model=UserPrivateResponse)
+@limiter.limit("10/minute")
+async def upload_avatar(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Upload a profile avatar (JPEG / PNG / WebP, max 2 MB).
+
+    Security measures:
+    - Content-Type header must be an allowed image type
+    - Magic bytes are verified against the actual file content
+    - File size is capped at 2 MB before storing
+    - Old avatar is deleted from MinIO on success
+    - Unique, non-guessable object key prevents enumeration
+    """
+    # 1. Check declared content-type
+    content_type = (file.content_type or "").lower()
+    if content_type not in _AVATAR_ALLOWED:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Please upload a JPEG, PNG, or WebP image.",
+        )
+
+    # 2. Read and enforce size limit
+    file_bytes = await file.read()
+    if len(file_bytes) > _AVATAR_MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail="File too large. Avatar must be 2 MB or smaller.",
+        )
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty file.")
+
+    # 3. Verify magic bytes (prevents content-type spoofing)
+    ext, magic = _AVATAR_ALLOWED[content_type]
+    if not file_bytes[: len(magic)].startswith(magic):
+        raise HTTPException(
+            status_code=400,
+            detail="File content does not match the declared type. Upload a valid image.",
+        )
+    # Extra check for WebP: bytes 8-12 must be b"WEBP"
+    if content_type == "image/webp":
+        if len(file_bytes) < 12 or file_bytes[8:12] != b"WEBP":
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid WebP file.",
+            )
+
+    # 4. Build a unique object key and upload to MinIO (in thread pool)
+    object_key = storage.build_avatar_key(current_user.id, ext)
+    loop = asyncio.get_event_loop()
+    try:
+        avatar_url = await loop.run_in_executor(
+            _storage_executor,
+            lambda: storage.upload_file(file_bytes, object_key, content_type),
+        )
+    except Exception as exc:
+        logger.error("Avatar upload failed for user %s: %s", current_user.id, exc)
+        raise HTTPException(status_code=500, detail="Failed to upload avatar. Please try again.")
+
+    # 5. Delete the previous avatar from MinIO (best-effort, don't fail the request)
+    old_url = current_user.avatar_url
+    if old_url:
+        old_key = storage.extract_key_from_url(old_url)
+        if old_key:
+            try:
+                await loop.run_in_executor(
+                    _storage_executor,
+                    lambda: storage.delete_file(old_key),
+                )
+            except Exception:
+                pass  # Non-fatal
+
+    # 6. Persist new avatar URL
+    current_user.avatar_url = avatar_url
+    await db.flush()
+    await db.refresh(current_user)
     return current_user
 
 

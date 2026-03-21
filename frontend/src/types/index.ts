@@ -417,6 +417,7 @@ export interface ForumThreadDetail {
   topic_id: number;
   author_id: number;
   author_username: string;
+  author_avatar_url?: string | null;
   title: string;
   post_count: number;
   vote_score?: number;
@@ -433,6 +434,7 @@ export interface ForumPostResponse {
   thread_id: number;
   author_id: number;
   author_username: string;
+  author_avatar_url?: string | null;
   content: string;
   vote_score: number;
   your_vote: number | null;

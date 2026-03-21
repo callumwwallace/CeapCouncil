@@ -82,10 +82,14 @@ export default function Navbar() {
                     onClick={() => setDropdownOpen((o) => !o)}
                     className="flex items-center gap-2 px-3 py-2 hover:bg-gray-100 rounded-lg transition"
                   >
-                    <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-full flex items-center justify-center">
-                      <span className="text-sm font-medium text-white">
-                        {user?.username?.charAt(0).toUpperCase() ?? '?'}
-                      </span>
+                    <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-full flex items-center justify-center overflow-hidden flex-shrink-0">
+                      {user?.avatar_url ? (
+                        <img src={user.avatar_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      ) : (
+                        <span className="text-sm font-medium text-white">
+                          {user?.username?.charAt(0).toUpperCase() ?? '?'}
+                        </span>
+                      )}
                     </div>
                     <span className="hidden sm:inline text-sm font-medium text-gray-700 max-w-[120px] truncate">
                       {user?.username ?? '...'}
