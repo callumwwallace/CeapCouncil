@@ -788,6 +788,20 @@ class ApiClient {
     await this.client.delete(`/blog/comments/${commentId}`);
   }
 
+  async createBlogPost(data: { title: string; slug: string; excerpt?: string; content: string; published?: boolean }): Promise<BlogPostDetail> {
+    const response = await this.client.post<BlogPostDetail>('/blog/', data);
+    return response.data;
+  }
+
+  async updateBlogPost(slug: string, data: { title?: string; slug?: string; excerpt?: string; content?: string; published?: boolean }): Promise<BlogPostDetail> {
+    const response = await this.client.patch<BlogPostDetail>(`/blog/${slug}`, data);
+    return response.data;
+  }
+
+  async deleteBlogPost(slug: string): Promise<void> {
+    await this.client.delete(`/blog/${slug}`);
+  }
+
   // Social
   async vote(strategyId: number, value: number): Promise<void> {
     await this.client.post('/social/votes', { strategy_id: strategyId, value });

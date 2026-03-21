@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { FileText, Calendar, User, MessageSquare } from 'lucide-react';
+import { FileText, Calendar, User, MessageSquare, PenSquare } from 'lucide-react';
 import api from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 import type { BlogPostSummary } from '@/types';
 
 function formatDate(iso: string): string {
@@ -16,6 +17,7 @@ function formatDate(iso: string): string {
 }
 
 export default function BlogPage() {
+  const { user } = useAuthStore();
   const [posts, setPosts] = useState<BlogPostSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -30,14 +32,26 @@ export default function BlogPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-10">
-        <div className="mb-10">
-          <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-            <FileText className="h-8 w-8 text-emerald-600" />
-            Blog
-          </h1>
-          <p className="mt-2 text-gray-600">
-            Insights, tutorials, and updates from the Ceap Council team and community.
-          </p>
+        <div className="mb-10 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
+              <FileText className="h-8 w-8 text-emerald-600" />
+              Blog
+            </h1>
+            <p className="mt-2 text-gray-600">
+              Insights, tutorials, and updates from the Ceap Council team and community.
+            </p>
+          </div>
+          {user?.is_superuser && (
+            <Link
+              href="/admin/blog/new"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-medium rounded-lg transition flex-shrink-0"
+            >
+              <PenSquare className="h-4 w-4" />
+              New post
+            </Link>
+          )}
+        </div>
         </div>
 
         {loading ? (

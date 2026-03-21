@@ -8,10 +8,10 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.sanitize import sanitize_user_content
 from app.core.limiter import limiter
-from app.api.deps import get_current_active_user, get_current_user_optional
+from app.api.deps import get_current_active_user, get_current_user_optional, get_current_admin_user
 from app.models.blog import BlogPost, BlogComment
 from app.models.user import User
-from app.schemas.blog import BlogCommentCreate
+from app.schemas.blog import BlogCommentCreate, BlogPostCreate, BlogPostUpdate
 
 router = APIRouter()
 
@@ -95,6 +95,102 @@ async def get_blog_post(
         "updated_at": post.updated_at.isoformat(),
         "comment_count": comment_count,
     }
+
+
+@router.post("/", status_code=201)
+@limiter.limit("20/minute")
+async def create_blog_post(
+    request: Request,
+    data: BlogPostCreate,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new blog post. Admin only."""
+    existing = await db.scalar(select(BlogPost).where(BlogPost.slug == data.slug))
+    if existing:
+        raise HTTPException(400, "A post with this slug already exists")
+
+    from datetime import datetime, timezone
+    post = BlogPost(
+        title=data.title,
+        slug=data.slug,
+        excerpt=data.excerpt,
+        content=data.content,
+        author_id=current_user.id,
+        published_at=datetime.now(timezone.utc) if data.published else None,
+    )
+    db.add(post)
+    await db.flush()
+    await db.refresh(post)
+    return {
+        "id": post.id,
+        "title": post.title,
+        "slug": post.slug,
+        "excerpt": post.excerpt,
+        "content": post.content,
+        "published_at": post.published_at.isoformat() if post.published_at else None,
+        "created_at": post.created_at.isoformat(),
+        "updated_at": post.updated_at.isoformat(),
+    }
+
+
+@router.patch("/{slug}")
+@limiter.limit("20/minute")
+async def update_blog_post(
+    request: Request,
+    slug: str,
+    data: BlogPostUpdate,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an existing blog post. Admin only."""
+    post = await db.scalar(select(BlogPost).where(BlogPost.slug == slug))
+    if not post:
+        raise HTTPException(404, "Post not found")
+
+    if data.title is not None:
+        post.title = data.title
+    if data.excerpt is not None:
+        post.excerpt = data.excerpt
+    if data.content is not None:
+        post.content = data.content
+    if data.slug is not None and data.slug != slug:
+        existing = await db.scalar(select(BlogPost).where(BlogPost.slug == data.slug))
+        if existing:
+            raise HTTPException(400, "A post with this slug already exists")
+        post.slug = data.slug
+    if data.published is not None:
+        from datetime import datetime, timezone
+        post.published_at = datetime.now(timezone.utc) if data.published else None
+
+    await db.flush()
+    await db.refresh(post)
+    return {
+        "id": post.id,
+        "title": post.title,
+        "slug": post.slug,
+        "excerpt": post.excerpt,
+        "content": post.content,
+        "published_at": post.published_at.isoformat() if post.published_at else None,
+        "created_at": post.created_at.isoformat(),
+        "updated_at": post.updated_at.isoformat(),
+    }
+
+
+@router.delete("/{slug}", status_code=204)
+@limiter.limit("10/minute")
+async def delete_blog_post(
+    request: Request,
+    slug: str,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a blog post. Admin only."""
+    post = await db.scalar(select(BlogPost).where(BlogPost.slug == slug))
+    if not post:
+        raise HTTPException(404, "Post not found")
+    await db.delete(post)
+    await db.flush()
 
 
 @router.get("/{slug}/comments")

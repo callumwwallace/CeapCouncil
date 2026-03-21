@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Calendar, User as UserIcon, FileText, MessageSquare, Loader2, Trash2, Reply } from 'lucide-react';
+import { ArrowLeft, Calendar, User as UserIcon, FileText, MessageSquare, Loader2, Trash2, Reply, PenSquare } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
 import type { BlogPostDetail, BlogComment } from '@/types';
@@ -118,13 +118,21 @@ export default function BlogPostPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-10">
-        <Link
-          href="/blog"
-          className="inline-flex items-center gap-2 text-emerald-600 hover:text-emerald-700 mb-8"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Blog
-        </Link>
+        <div className="flex items-center justify-between mb-8">
+          <Link href="/blog" className="inline-flex items-center gap-2 text-emerald-600 hover:text-emerald-700">
+            <ArrowLeft className="h-4 w-4" />
+            Back to Blog
+          </Link>
+          {user?.is_superuser && post && (
+            <Link
+              href={`/admin/blog/${post.slug}/edit`}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+            >
+              <PenSquare className="h-4 w-4" />
+              Edit post
+            </Link>
+          )}
+        </div>
 
         {loading ? (
           <div className="bg-white rounded-xl border border-gray-200 p-8 animate-pulse">
