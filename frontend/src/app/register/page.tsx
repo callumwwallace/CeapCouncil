@@ -15,6 +15,7 @@ export default function RegisterPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -23,6 +24,11 @@ export default function RegisterPage() {
     
     if (password !== confirmPassword) {
       setError('Passwords do not match');
+      return;
+    }
+
+    if (!ageConfirmed) {
+      setError('You must confirm you are 18 or older to sign up.');
       return;
     }
     
@@ -144,13 +150,20 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            <p className="text-xs text-gray-500 text-center">
-              By creating an account you agree to our{' '}
-              <Link href="/terms" className="text-emerald-600 hover:text-emerald-500">Terms of Service</Link>
-              {' '}and{' '}
-              <Link href="/privacy" className="text-emerald-600 hover:text-emerald-500">Privacy Policy</Link>.
-              You must be 18 or older to sign up.
-            </p>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={ageConfirmed}
+                onChange={(e) => setAgeConfirmed(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+              />
+              <span className="text-xs text-gray-500">
+                I confirm I am 18 or older and agree to the{' '}
+                <Link href="/terms" className="text-emerald-600 hover:text-emerald-500">Terms of Service</Link>
+                {' '}and{' '}
+                <Link href="/privacy" className="text-emerald-600 hover:text-emerald-500">Privacy Policy</Link>.
+              </span>
+            </label>
 
             <div>
               <button

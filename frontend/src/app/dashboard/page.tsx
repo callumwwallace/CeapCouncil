@@ -7,7 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
 import {
   Mail, User, Shield, Loader2, Bell, AlertCircle,
-  CheckCircle2, ExternalLink, KeyRound, Calendar,
+  CheckCircle2, ExternalLink, KeyRound, Calendar, Trash2,
 } from 'lucide-react';
 import { PasswordStrengthMeter } from '@/components/auth/PasswordStrengthMeter';
 import { QRCodeSVG } from 'qrcode.react';
@@ -56,7 +56,7 @@ function SectionCard({ title, children }: { title: string; children: React.React
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, isAuthenticated, isLoading, fetchUser } = useAuthStore();
+  const { user, isAuthenticated, isLoading, fetchUser, logout } = useAuthStore();
   const [activeTab, setActiveTab] = useState<Tab>('account');
 
   // Email form
@@ -87,6 +87,9 @@ export default function DashboardPage() {
   const [totpConfirmCode, setTotpConfirmCode] = useState('');
   const [totpRecoveryCodes, setTotpRecoveryCodes] = useState<string[]>([]);
   const [totpDisablePassword, setTotpDisablePassword] = useState('');
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [totpDisableCode, setTotpDisableCode] = useState('');
   const [totpError, setTotpError] = useState('');
   const [totpActionLoading, setTotpActionLoading] = useState(false);
@@ -552,6 +555,57 @@ export default function DashboardPage() {
                       )}
                     </div>
                   </div>
+                </SectionCard>
+
+                {/* delete account */}
+                <SectionCard title="Delete account">
+                  <p className="text-sm text-gray-500 mb-4">
+                    Permanently delete your account and all associated data. This action cannot be undone.
+                  </p>
+                  {deleteError && (
+                    <div className="flex items-center gap-2 p-3 mb-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                      <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                      {deleteError}
+                    </div>
+                  )}
+                  {!deleteConfirmOpen ? (
+                    <button
+                      onClick={() => setDeleteConfirmOpen(true)}
+                      className="px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition"
+                    >
+                      Delete my account
+                    </button>
+                  ) : (
+                    <div className="border border-red-200 rounded-lg p-4 bg-red-50 space-y-3">
+                      <p className="text-sm font-medium text-red-700">Are you sure? This will permanently delete your account, strategies, backtests, and all your data.</p>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={async () => {
+                            setDeleteLoading(true);
+                            setDeleteError(null);
+                            try {
+                              await api.deleteAccount();
+                              logout();
+                              router.push('/');
+                            } catch {
+                              setDeleteError('Failed to delete account. Please try again.');
+                              setDeleteLoading(false);
+                            }
+                          }}
+                          disabled={deleteLoading}
+                          className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition disabled:opacity-50"
+                        >
+                          {deleteLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Yes, delete permanently'}
+                        </button>
+                        <button
+                          onClick={() => { setDeleteConfirmOpen(false); setDeleteError(null); }}
+                          className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </SectionCard>
               </>
             )}

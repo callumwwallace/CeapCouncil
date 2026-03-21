@@ -254,6 +254,10 @@ class ApiClient {
     return response.data;
   }
 
+  async deleteAccount(): Promise<void> {
+    await this.client.delete('/users/me');
+  }
+
   async updateNotificationPreferences(data: { notify_on_mention?: boolean; email_on_mention?: boolean; email_marketing?: boolean }): Promise<User> {
     const response = await this.client.patch<User>('/users/me/notification-preferences', data);
     return response.data;

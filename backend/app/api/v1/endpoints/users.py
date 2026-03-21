@@ -17,6 +17,9 @@ from app.models.reputation import UserReputation
 from app.models.strategy import Strategy
 from app.schemas.user import UserResponse, UserPrivateResponse, UserUpdate, EmailChange, PasswordChange, NotificationPreferencesUpdate
 from app.core.security import verify_password, get_password_hash
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -32,6 +35,21 @@ class RepGive(BaseModel):
 @limiter.limit("60/minute")
 async def get_current_user_info(request: Request, current_user: User = Depends(get_current_active_user)):
     return current_user
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute")
+async def delete_account(
+    request: Request,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete the authenticated user's account and all associated data (GDPR right to erasure)."""
+    user_id = current_user.id
+    username = current_user.username
+    await db.delete(current_user)
+    await db.flush()
+    logger.info("Account deleted: user_id=%s username=%s", user_id, username)
 
 
 @router.patch("/me", response_model=UserPrivateResponse)
