@@ -144,6 +144,14 @@ export default function RegisterPage() {
               </div>
             </div>
 
+            <p className="text-xs text-gray-500 text-center">
+              By creating an account you agree to our{' '}
+              <Link href="/terms" className="text-emerald-600 hover:text-emerald-500">Terms of Service</Link>
+              {' '}and{' '}
+              <Link href="/privacy" className="text-emerald-600 hover:text-emerald-500">Privacy Policy</Link>.
+              You must be 18 or older to sign up.
+            </p>
+
             <div>
               <button
                 type="submit"
