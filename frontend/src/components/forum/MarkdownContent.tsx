@@ -2,10 +2,30 @@
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import StrategyEmbedCard from './StrategyEmbedCard';
 import BacktestEmbedCard from './BacktestEmbedCard';
+
+// allow code blocks, syntax hl, images, blockquotes for forum
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [
+    ...(defaultSchema.tagNames ?? []),
+    'pre',
+    'code',
+    'span',
+  ],
+  attributes: {
+    ...defaultSchema.attributes,
+    code: [...(defaultSchema.attributes?.code ?? []), 'className'],
+    span: [...(defaultSchema.attributes?.span ?? []), 'className', 'style'],
+    pre: [...(defaultSchema.attributes?.pre ?? []), 'className'],
+    a: ['href', 'title', 'target', 'rel'],
+    img: ['src', 'alt', 'title'],
+  },
+};
 
 interface MarkdownContentProps {
   content: string;
@@ -24,14 +44,12 @@ const proseClasses = [
   '[&_blockquote]:border-l-4 [&_blockquote]:border-gray-300 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-gray-600',
 ].join(' ');
 
-/** Convert @username to markdown links so they render as profile links. */
+// @username -> profile links
 function linkifyMentions(text: string): string {
   return text.replace(/@([a-zA-Z0-9_]+)/g, (_, username) => `[@${username}](/profile/${username})`);
 }
 
-/** Combined regex for strategy and backtest embeds.
- *  Accepts both old integer IDs and new UUID share tokens:
- *  [strategy:abc-123|Title] or [backtest:def-456|AAPL] */
+// [strategy:token|Title] or [backtest:token|symbol]
 const EMBED_REGEX = /\[(strategy|backtest):([a-zA-Z0-9_-]+)[|:]([^\]]*)\]/g;
 
 type EmbedPart =
@@ -74,6 +92,7 @@ export default function MarkdownContent({ content, className = '' }: MarkdownCon
             <div key={i} className={proseClasses}>
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
+                rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
                 components={{
                   a: ({ href, children, ...props }) => {
                     const safe =

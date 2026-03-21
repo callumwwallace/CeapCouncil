@@ -36,8 +36,12 @@ logs/
 .coverage
 htmlcov/
 .pytest_cache/
+coverage.xml
 
 # Misc
 *.bak
 *.tmp
 .cache/
+
+# TLS certificates (never commit private keys)
+nginx/certs/

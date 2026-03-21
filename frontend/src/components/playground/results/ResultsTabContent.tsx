@@ -82,7 +82,7 @@ export default function ResultsTabContent({
                 <div className="p-3 pb-6">
                   <div className="space-y-3 pb-3 border-b border-gray-200">
                     <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Analysis</div>
-                    {/* Primary tabs */}
+                    {/* main tabs */}
                     <div className="flex gap-1 p-1 rounded-lg bg-gray-100 border border-gray-200">
                       {(['summary', 'trades', 'orders', 'charts'] as const).map((tab) => {
                         const primaryIcons = { summary: LayoutDashboard, trades: ArrowLeftRight, orders: ListOrdered, charts: LineChartIcon };
@@ -103,7 +103,7 @@ export default function ResultsTabContent({
                         );
                       })}
                   </div>
-                    {/* Secondary / advanced tabs - 2 rows of 4 */}
+                    {/* advanced tabs */}
                     <div className="grid grid-cols-4 gap-1.5">
                       {(['tca', 'optimize', 'walkforward', 'oos', 'cpcv', 'factors', 'montecarlo', 'risk', 'heatmap', 'distribution', 'compare'] as const).map((tab) => {
                         const secondaryIcons = { tca: Activity, optimize: Sliders, walkforward: GitBranch, oos: Filter, cpcv: Layers, factors: PieChart, montecarlo: Shuffle, risk: Shield, heatmap: Calendar, distribution: BarChart2, compare: GitCompare };
@@ -179,7 +179,7 @@ export default function ResultsTabContent({
                           </div>
                           </div>
                           {(results as { versioning?: { code_hash?: string; data_hash?: string; config_hash?: string } }).versioning && (
-                            <div className="p-2 rounded-lg border border-gray-200 bg-gray-50 text-[10px] text-gray-500" title="Reproducible run – config/code/data hashed for versioning">
+                            <div className="p-2 rounded-lg border border-gray-200 bg-gray-50 text-[10px] text-gray-500" title="config/code/data hashed">
                               Reproducible run
                             </div>
                           )}
@@ -227,7 +227,7 @@ export default function ResultsTabContent({
                           {results.equity_curve?.length ? (
                             <div className="h-32">
                               <div className="text-[10px] text-gray-500 mb-0.5">Equity curve</div>
-                            <ResponsiveContainer width="100%" height="100%">
+                            <ResponsiveContainer width="100%" height="100%" minHeight={128}>
                                 <AreaChart data={results.equity_curve.map(p => ({ ...p, value: p.equity }))} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                                 <defs>
                                   <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
@@ -246,7 +246,7 @@ export default function ResultsTabContent({
                           {results.drawdown_series?.length ? (
                             <div className="h-24">
                               <div className="text-[10px] text-gray-500 mb-0.5">Drawdown</div>
-                            <ResponsiveContainer width="100%" height="100%">
+                            <ResponsiveContainer width="100%" height="100%" minHeight={96}>
                                 <AreaChart data={results.drawdown_series} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                                 <defs>
                                   <linearGradient id="ddGrad" x1="0" y1="0" x2="0" y2="1">
@@ -268,7 +268,7 @@ export default function ResultsTabContent({
                                 data?.length ? (
                                 <div key={name} className="h-20">
                                   <div className="text-[10px] text-gray-400 mb-0.5">{name}</div>
-                                  <ResponsiveContainer width="100%" height="100%">
+                                  <ResponsiveContainer width="100%" height="100%" minHeight={80}>
                                     <LineChart data={data} margin={{ top: 2, right: 2, bottom: 0, left: 0 }}>
                                       <XAxis dataKey="date" hide />
                                       <YAxis hide />
@@ -437,7 +437,7 @@ export default function ResultsTabContent({
                               </div>
                               <div>
                                 <label className="text-[10px] text-gray-500 block mb-0.5">Purge bars</label>
-                                <input type="number" min={0} max={100} value={cpcvPurgeBars} onChange={(e) => setCpcvPurgeBars(Math.max(0, parseInt(e.target.value, 10) || 0))} className="w-full px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" title="Bars removed at train/test boundaries" />
+                                <input type="number" min={0} max={100} value={cpcvPurgeBars} onChange={(e) => setCpcvPurgeBars(Math.max(0, parseInt(e.target.value, 10) || 0))} className="w-full px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" title="purge bars" />
                               </div>
                             </div>
                             <button onClick={handleRunCpcv} disabled={cpcvLoading} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition">
@@ -533,7 +533,7 @@ export default function ResultsTabContent({
                           )}
                           {factorResults && !factorResults.error && factorResults.status === 'completed' && (
                             <div className="space-y-3">
-                              {/* Alpha headline */}
+                              {/* alpha */}
                               <div className={`p-3 rounded-lg border ${factorResults.alpha_significant ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 bg-white'}`}>
                                 <div className="flex items-baseline justify-between">
                                   <div>
@@ -549,7 +549,7 @@ export default function ResultsTabContent({
                                 </div>
                               </div>
 
-                              {/* Model fit */}
+                              {/* model fit */}
                               <div className="grid grid-cols-3 gap-2">
                                 <div className="p-3 rounded-lg border border-gray-200 bg-white">
                                   <div className="text-[10px] text-gray-500">R²</div>
@@ -566,7 +566,7 @@ export default function ResultsTabContent({
                                 </div>
                               </div>
 
-                              {/* Factor loadings table */}
+                              {/* factor loadings */}
                               <div>
                                 <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Factor Loadings</div>
                                 <div className="rounded-lg border border-gray-200 overflow-hidden">
@@ -602,7 +602,7 @@ export default function ResultsTabContent({
                                 </div>
                               </div>
 
-                              {/* Visual breakdown bar */}
+                              {/* breakdown */}
                               <div>
                                 <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Return Decomposition</div>
                                 <div className="p-3 rounded-lg border border-gray-200 bg-white space-y-2">
@@ -641,7 +641,7 @@ export default function ResultsTabContent({
                                 </div>
                               </div>
 
-                              {/* Interpretation */}
+                              {/* notes */}
                               <div className="p-2 rounded-lg border border-gray-200 bg-gray-50 text-[11px] text-gray-600 space-y-1">
                                 {(factorResults.r_squared ?? 0) > 0.7 && <p>High R² ({((factorResults.r_squared ?? 0) * 100).toFixed(0)}%) — most of your returns are explained by known factors.</p>}
                                 {(factorResults.r_squared ?? 0) <= 0.7 && (factorResults.r_squared ?? 0) > 0.3 && <p>Moderate R² ({((factorResults.r_squared ?? 0) * 100).toFixed(0)}%) — returns are partially driven by factors, with meaningful unique behavior.</p>}
@@ -661,7 +661,7 @@ export default function ResultsTabContent({
                             <div className="grid grid-cols-2 gap-2">
                               <div>
                                 <label className="text-[10px] text-gray-500 block mb-0.5">Purge bars</label>
-                                <input type="number" min={0} max={100} value={walkForwardPurgeBars} onChange={(e) => setWalkForwardPurgeBars(Math.max(0, parseInt(e.target.value, 10) || 0))} className="w-full px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" title="Gap between train and test to prevent leakage" />
+                                <input type="number" min={0} max={100} value={walkForwardPurgeBars} onChange={(e) => setWalkForwardPurgeBars(Math.max(0, parseInt(e.target.value, 10) || 0))} className="w-full px-2 py-1 text-xs bg-white border border-gray-200 rounded text-gray-900" title="gap between train/test" />
                           </div>
                               <div>
                                 <label className="text-[10px] text-gray-500 block mb-0.5">Window mode</label>

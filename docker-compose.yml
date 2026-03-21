@@ -74,11 +74,11 @@ services:
       - ./backend:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  celery:
+  celery-worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: quantguild-celery
+    container_name: quantguild-celery-worker
     env_file:
       - .env
     environment:
@@ -93,7 +93,28 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-    command: celery -A app.tasks worker --beat --loglevel=info --pool=solo
+    command: celery -A app.tasks worker --loglevel=info --pool=solo
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: quantguild-celery-beat
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-quantguild}:${POSTGRES_PASSWORD:-quantguild}@db:5432/${POSTGRES_DB:-quantguild}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme_redis}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-changeme_redis}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-changeme_redis}@redis:6379/2
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: celery -A app.tasks beat --loglevel=info
 
   frontend:
     build:

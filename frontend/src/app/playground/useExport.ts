@@ -83,7 +83,7 @@ export function useExport(results: BacktestResult | null, config: BacktestConfig
     });
     const histData = JSON.stringify(hist);
 
-    // Monthly returns heatmap data
+    // monthly returns for heatmap
     const monthlyMap: Record<string, Record<number, number>> = {};
     let prev = (r.equity_curve?.[0]?.equity) || 1;
     let pM = -1, pY = -1, mStart = prev;
@@ -102,7 +102,7 @@ export function useExport(results: BacktestResult | null, config: BacktestConfig
       Object.entries(ms).map(([mo, ret]) => ({year: +yr, month: +mo+1, return_pct: Math.round((ret as number)*100)/100}))
     ));
 
-    // Trade log data (limit to 50 for HTML size)
+    // trade log, cap at 50 so html doesnt get huge
     const tradeLog = JSON.stringify(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       trades.slice(0, 50).map((t: any) => ({
@@ -112,10 +112,9 @@ export function useExport(results: BacktestResult | null, config: BacktestConfig
       }))
     );
 
-    // Rolling sharpe data
     const rollingSharpe = JSON.stringify(r.rolling_sharpe || []);
 
-    // Compute cumulative returns for underwater chart
+    // for underwater/drawdown chart
     const winCount = pnls.filter((v: number) => v > 0).length;
     const lossCount = pnls.filter((v: number) => v < 0).length;
     const avgWin = winCount > 0 ? pnls.filter((v: number) => v > 0).reduce((a: number, b: number) => a + b, 0) / winCount : 0;
@@ -381,10 +380,10 @@ ${trades.length > 0 ? `
 <div class="section">
   <div class="section-title">Configuration</div>
   <div class="config-bar">
-    <div class="item"><strong>Symbol:</strong> ${config.symbol}</div>
-    <div class="item"><strong>Period:</strong> ${config.startDate} to ${config.endDate}</div>
+    <div class="item"><strong>Symbol:</strong> ${esc(config.symbol)}</div>
+    <div class="item"><strong>Period:</strong> ${esc(config.startDate)} to ${esc(config.endDate)}</div>
     <div class="item"><strong>Capital:</strong> $${config.initialCapital.toLocaleString()}</div>
-    <div class="item"><strong>Interval:</strong> ${config.interval}</div>
+    <div class="item"><strong>Interval:</strong> ${esc(config.interval)}</div>
     <div class="item"><strong>Commission:</strong> ${config.commission}%</div>
     <div class="item"><strong>Slippage:</strong> ${config.slippage}%</div>
   </div>

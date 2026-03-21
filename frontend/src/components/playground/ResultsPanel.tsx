@@ -43,7 +43,6 @@ interface ResultsPanelProps {
 }
 
 export default function ResultsPanel({ results, isRunning, error, isAuthenticated }: ResultsPanelProps) {
-  // Not authenticated state
   if (!isAuthenticated) {
     return (
       <div className="h-full flex flex-col items-center justify-center p-8 text-center">
@@ -64,7 +63,6 @@ export default function ResultsPanel({ results, isRunning, error, isAuthenticate
     );
   }
 
-  // Loading state
   if (isRunning) {
     return (
       <div className="h-full flex flex-col items-center justify-center p-8">
@@ -84,7 +82,6 @@ export default function ResultsPanel({ results, isRunning, error, isAuthenticate
     );
   }
 
-  // Error state
   if (error) {
     return (
       <div className="h-full flex flex-col items-center justify-center p-8 text-center">
@@ -100,7 +97,6 @@ export default function ResultsPanel({ results, isRunning, error, isAuthenticate
     );
   }
 
-  // Empty state
   if (!results) {
     return (
       <div className="h-full flex flex-col items-center justify-center p-8 text-center">
@@ -115,13 +111,12 @@ export default function ResultsPanel({ results, isRunning, error, isAuthenticate
     );
   }
 
-  // Results state
   const isPositiveReturn = results.total_return >= 0;
   const equityCurve = results.results?.equity_curve || [];
 
   return (
     <div className="p-5 space-y-5">
-      {/* Summary Card */}
+      {/* summary */}
       <div className={`rounded-xl p-5 ${
         isPositiveReturn 
           ? 'bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-100' 
@@ -147,7 +142,7 @@ export default function ResultsPanel({ results, isRunning, error, isAuthenticate
         </p>
       </div>
 
-      {/* Metrics Grid */}
+      {/* metrics */}
       <div className="grid grid-cols-2 gap-3">
         <MetricCard
           icon={<Activity className="h-4 w-4" />}
@@ -178,12 +173,12 @@ export default function ResultsPanel({ results, isRunning, error, isAuthenticate
         />
       </div>
 
-      {/* Equity Curve Chart */}
+      {/* equity curve */}
       {equityCurve.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <h3 className="text-sm font-semibold text-gray-900 mb-4">Portfolio Value</h3>
           <div className="h-48">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minHeight={192}>
               <AreaChart data={equityCurve}>
                 <defs>
                   <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
