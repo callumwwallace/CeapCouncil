@@ -32,7 +32,6 @@ async def send_email(to: str, subject: str, html_body: str) -> None:
         logger.info("Email sent to %s: %s", to, subject)
     except Exception as e:
         logger.exception("Failed to send email to %s: %s", to, e)
-        raise
 
 
 def send_verification_email(to: str, token: str) -> str:
