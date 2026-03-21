@@ -760,7 +760,7 @@ class ApiClient {
 
   // Blog
   async listBlogPosts(limit?: number, offset?: number): Promise<BlogPostSummary[]> {
-    const response = await this.client.get<BlogPostSummary[]>('/blog', {
+    const response = await this.client.get<BlogPostSummary[]>('/blog/', {
       params: { limit: limit ?? 20, offset: offset ?? 0 },
     });
     return response.data;
