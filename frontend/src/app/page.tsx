@@ -48,7 +48,7 @@ export default function Home() {
             <div className="mt-10 flex flex-wrap gap-4">
               <Link
                 href="/register"
-                className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg shadow-lg shadow-emerald-900/20 transition"
+                className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-medium rounded-lg shadow-lg shadow-emerald-900/20 transition"
               >
                 Get started
                 <ArrowRight className="h-4 w-4" />
@@ -67,6 +67,7 @@ export default function Home() {
       {/* Three pillars */}
       <section className="py-20 border-t border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <h2 className="sr-only">Features</h2>
           <div className="grid md:grid-cols-3 gap-8">
             <Link
               href="/playground"
@@ -80,7 +81,7 @@ export default function Home() {
                 Write and edit Python strategies in a live code editor. Run backtests on equities and ETFs with slippage, 
                 commissions, and full trade logs. View equity curves, drawdowns, and metrics.
               </p>
-              <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-emerald-600 group-hover:gap-2 transition-all">
+              <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-emerald-700 group-hover:gap-2 transition-all">
                 Open Playground
                 <ArrowRight className="h-4 w-4" />
               </span>
@@ -98,7 +99,7 @@ export default function Home() {
                 Enter strategies into time-bound competitions. Same data and rules for everyone. Rankings by Sharpe, 
                 return, drawdown, or custom metrics. Earn badges. Completed competitions auto-archive to the forum.
               </p>
-              <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-amber-600 group-hover:gap-2 transition-all">
+              <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-amber-700 group-hover:gap-2 transition-all">
                 View competitions
                 <ArrowRight className="h-4 w-4" />
               </span>
@@ -138,7 +139,7 @@ export default function Home() {
               </p>
               <Link
                 href="/competitions"
-                className="inline-flex items-center gap-2 text-emerald-600 hover:text-emerald-700 font-medium"
+                className="inline-flex items-center gap-2 text-emerald-700 hover:text-emerald-800 font-medium"
               >
                 Browse Competitions
                 <ArrowRight className="h-4 w-4" />
@@ -170,11 +171,11 @@ export default function Home() {
                           <span className="text-slate-500 text-xs block">{r.user}</span>
                         </div>
                       </div>
-                      <span className="text-sm font-mono font-medium text-emerald-600">{r.sharpe}</span>
+                      <span className="text-sm font-mono font-medium text-emerald-700">{r.sharpe}</span>
                     </div>
                   ))}
                 </div>
-                <div className="text-xs text-slate-400 mt-2">Ranked by Sharpe ratio</div>
+                <div className="text-xs text-slate-500 mt-2">Ranked by Sharpe ratio</div>
               </div>
             </div>
           </div>
@@ -276,7 +277,7 @@ export default function Home() {
           <div className="flex flex-wrap justify-center gap-4">
             <Link
               href="/register"
-              className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg shadow-lg shadow-emerald-900/20 transition"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-medium rounded-lg shadow-lg shadow-emerald-900/20 transition"
             >
               Create account
               <ArrowRight className="h-4 w-4" />

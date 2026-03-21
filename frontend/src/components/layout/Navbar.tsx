@@ -128,10 +128,10 @@ export default function Navbar() {
               </>
             ) : (
               <div className="hidden md:flex items-center space-x-2">
-                <Link href="/terms" className="text-gray-400 hover:text-gray-600 px-2 py-2 text-xs transition">Terms</Link>
-                <Link href="/privacy" className="text-gray-400 hover:text-gray-600 px-2 py-2 text-xs transition">Privacy</Link>
+                <Link href="/terms" className="text-gray-500 hover:text-gray-700 px-2 py-2 text-xs transition">Terms</Link>
+                <Link href="/privacy" className="text-gray-500 hover:text-gray-700 px-2 py-2 text-xs transition">Privacy</Link>
                 <Link href="/login" className="text-gray-600 hover:text-gray-900 px-4 py-2 text-sm font-medium transition">Sign In</Link>
-                <Link href="/register" className="inline-flex items-center px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition shadow-sm">
+                <Link href="/register" className="inline-flex items-center px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-medium rounded-lg transition shadow-sm">
                   Get Started
                 </Link>
               </div>
@@ -172,12 +172,12 @@ export default function Navbar() {
               <Link href="/login" className="block px-4 py-2.5 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
                 Sign In
               </Link>
-              <Link href="/register" className="block px-4 py-2.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition text-center">
+              <Link href="/register" className="block px-4 py-2.5 rounded-lg text-sm font-medium bg-emerald-700 text-white hover:bg-emerald-800 transition text-center">
                 Get Started
               </Link>
               <div className="flex gap-4 px-4 pt-1">
-                <Link href="/terms" className="text-xs text-gray-400 hover:text-gray-600">Terms</Link>
-                <Link href="/privacy" className="text-xs text-gray-400 hover:text-gray-600">Privacy</Link>
+                <Link href="/terms" className="text-xs text-gray-500 hover:text-gray-700">Terms</Link>
+                <Link href="/privacy" className="text-xs text-gray-500 hover:text-gray-700">Privacy</Link>
               </div>
             </>
           )}
