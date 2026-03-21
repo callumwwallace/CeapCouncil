@@ -110,14 +110,14 @@ async def create_blog_post(
     if existing:
         raise HTTPException(400, "A post with this slug already exists")
 
-    from datetime import datetime, timezone
+    from datetime import datetime
     post = BlogPost(
         title=data.title,
         slug=data.slug,
         excerpt=data.excerpt,
         content=data.content,
         author_id=current_user.id,
-        published_at=datetime.now(timezone.utc) if data.published else None,
+        published_at=datetime.utcnow() if data.published else None,
     )
     db.add(post)
     await db.flush()
@@ -160,8 +160,8 @@ async def update_blog_post(
             raise HTTPException(400, "A post with this slug already exists")
         post.slug = data.slug
     if data.published is not None:
-        from datetime import datetime, timezone
-        post.published_at = datetime.now(timezone.utc) if data.published else None
+        from datetime import datetime
+        post.published_at = datetime.utcnow() if data.published else None
 
     await db.flush()
     await db.refresh(post)
