@@ -7,10 +7,14 @@ import api from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import type { NotificationResponse, GroupedNotifications, NotificationCategory } from '@/types';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 function getWsUrl(): string {
+  if (typeof window !== 'undefined') {
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    return `${proto}://${window.location.host}/ws/notifications`;
+  }
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
   try {
-    const u = new URL(API_BASE);
+    const u = new URL(apiBase);
     const proto = u.protocol === 'https:' ? 'wss' : 'ws';
     return `${proto}://${u.host}/ws/notifications`;
   } catch {
@@ -145,7 +149,7 @@ export default function NotificationBell() {
     const connect = () => {
       try {
         // Auth comes from cookies (or Bearer if needed)
-        const ws = new WebSocket(`${WS_URL}/ws/notifications`);
+        const ws = new WebSocket(WS_URL);
         wsRef.current = ws;
 
         ws.onopen = () => {
