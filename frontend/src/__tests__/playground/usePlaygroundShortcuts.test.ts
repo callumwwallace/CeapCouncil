@@ -55,12 +55,12 @@ describe('usePlaygroundShortcuts', () => {
       expect(mockOnRun).toHaveBeenCalledTimes(1);
     });
 
-    it('does not call onRun when not authenticated', () => {
+    it('calls onRun when not authenticated (handler shows sign-in prompt)', () => {
       renderHook(() =>
         usePlaygroundShortcuts({ ...defaultOptions, isAuthenticated: false })
       );
       fireKeyDown({ key: 'Enter', ctrlKey: true });
-      expect(mockOnRun).not.toHaveBeenCalled();
+      expect(mockOnRun).toHaveBeenCalledTimes(1);
     });
 
     it('does not call onRun when already running', () => {
