@@ -8,8 +8,16 @@ import { useAuthStore } from '@/stores/authStore';
 import type { NotificationResponse, GroupedNotifications, NotificationCategory } from '@/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-const WS_BASE = API_BASE.replace(/\/api\/v1\/?$/, '') || 'http://localhost:8000';
-const WS_URL = (WS_BASE.startsWith('https') ? 'wss:' : 'ws:') + WS_BASE.slice(WS_BASE.indexOf('://'));
+function getWsUrl(): string {
+  try {
+    const u = new URL(API_BASE);
+    const proto = u.protocol === 'https:' ? 'wss' : 'ws';
+    return `${proto}://${u.host}/ws/notifications`;
+  } catch {
+    return 'ws://localhost:8000/ws/notifications';
+  }
+}
+const WS_URL = getWsUrl();
 
 const CATEGORY_LABELS: Record<NotificationCategory, string> = {
   competition: 'Competition updates',
