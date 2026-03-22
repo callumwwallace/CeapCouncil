@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
@@ -81,7 +81,7 @@ const SECTION_OPTIONS = [
   { id: 'support', label: 'Support' },
 ];
 
-export default function CommunityPage() {
+function CommunityPageContent() {
   const searchParams = useSearchParams();
   const groupToken = searchParams.get('group');
   const [topics, setTopics] = useState<ForumTopicResponse[]>([]);
@@ -368,5 +368,19 @@ export default function CommunityPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function CommunityPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
+        </div>
+      }
+    >
+      <CommunityPageContent />
+    </Suspense>
   );
 }
