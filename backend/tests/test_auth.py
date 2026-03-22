@@ -1,5 +1,9 @@
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.models.strategy_group import StrategyGroup
 
 
 class TestRegister:
@@ -66,6 +70,24 @@ class TestRegister:
         response = await client.post("/api/v1/auth/register", json=valid_user_data)
         
         assert response.status_code == 422
+
+    async def test_register_creates_default_strategy_group(self, client: AsyncClient, valid_user_data, test_engine):
+        """Test registration creates a default strategy group for the user."""
+        response = await client.post("/api/v1/auth/register", json=valid_user_data)
+        assert response.status_code == 201
+        user_id = response.json()["id"]
+
+        async_session = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as session:
+            result = await session.execute(
+                select(StrategyGroup).where(
+                    StrategyGroup.user_id == user_id,
+                    StrategyGroup.is_default == True,
+                )
+            )
+            groups = result.scalars().all()
+        assert len(groups) == 1
+        assert groups[0].name == "My Strategies"
 
 
 class TestLogin:

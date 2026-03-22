@@ -5,20 +5,21 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.api.deps import get_current_active_user
 from app.models.user import User
 from app.models.strategy import Strategy, StrategyVersion
+from app.models.strategy_group import StrategyGroup
+from app.api.v1.endpoints.strategy_groups import get_or_create_default_group
 import difflib
 from app.schemas.strategy import StrategyCreate, StrategyUpdate, StrategyResponse
 from app.core.limiter import limiter
 
 router = APIRouter()
 
-# ---------------------------------------------------------------------------
-# Strategy validation
-# ---------------------------------------------------------------------------
+# Strategy validation (runs before backtest)
 
 _FORBIDDEN_IMPORTS = {
     "os", "sys", "subprocess", "shutil", "pathlib", "socket",
@@ -55,19 +56,12 @@ class ValidateRequest(BaseModel):
 @router.post("/validate", response_model=ValidationResult)
 @limiter.limit("30/minute")
 async def validate_strategy(request: Request, body: ValidateRequest):
-    """Validate strategy code without executing it.
-
-    Checks:
-    1. Python syntax (ast.parse)
-    2. Required class ``MyStrategy(bt.Strategy)`` pattern
-    3. Forbidden imports
-    4. Suspicious patterns (eval, exec, open, etc.)
-    """
+    """Check strategy code is safe to run: valid syntax, MyStrategy class, no naughty imports."""
     code = body.code
     errors: list[ValidationError] = []
     warnings: list[ValidationError] = []
 
-    # 1. Syntax check
+    # Syntax
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
@@ -76,11 +70,11 @@ async def validate_strategy(request: Request, body: ValidateRequest):
             errors=[ValidationError(line=e.lineno, message=f"SyntaxError: {e.msg}")],
         )
 
-    # 2. Check for MyStrategy class inheriting from bt.Strategy
+    # MyStrategy must extend bt.Strategy
     has_my_strategy = False
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == "MyStrategy":
-            # Check it has at least one base class referencing bt.Strategy or Strategy
+            # Base class should reference Strategy
             for base in node.bases:
                 base_str = ast.dump(base)
                 if "Strategy" in base_str:
@@ -91,7 +85,7 @@ async def validate_strategy(request: Request, body: ValidateRequest):
                     line=node.lineno,
                     message="MyStrategy must extend bt.Strategy",
                 ))
-            has_my_strategy = True  # found the class at least
+            has_my_strategy = True
 
     if not has_my_strategy:
         errors.append(ValidationError(
@@ -99,7 +93,7 @@ async def validate_strategy(request: Request, body: ValidateRequest):
             message="Strategy code must define a class named 'MyStrategy' that extends bt.Strategy",
         ))
 
-    # 3. Check for forbidden imports
+    # Block unsafe imports
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -118,7 +112,7 @@ async def validate_strategy(request: Request, body: ValidateRequest):
                         message=f"Import from '{node.module}' is not allowed",
                     ))
 
-    # 4. Suspicious builtins
+    # Block eval, exec, open, etc.
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             func = node.func
@@ -134,7 +128,7 @@ async def validate_strategy(request: Request, body: ValidateRequest):
                     severity="warning",
                 ))
 
-    # 5. Check for blocked dunder attribute access
+    # Block __class__, __globals__, etc.
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute):
             if node.attr in _BLOCKED_DUNDER_ATTRS:
@@ -150,7 +144,7 @@ async def validate_strategy(request: Request, body: ValidateRequest):
                         message=f"Access to '{node.slice.value}' is not allowed",
                     ))
 
-    # 6. Check __init__ and next methods exist
+    # Need __init__ and next
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == "MyStrategy":
             methods = {m.name for m in node.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))}
@@ -176,14 +170,24 @@ async def create_strategy(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
+    data = strategy_in.model_dump()
+    group_id = data.get("group_id")
+    if group_id is not None:
+        grp = await db.get(StrategyGroup, group_id)
+        if not grp or grp.user_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Group not found or not yours")
+    else:
+        default_group = await get_or_create_default_group(db, current_user.id)
+        data["group_id"] = default_group.id
     strategy = Strategy(
-        **strategy_in.model_dump(),
+        **data,
         author_id=current_user.id,
     )
     db.add(strategy)
     await db.flush()
     await db.refresh(strategy)
-    
+    if strategy.group_id:
+        await db.refresh(strategy, attribute_names=["group"])
     return strategy
 
 
@@ -208,25 +212,33 @@ async def list_strategies(
 @router.get("/my", response_model=list[StrategyResponse])
 async def list_my_strategies(
     current_user: User = Depends(get_current_active_user),
+    group_id: int | None = Query(None, description="Filter by group"),
     db: AsyncSession = Depends(get_db),
 ):
     query = (
         select(Strategy)
         .where(Strategy.author_id == current_user.id)
+        .options(selectinload(Strategy.group))
         .order_by(desc(Strategy.created_at))
     )
+    if group_id is not None:
+        query = query.where(Strategy.group_id == group_id)
     result = await db.execute(query)
-    return result.scalars().all()
+    return result.scalars().unique().all()
 
 
 @router.get("/embed/{share_token}", response_model=StrategyResponse)
+@limiter.limit("60/minute")
 async def get_strategy_by_token(
+    request: Request,
     share_token: str,
     db: AsyncSession = Depends(get_db),
 ):
     """Token-based lookup for forum embed cards. The share_token is a UUID
     that cannot be guessed. Only returns data for public strategies."""
-    result = await db.execute(select(Strategy).where(Strategy.share_token == share_token))
+    result = await db.execute(
+        select(Strategy).where(Strategy.share_token == share_token).options(selectinload(Strategy.group))
+    )
     strategy = result.scalar_one_or_none()
 
     if not strategy:
@@ -247,17 +259,19 @@ async def get_strategy(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_active_user),
 ):
-    result = await db.execute(select(Strategy).where(Strategy.id == strategy_id))
+    result = await db.execute(
+        select(Strategy).where(Strategy.id == strategy_id).options(selectinload(Strategy.group))
+    )
     strategy = result.scalar_one_or_none()
     
     if not strategy:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strategy not found")
     
-    # Check access
+    # Can they see it?
     if not strategy.is_public and (not current_user or strategy.author_id != current_user.id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     
-    # Increment view count
+    # Bump view count
     strategy.view_count += 1
     await db.flush()
     
@@ -280,7 +294,7 @@ async def update_strategy(
     if strategy.author_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
     
-    # Save = update working copy only. No version created. Use POST /versions to commit.
+    # Update working copy (no new version - use POST /versions for that)
     update_data = strategy_update.model_dump(exclude_unset=True)
     if "title" in update_data:
         strategy.title = update_data["title"]
@@ -292,10 +306,20 @@ async def update_strategy(
         strategy.parameters = update_data["parameters"]
     if "is_public" in update_data:
         strategy.is_public = update_data["is_public"]
-    
+    if "group_id" in update_data:
+        gid = update_data["group_id"]
+        if gid is not None:
+            grp = await db.get(StrategyGroup, gid)
+            if not grp or grp.user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Group not found or not yours")
+        strategy.group_id = gid
+
     await db.flush()
-    await db.refresh(strategy)
-    
+    # Reload with group so we get group_name in the response
+    result = await db.execute(
+        select(Strategy).where(Strategy.id == strategy_id).options(selectinload(Strategy.group))
+    )
+    strategy = result.scalar_one_or_none()
     return strategy
 
 
@@ -324,7 +348,7 @@ async def restore_strategy_version(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Restore a strategy to a previous version."""
+    """Reset: restore working copy to this version. No new commit created."""
     result = await db.execute(select(Strategy).where(Strategy.id == strategy_id))
     strategy = result.scalar_one_or_none()
     if not strategy:
@@ -340,12 +364,65 @@ async def restore_strategy_version(
     if not ver:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
     
-    # Restore working copy to this version. No new commit created.
     strategy.code = ver.code
     strategy.parameters = ver.parameters
     
     await db.flush()
-    await db.refresh(strategy)
+    result = await db.execute(
+        select(Strategy).where(Strategy.id == strategy_id).options(selectinload(Strategy.group))
+    )
+    strategy = result.scalar_one_or_none()
+    return strategy
+
+
+@router.post("/{strategy_id}/versions/{version}/revert", response_model=StrategyResponse)
+async def revert_strategy_version(
+    strategy_id: int,
+    version: int,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revert (Git-style): restore to this version AND create a new commit. History preserved."""
+    result = await db.execute(select(Strategy).where(Strategy.id == strategy_id))
+    strategy = result.scalar_one_or_none()
+    if not strategy:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strategy not found")
+    if strategy.author_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+    
+    result = await db.execute(
+        select(StrategyVersion)
+        .where(StrategyVersion.strategy_id == strategy_id, StrategyVersion.version == version)
+    )
+    ver = result.scalar_one_or_none()
+    if not ver:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
+    
+    strategy.code = ver.code
+    strategy.parameters = ver.parameters
+    
+    result = await db.execute(
+        select(StrategyVersion)
+        .where(StrategyVersion.strategy_id == strategy_id)
+        .order_by(StrategyVersion.version.desc())
+        .limit(1)
+    )
+    last_version = result.scalar_one_or_none()
+    new_version_num = (last_version.version + 1) if last_version else 1
+    sv = StrategyVersion(
+        strategy_id=strategy_id,
+        version=new_version_num,
+        code=ver.code,
+        parameters=ver.parameters or {},
+        commit_message=f"Revert to v{version}",
+    )
+    db.add(sv)
+    strategy.version = new_version_num
+    await db.commit()
+    result = await db.execute(
+        select(Strategy).where(Strategy.id == strategy_id).options(selectinload(Strategy.group))
+    )
+    strategy = result.scalar_one_or_none()
     return strategy
 
 
@@ -366,7 +443,7 @@ async def fork_strategy(
     if not original.is_public and original.author_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot fork private strategy")
     
-    # Create fork
+    default_group = await get_or_create_default_group(db, current_user.id)
     forked = Strategy(
         title=f"{original.title} (Fork)",
         description=original.description,
@@ -375,10 +452,11 @@ async def fork_strategy(
         is_public=False,
         author_id=current_user.id,
         forked_from_id=original.id,
+        group_id=default_group.id,
     )
     db.add(forked)
     
-    # Increment fork count
+    # Bump fork count
     original.fork_count += 1
     
     await db.flush()
@@ -387,15 +465,13 @@ async def fork_strategy(
     return forked
 
 
-# ---------------------------------------------------------------------------
-# Strategy Version Control
-# ---------------------------------------------------------------------------
+# Version control
 
 class CreateVersionRequest(BaseModel):
     message: str | None = None
 
 
-@router.get("/{strategy_id}/versions")  # Paginated; used by playground
+@router.get("/{strategy_id}/versions")
 async def list_versions(
     strategy_id: int,
     skip: int = Query(0, ge=0),
@@ -468,7 +544,7 @@ async def create_version(
     if not commit_message:
         raise HTTPException(status_code=400, detail="Commit message is required")
 
-    # Check if code changed from last version
+    # Only create new version if code actually changed
     result = await db.execute(
         select(StrategyVersion)
         .where(StrategyVersion.strategy_id == strategy_id)
@@ -550,3 +626,33 @@ async def diff_versions(
         tofile=f"v{v2}",
     ))
     return {"v1": v1, "v2": v2, "diff": "".join(diff)}
+
+
+@router.get("/{strategy_id}/versions/{version}/diff-working")
+async def diff_version_working(
+    strategy_id: int,
+    version: int,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get unified diff between a version and current strategy code."""
+    result = await db.execute(select(Strategy).where(Strategy.id == strategy_id))
+    strategy = result.scalar_one_or_none()
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    if strategy.author_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    result = await db.execute(
+        select(StrategyVersion)
+        .where(StrategyVersion.strategy_id == strategy_id, StrategyVersion.version == version)
+    )
+    sv = result.scalar_one_or_none()
+    if not sv:
+        raise HTTPException(status_code=404, detail="Version not found")
+    diff = list(difflib.unified_diff(
+        sv.code.splitlines(keepends=True),
+        strategy.code.splitlines(keepends=True),
+        fromfile=f"v{version}",
+        tofile="working",
+    ))
+    return {"v1": version, "v2": "working", "diff": "".join(diff)}

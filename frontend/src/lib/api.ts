@@ -3,6 +3,7 @@ import {
   User,
   Strategy,
   StrategyCreate,
+  StrategyGroup,
   Backtest,
   BacktestCreate,
   Comment,
@@ -287,14 +288,44 @@ class ApiClient {
     return response.data;
   }
 
+  // Strategy groups
+  async getStrategyGroups(): Promise<StrategyGroup[]> {
+    const response = await this.client.get<StrategyGroup[]>('/strategy-groups');
+    return response.data;
+  }
+
+  async createStrategyGroup(data: { name: string; description?: string | null }): Promise<StrategyGroup> {
+    const response = await this.client.post<StrategyGroup>('/strategy-groups', data);
+    return response.data;
+  }
+
+  async updateStrategyGroup(id: number, data: { name?: string; description?: string | null; is_shareable?: boolean }): Promise<StrategyGroup> {
+    const response = await this.client.patch<StrategyGroup>(`/strategy-groups/${id}`, data);
+    return response.data;
+  }
+
+  async getGroupByToken(shareToken: string): Promise<import('@/types').GroupEmbedResponse> {
+    const response = await this.client.get<import('@/types').GroupEmbedResponse>(`/strategy-groups/embed/${shareToken}`);
+    return response.data;
+  }
+
+  async forkGroup(shareToken: string): Promise<import('@/types').ForkGroupResponse> {
+    const response = await this.client.post<import('@/types').ForkGroupResponse>(`/strategy-groups/embed/${shareToken}/fork`);
+    return response.data;
+  }
+
+  async deleteStrategyGroup(id: number): Promise<void> {
+    await this.client.delete(`/strategy-groups/${id}`);
+  }
+
   // Strategies
   async getStrategies(params?: { skip?: number; limit?: number; sort_by?: string }): Promise<Strategy[]> {
     const response = await this.client.get<Strategy[]>('/strategies', { params });
     return response.data;
   }
 
-  async getMyStrategies(): Promise<Strategy[]> {
-    const response = await this.client.get<Strategy[]>('/strategies/my');
+  async getMyStrategies(params?: { group_id?: number }): Promise<Strategy[]> {
+    const response = await this.client.get<Strategy[]>('/strategies/my', { params });
     return response.data;
   }
 
@@ -431,13 +462,19 @@ class ApiClient {
     return response.data;
   }
 
-  async createVersion(strategyId: number, message?: string): Promise<{version: number; message: string}> {
-    const response = await this.client.post(`/strategies/${strategyId}/versions`, message != null ? { message } : {});
+  async createVersion(strategyId: number, message: string): Promise<{version: number; message: string}> {
+    const response = await this.client.post(`/strategies/${strategyId}/versions`, { message });
     return response.data;
   }
 
   async restoreVersion(strategyId: number, version: number): Promise<Strategy> {
     const response = await this.client.post<Strategy>(`/strategies/${strategyId}/versions/${version}/restore`);
+    return response.data;
+  }
+
+  /** Revert (Git-style): restore to version and create new commit. History preserved. */
+  async revertToVersion(strategyId: number, version: number): Promise<Strategy> {
+    const response = await this.client.post<Strategy>(`/strategies/${strategyId}/versions/${version}/revert`);
     return response.data;
   }
 
@@ -447,6 +484,11 @@ class ApiClient {
 
   async diffVersions(strategyId: number, v1: number, v2: number): Promise<{v1: number; v2: number; diff: string}> {
     const response = await this.client.get(`/strategies/${strategyId}/versions/${v1}/diff/${v2}`);
+    return response.data;
+  }
+
+  async diffVersionWorking(strategyId: number, version: number): Promise<{v1: number; v2: string; diff: string}> {
+    const response = await this.client.get(`/strategies/${strategyId}/versions/${version}/diff-working`);
     return response.data;
   }
 

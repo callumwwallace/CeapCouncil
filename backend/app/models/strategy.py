@@ -4,6 +4,7 @@ from sqlalchemy import String, Text, Boolean, DateTime, ForeignKey, Integer, JSO
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.encrypted_types import EncryptedText
 
 
 class Strategy(Base):
@@ -12,8 +13,8 @@ class Strategy(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     share_token: Mapped[str] = mapped_column(String(36), unique=True, index=True, default=lambda: str(uuid.uuid4()))
     title: Mapped[str] = mapped_column(String(200), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
-    code: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(EncryptedText)
+    code: Mapped[str] = mapped_column(EncryptedText, nullable=False)
     parameters: Mapped[dict] = mapped_column(JSON, default=dict)  # JSON works on both Postgres and SQLite
     
     # Visibility
@@ -30,7 +31,12 @@ class Strategy(Base):
     
     # Forking
     forked_from_id: Mapped[int | None] = mapped_column(ForeignKey("strategies.id"))
-    
+
+    # Group (SET NULL on group delete so strategies become ungrouped)
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("strategy_groups.id", ondelete="SET NULL"), nullable=True
+    )
+
     # Author
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     
@@ -40,10 +46,15 @@ class Strategy(Base):
     
     # Relationships
     author: Mapped["User"] = relationship("User", back_populates="strategies")
+
+    @property
+    def group_name(self) -> str | None:
+        return self.group.name if self.group else None
     backtests: Mapped[list["Backtest"]] = relationship("Backtest", back_populates="strategy", cascade="all, delete-orphan")
     votes: Mapped[list["Vote"]] = relationship("Vote", back_populates="strategy", cascade="all, delete-orphan")
     comments: Mapped[list["Comment"]] = relationship("Comment", back_populates="strategy", cascade="all, delete-orphan")
     forked_from: Mapped["Strategy | None"] = relationship("Strategy", remote_side=[id])
+    group: Mapped["StrategyGroup | None"] = relationship("StrategyGroup", back_populates="strategies", foreign_keys=[group_id])
     versions: Mapped[list["StrategyVersion"]] = relationship("StrategyVersion", back_populates="strategy", order_by="StrategyVersion.version.desc()", cascade="all, delete-orphan")
     competition_entries: Mapped[list["CompetitionEntry"]] = relationship("CompetitionEntry", back_populates="strategy", cascade="all, delete-orphan")
 
@@ -54,7 +65,7 @@ class StrategyVersion(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id"), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
-    code: Mapped[str] = mapped_column(Text, nullable=False)
+    code: Mapped[str] = mapped_column(EncryptedText, nullable=False)
     parameters: Mapped[dict] = mapped_column(JSON, default=dict)
     commit_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

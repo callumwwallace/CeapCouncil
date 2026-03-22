@@ -1,6 +1,5 @@
-// Strategy Templates, Python code for each built in strategy
-// Extracted from page.tsx to keep the main component focused on UI logic
-// Will be adding more strategies over time
+// Built-in strategy templates
+// Moved here to keep the main playground page focused on UI
 
 export const STRATEGY_TEMPLATES = {
   sma_crossover: {
@@ -743,31 +742,6 @@ class MyStrategy(StrategyBase):
         if self.is_long(bar.symbol):
             if bar.close < self.orb_low:
                 self.close_position(bar.symbol)
-`,
-  },
-  custom: {
-    name: 'Custom Strategy',
-    description: 'Write your own strategy code',
-    code: `# Custom Strategy
-import math
-import numpy as np
-import statistics
-
-class MyStrategy(StrategyBase):
-    """
-    Your custom strategy - modify this code!
-    Available: self.history(), self.market_order(), self.close_position(),
-    self.is_flat(), self.is_long(), self.portfolio.cash, self.portfolio.equity,
-    self.limit_order(), self.stop_order(), self.trailing_stop(), self.cancel_all_orders()
-    Bar: bar.symbol, bar.open, bar.high, bar.low, bar.close, bar.volume, bar.timestamp
-    """
-    def on_init(self):
-        pass
-
-    def on_data(self, bar):
-        if self.is_flat(bar.symbol):
-            qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
-            self.market_order(bar.symbol, qty)
 `,
   },
 };

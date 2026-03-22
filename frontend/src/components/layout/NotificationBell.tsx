@@ -25,11 +25,11 @@ const CATEGORY_ICONS: Record<NotificationCategory, typeof Trophy> = {
   system: Megaphone,
 };
 
-/** Sanitize notification link to prevent javascript:, data:, etc. */
+// Only allow relative paths or https links (no http - keeps things secure)
 function safeNotificationLink(link: string | null | undefined): string {
   if (!link || typeof link !== 'string') return '/';
   const s = link.trim();
-  if (s.startsWith('/') || s.startsWith('https://') || s.startsWith('http://')) return s;
+  if ((s.startsWith('/') && !s.startsWith('//')) || s.toLowerCase().startsWith('https://')) return s;
   return '/';
 }
 
@@ -101,7 +101,7 @@ export default function NotificationBell() {
         if (data && typeof data === 'object' && !Array.isArray(data)) {
           setGrouped(data as GroupedNotifications);
         } else {
-          // Fallback: convert flat list to grouped
+          // API returned flat list, group it ourselves
           const flat = data as NotificationResponse[];
           const g: GroupedNotifications = {
             competition: [],
@@ -127,7 +127,7 @@ export default function NotificationBell() {
     fetchUnreadCount();
   }, []);
 
-  // Real-time WebSocket for notifications
+  // Live notifications via WebSocket
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -136,14 +136,12 @@ export default function NotificationBell() {
 
     const connect = () => {
       try {
-        // Cookies are sent during the WebSocket handshake automatically.
-        // Backend reads access_token from cookie; falls back to Bearer message.
+        // Auth comes from cookies (or Bearer if needed)
         const ws = new WebSocket(`${WS_URL}/ws/notifications`);
         wsRef.current = ws;
 
         ws.onopen = () => {
-          // Auth is handled via HTTP-only cookies sent during WebSocket handshake.
-          // No token message needed.
+          // We're in
         };
 
         ws.onmessage = (event) => {
@@ -177,7 +175,7 @@ export default function NotificationBell() {
               });
             }
           } catch {
-            // ignore parse errors
+            // bad JSON, skip it
           }
         };
 

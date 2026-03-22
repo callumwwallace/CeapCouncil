@@ -43,6 +43,7 @@ from app.schemas.user import (
 )
 from app.schemas.token import Token
 from app.core.limiter import limiter
+from app.models.strategy_group import StrategyGroup
 
 router = APIRouter()
 
@@ -104,6 +105,10 @@ async def register(request: Request, user_in: UserCreate, db: AsyncSession = Dep
     db.add(user)
     await db.commit()
     await db.refresh(user)
+
+    default_group = StrategyGroup(name="My Strategies", user_id=user.id, is_default=True)
+    db.add(default_group)
+    await db.commit()
 
     token = secrets.token_urlsafe(32)
     await redis_client.setex(

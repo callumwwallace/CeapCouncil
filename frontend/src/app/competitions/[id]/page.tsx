@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import SignInPrompt from '@/components/auth/SignInPrompt';
+import { safeProfilePath } from '@/lib/safePaths';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -362,12 +364,10 @@ export default function CompetitionDetailPage() {
 
             {!isAuthenticated && isActive && (
               <div className="mt-6 pt-5 border-t border-gray-200">
-                <Link
-                  href="/login"
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-semibold rounded-xl transition shadow-lg shadow-emerald-600/20"
-                >
-                  Sign in to compete
-                </Link>
+                <SignInPrompt
+                  title="Sign in to compete"
+                  subtitle="Submit your strategy and climb the leaderboard."
+                />
               </div>
             )}
           </div>
@@ -412,7 +412,7 @@ export default function CompetitionDetailPage() {
                     </div>
 
                     <Link
-                      href={`/profile/${entry.username}`}
+                      href={safeProfilePath(entry.username)}
                       className="text-lg font-bold text-gray-900 hover:text-emerald-600 transition"
                     >
                       {entry.username}
@@ -519,7 +519,7 @@ export default function CompetitionDetailPage() {
                           </td>
                           <td className="px-4 py-3.5">
                             <Link
-                              href={`/profile/${e.username}`}
+                              href={safeProfilePath(e.username)}
                               onClick={(ev) => ev.stopPropagation()}
                               className="text-gray-900 font-semibold hover:text-emerald-600 transition"
                             >
@@ -612,7 +612,7 @@ function EntryDetailRow({ entry, curveData, color }: EntryDetailRowProps) {
 
       <div className="shrink-0">
         <Link
-          href={`/profile/${entry.username}`}
+          href={safeProfilePath(entry.username)}
           className="text-xs text-emerald-600 hover:text-emerald-700 font-semibold flex items-center gap-1"
         >
           View Profile

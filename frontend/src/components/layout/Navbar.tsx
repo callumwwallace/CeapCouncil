@@ -6,9 +6,12 @@ import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { BarChart3, LogOut, ChevronDown, LayoutDashboard, User, Rss, FileText, Shield, Menu, X } from 'lucide-react';
 import NotificationBell from './NotificationBell';
+import { safeProfilePath } from '@/lib/safePaths';
 
 const navLinks = [
   { href: '/playground', label: 'Playground' },
+  { href: '/lab', label: 'Lab' },
+  { href: '/arena', label: 'Arena' },
   { href: '/competitions', label: 'Competitions' },
   { href: '/community', label: 'Community' },
   { href: '/docs', label: 'Docs' },
@@ -102,7 +105,7 @@ export default function Navbar() {
                       <Link href="/dashboard" onClick={() => setDropdownOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
                         <LayoutDashboard className="h-4 w-4" /> Account
                       </Link>
-                      <Link href={user?.username ? `/profile/${user.username}` : '/profile'} onClick={() => setDropdownOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                      <Link href={user?.username ? safeProfilePath(user.username) : '/profile'} onClick={() => setDropdownOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
                         <User className="h-4 w-4" /> My Profile
                       </Link>
                       <Link href="/feed" onClick={() => setDropdownOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">

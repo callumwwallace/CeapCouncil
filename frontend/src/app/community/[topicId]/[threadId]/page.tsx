@@ -8,6 +8,7 @@ import api from '@/lib/api';
 import type { ForumThreadDetail } from '@/types';
 import { ArrowLeft, Loader2, MessageSquare, Quote, Trash2, ChevronUp, ChevronDown, Pin } from 'lucide-react';
 import ForumEditor from '@/components/forum/ForumEditor';
+import { safeProfilePath } from '@/lib/safePaths';
 import MarkdownContent from '@/components/forum/MarkdownContent';
 
 const METRIC_LABELS: Record<string, string> = {
@@ -40,12 +41,16 @@ export default function CommunityThreadPage() {
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [myStrategies, setMyStrategies] = useState<{ id: number; share_token: string; title: string }[]>([]);
+  const [myStrategies, setMyStrategies] = useState<{ id: number; share_token: string; title: string; group_id?: number | null }[]>([]);
+  const [myGroups, setMyGroups] = useState<{ id: number; share_token: string; name: string }[]>([]);
   const [myBacktests, setMyBacktests] = useState<{ id: number; share_token: string; symbol: string; total_return: number | null; sharpe_ratio: number | null }[]>([]);
 
   useEffect(() => {
     if (isAuthenticated) {
-      api.getMyStrategies().then((s) => setMyStrategies(s.map((x) => ({ id: x.id, share_token: x.share_token, title: x.title })))).catch(() => {});
+      api.getMyStrategies().then((s) => setMyStrategies(s.filter((x) => x.is_public).map((x) => ({ id: x.id, share_token: x.share_token, title: x.title, group_id: x.group_id })))).catch(() => {});
+      api.getStrategyGroups().then((g) => setMyGroups(
+        g.filter((x) => x.is_shareable).map((x) => ({ id: x.id, share_token: x.share_token, name: x.name }))
+      )).catch(() => {});
       api.getMyBacktests().then((bts) => setMyBacktests(
         bts.filter((b) => b.status === 'completed').slice(0, 20).map((b) => ({
           id: b.id, share_token: b.share_token, symbol: b.symbol, total_return: b.total_return, sharpe_ratio: b.sharpe_ratio,
@@ -94,7 +99,7 @@ export default function CommunityThreadPage() {
         } : null
       );
     } catch {
-      // Silently fail
+      // ignore errors
     }
   };
 
@@ -104,7 +109,7 @@ export default function CommunityThreadPage() {
       const res = await api.togglePinThread(threadId);
       setThread((prev) => prev ? { ...prev, is_pinned: res.is_pinned } : null);
     } catch {
-      // Silently fail
+      // ignore errors
     }
   };
 
@@ -246,7 +251,7 @@ export default function CommunityThreadPage() {
                   )}
                 </div>
                 <Link
-                  href={`/profile/${thread.posts[0].author_username}`}
+                  href={safeProfilePath(thread.posts[0].author_username)}
                   className="flex-shrink-0 w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 font-medium overflow-hidden"
                 >
                   {thread.posts[0].author_avatar_url ? (
@@ -258,7 +263,7 @@ export default function CommunityThreadPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <Link
-                      href={`/profile/${thread.posts[0].author_username}`}
+                      href={safeProfilePath(thread.posts[0].author_username)}
                       className="font-medium text-gray-900 hover:text-emerald-600"
                     >
                       {thread.posts[0].author_username}
@@ -327,7 +332,7 @@ export default function CommunityThreadPage() {
                         )}
                       </div>
                       <Link
-                        href={`/profile/${post.author_username}`}
+                        href={safeProfilePath(post.author_username)}
                         className="flex-shrink-0 w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 font-medium text-sm overflow-hidden"
                       >
                         {post.author_avatar_url ? (
@@ -339,7 +344,7 @@ export default function CommunityThreadPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <Link
-                            href={`/profile/${post.author_username}`}
+                            href={safeProfilePath(post.author_username)}
                             className="font-medium text-gray-900 hover:text-emerald-600 text-sm"
                           >
                             {post.author_username}
@@ -393,6 +398,7 @@ export default function CommunityThreadPage() {
                 maxLength={10000}
                 disabled={submitting}
                 strategies={myStrategies}
+                groups={myGroups}
                 backtests={myBacktests}
               />
               {error && <p className="text-sm text-red-600 mt-2">{error}</p>}

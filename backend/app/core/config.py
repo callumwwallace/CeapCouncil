@@ -44,6 +44,9 @@ class Settings(BaseSettings):
 
     # TOTP 2FA
     TOTP_ENCRYPTION_KEY: str = ""  # 32-byte base64 Fernet key; derive from SECRET_KEY if empty
+
+    # Strategy encryption at rest (code, description, etc.)
+    STRATEGY_ENCRYPTION_KEY: str = ""  # 32-byte base64 Fernet key; derive from SECRET_KEY if empty
     TOTP_ISSUER_NAME: str = "Ceap Council"
 
     MEDIA_BASE_URL: str = "http://localhost:9000/ceapcouncil"

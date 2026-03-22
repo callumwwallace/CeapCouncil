@@ -15,12 +15,13 @@ import {
   MessageSquare,
   FileText,
 } from 'lucide-react';
+import { safeProfilePath } from '@/lib/safePaths';
 
+// Only allow relative paths or https (no http)
 function safeFeedLink(link: string | null | undefined): string {
   if (!link || typeof link !== 'string') return '/';
   const s = link.trim();
-  const lower = s.toLowerCase();
-  if (s.startsWith('/') || lower.startsWith('https://') || lower.startsWith('http://')) return s;
+  if ((s.startsWith('/') && !s.startsWith('//')) || s.toLowerCase().startsWith('https://')) return s;
   return '/';
 }
 
@@ -159,7 +160,7 @@ export default function FeedPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 text-sm">
                       <Link
-                        href={`/profile/${item.username}`}
+                        href={safeProfilePath(item.username)}
                         className="font-semibold text-gray-900 hover:text-emerald-600 transition"
                       >
                         {item.username}

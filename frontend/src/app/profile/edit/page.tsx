@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
 import type { Badge } from '@/types';
 import { ArrowLeft, Camera, Save, Loader2, Trophy, X } from 'lucide-react';
+import { safeProfilePath } from '@/lib/safePaths';
 
 const BADGE_TIER_STYLES: Record<string, string> = {
   winner: 'bg-amber-100 text-amber-800 border-amber-200',
@@ -132,7 +133,7 @@ export default function ProfileEditPage() {
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
         <Link
-          href={user ? `/profile/${user.username}` : '/profile'}
+          href={user ? safeProfilePath(user.username) : '/profile'}
           className="inline-flex items-center gap-2 text-emerald-600 hover:text-emerald-700 mb-8"
         >
           <ArrowLeft className="h-4 w-4" />

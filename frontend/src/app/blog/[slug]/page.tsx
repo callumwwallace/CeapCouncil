@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
 import type { BlogPostDetail, BlogComment } from '@/types';
 import MarkdownContent from '@/components/forum/MarkdownContent';
+import { safeProfilePath } from '@/lib/safePaths';
 
 function formatDate(iso: string): string {
   try {
@@ -207,7 +208,7 @@ export default function BlogPostPage() {
                       <div className="px-6 py-4">
                         <div className="flex items-start gap-3">
                           <Link
-                            href={`/profile/${comment.author_username}`}
+                            href={safeProfilePath(comment.author_username)}
                             className="flex-shrink-0 w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 font-medium text-sm"
                           >
                             {comment.author_username.charAt(0).toUpperCase()}
@@ -215,7 +216,7 @@ export default function BlogPostPage() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <Link
-                                href={`/profile/${comment.author_username}`}
+                                href={safeProfilePath(comment.author_username)}
                                 className="font-medium text-sm text-gray-900 hover:text-emerald-600"
                               >
                                 {comment.author_username}
@@ -254,7 +255,7 @@ export default function BlogPostPage() {
                         <div key={reply.id} className="px-6 py-3 pl-16 bg-gray-50/50">
                           <div className="flex items-start gap-3">
                             <Link
-                              href={`/profile/${reply.author_username}`}
+                              href={safeProfilePath(reply.author_username)}
                               className="flex-shrink-0 w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-medium text-xs"
                             >
                               {reply.author_username.charAt(0).toUpperCase()}
@@ -262,7 +263,7 @@ export default function BlogPostPage() {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
                                 <Link
-                                  href={`/profile/${reply.author_username}`}
+                                  href={safeProfilePath(reply.author_username)}
                                   className="font-medium text-xs text-gray-900 hover:text-emerald-600"
                                 >
                                   {reply.author_username}

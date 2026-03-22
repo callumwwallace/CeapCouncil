@@ -5,9 +5,9 @@ export function applyDatePreset(preset: DatePreset): { startDate: string; endDat
   const start = new Date(end);
 
   if (preset === 'YTD') {
-    start.setMonth(0, 1); // Jan 1 of current year
+    start.setMonth(0, 1); // start of year
   } else if (preset === 'Max') {
-    start.setFullYear(end.getFullYear() - 10); // 10 years (engine max)
+    start.setFullYear(end.getFullYear() - 10); // engine cap is 10 years
   } else {
     const months: Record<string, number> = { '1M': 1, '3M': 3, '6M': 6, '1Y': 12, '2Y': 24, '3Y': 36, '5Y': 60 };
     start.setMonth(start.getMonth() - (months[preset] ?? 12));
@@ -43,7 +43,7 @@ export function formatCommitTime(iso: string | null): string {
   return new Date(iso).toLocaleDateString();
 }
 
-/** Extract user-friendly error message from API/axios errors (handles FastAPI detail format) */
+// Pull a readable error message out of API responses
 export function extractApiError(err: unknown, fallback = 'Something went wrong'): string {
   if (err instanceof Error && !('response' in err)) return err.message;
   const ax = err as { response?: { data?: { detail?: string | Array<{ loc?: unknown[]; msg: string }> } } };
@@ -57,7 +57,7 @@ export function extractApiError(err: unknown, fallback = 'Something went wrong')
   return fallback;
 }
 
-/** Poll an async task until completed/failed. Returns the result or throws on failure/timeout. */
+// Poll until the task finishes or times out
 export async function pollTaskResult<T extends { status: string; error?: string }>(
   fetchResult: (taskId: string) => Promise<T>,
   taskId: string,

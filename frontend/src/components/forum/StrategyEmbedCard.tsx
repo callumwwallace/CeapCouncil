@@ -31,7 +31,7 @@ export default function StrategyEmbedCard({ shareToken, title, className = '' }:
   const [linkCopied, setLinkCopied] = useState(false);
 
   const loadCode = useCallback(() => {
-    if (code !== null) return; // Already loaded
+    if (code !== null) return; // we've got it already
     setCodeError(null);
     setCodeLoading(true);
     api
@@ -69,13 +69,13 @@ export default function StrategyEmbedCard({ shareToken, title, className = '' }:
   };
 
   const handleOpenInPlayground = () => {
-    // Load code first if needed, then inject into playground
+    // If we already have the code, just inject and go
     if (code) {
       sessionStorage.setItem('playground_inject_code', code);
       sessionStorage.setItem('playground_inject_template', 'custom');
       router.push('/playground');
     } else {
-      // Need to fetch first
+      // Fetch it first, then inject
       setCodeLoading(true);
       api
         .getStrategyByToken(shareToken)
@@ -108,7 +108,7 @@ export default function StrategyEmbedCard({ shareToken, title, className = '' }:
     setTimeout(() => setLinkCopied(false), 2000);
   };
 
-  // Count lines for preview
+  // Line count for the preview
   const codeLines = code?.split('\n').length ?? 0;
   const codePreview = code?.split('\n').slice(0, 12).join('\n');
   const hasMoreLines = codeLines > 12;
@@ -208,7 +208,7 @@ export default function StrategyEmbedCard({ shareToken, title, className = '' }:
       {/* Success/error messages */}
       {forkSuccess && (
         <div className="mx-4 mb-3 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-700">
-          Forked as &quot;{forkSuccess.title}&quot;.{' '}
+          Forked as &quot;{forkSuccess.title}&quot; in My Strategies.{' '}
           <Link href="/playground" className="font-medium underline hover:text-emerald-900">
             Open Playground &rarr;
           </Link>

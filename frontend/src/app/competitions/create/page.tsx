@@ -10,6 +10,7 @@ import {
   AlertCircle,
   Info,
 } from 'lucide-react';
+import SignInPrompt from '@/components/auth/SignInPrompt';
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
 
@@ -85,13 +86,12 @@ export default function CreateCompetitionPage() {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <Trophy className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-          <p className="text-gray-500 mb-4">You need to be signed in to create a competition.</p>
-          <Link href="/login" className="text-emerald-600 hover:underline font-medium">
-            Sign in
-          </Link>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <SignInPrompt
+            title="Sign in to create a competition"
+            subtitle="You need to be signed in to create and host competitions."
+          />
         </div>
       </div>
     );

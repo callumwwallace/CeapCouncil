@@ -5,6 +5,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
 from app.core.database import Base
+from app.core.encrypted_types import EncryptedText
 
 
 class BacktestStatus(str, enum.Enum):
@@ -60,7 +61,7 @@ class Backtest(Base):
     strategy_id: Mapped[int | None] = mapped_column(ForeignKey("strategies.id"), nullable=True)
 
     # Inline code; when set, use instead of strategy.code
-    code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    code: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
 
     # Celery task tracking
     celery_task_id: Mapped[str | None] = mapped_column(String(50))

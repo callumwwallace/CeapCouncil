@@ -11,12 +11,7 @@ export interface UsePlaygroundShortcutsOptions {
   onExport: () => void;
 }
 
-/**
- * Registers keyboard shortcuts for the Playground:
- * - Ctrl/Cmd+Enter: run backtest
- * - Ctrl/Cmd+S: save strategy
- * - Ctrl/Cmd+Shift+E: export results
- */
+// Ctrl+Enter to run, Ctrl+S to save, Ctrl+Shift+E to export
 export function usePlaygroundShortcuts({
   isRunning,
   isAuthenticated,
@@ -34,12 +29,12 @@ export function usePlaygroundShortcuts({
 
       if (e.key === 'Enter') {
         e.preventDefault();
-        if (!isRunning && isAuthenticated) {
+        if (!isRunning) {
           onRun();
         }
         return;
       }
-      // Use toLowerCase for Caps Lock compatibility; exclude Shift (Ctrl+Shift+S)
+      // toLowerCase so Caps Lock doesn't break it
       if (e.key.toLowerCase() === 's' && !e.shiftKey) {
         e.preventDefault();
         e.stopPropagation();

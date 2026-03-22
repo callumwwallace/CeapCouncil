@@ -10,6 +10,7 @@ import {
   CheckCircle2, ExternalLink, KeyRound, Calendar, Trash2,
 } from 'lucide-react';
 import { PasswordStrengthMeter } from '@/components/auth/PasswordStrengthMeter';
+import { safeProfilePath } from '@/lib/safePaths';
 import { QRCodeSVG } from 'qrcode.react';
 
 function formatDate(iso: string): string {
@@ -223,7 +224,7 @@ export default function DashboardPage() {
                 </SectionCard>
 
                 <Link
-                  href={user?.username ? `/profile/${user.username}` : '/profile'}
+                  href={user?.username ? safeProfilePath(user.username) : '/profile'}
                   className="flex items-center justify-between bg-white rounded-xl border border-gray-200 shadow-sm px-6 py-4 hover:border-emerald-300 hover:shadow-md transition group"
                 >
                   <div>

@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from app.core.database import get_db
 from app.core.limiter import limiter
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, get_current_user_optional
 from app.models.user import User
 from app.models.strategy import Strategy
 from app.models.social import Vote, Comment
@@ -142,8 +142,15 @@ async def create_comment(
 async def list_strategy_comments(
     request: Request,
     strategy_id: int,
+    current_user: User | None = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db),
 ):
+    result = await db.execute(select(Strategy).where(Strategy.id == strategy_id))
+    strategy = result.scalar_one_or_none()
+    if not strategy:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strategy not found")
+    if not strategy.is_public and (not current_user or strategy.author_id != current_user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     result = await db.execute(
         select(Comment)
         .where(Comment.strategy_id == strategy_id)

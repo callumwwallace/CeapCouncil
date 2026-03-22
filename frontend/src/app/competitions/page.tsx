@@ -16,6 +16,7 @@ import {
   ArrowRight,
   ThumbsUp,
 } from 'lucide-react';
+import SignInPrompt from '@/components/auth/SignInPrompt';
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api';
 import type { CompetitionSummary, UpcomingPreviewItem } from '@/types';
@@ -499,19 +500,11 @@ export default function CompetitionsPage() {
 
         {/* ═══ Sign-in prompt ═══ */}
         {!isAuthenticated && (
-          <div className="mt-12 p-8 rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 text-center">
-            <Trophy className="h-8 w-8 text-emerald-500 mx-auto mb-3" />
-            <p className="font-semibold text-gray-900 mb-1">Join the competition</p>
-            <p className="text-sm text-gray-600 mb-4">
-              Sign in to submit strategies and compete against the community.
-            </p>
-            <Link
-              href="/login"
-              className="inline-flex items-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl transition shadow-sm"
-            >
-              Get Started
-              <ArrowRight className="h-4 w-4" />
-            </Link>
+          <div className="mt-12">
+            <SignInPrompt
+              title="Sign in to enter Competitions"
+              subtitle="Submit strategies and compete against the community."
+            />
           </div>
         )}
       </div>

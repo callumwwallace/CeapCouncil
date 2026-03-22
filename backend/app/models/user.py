@@ -29,6 +29,9 @@ class User(Base):
     
     # Relationships
     strategies: Mapped[list["Strategy"]] = relationship("Strategy", back_populates="author")
+    strategy_groups: Mapped[list["StrategyGroup"]] = relationship(
+        "StrategyGroup", back_populates="user", cascade="all, delete-orphan"
+    )
     backtests: Mapped[list["Backtest"]] = relationship("Backtest", back_populates="user")
     votes: Mapped[list["Vote"]] = relationship("Vote", back_populates="user")
     comments: Mapped[list["Comment"]] = relationship("Comment", back_populates="user")

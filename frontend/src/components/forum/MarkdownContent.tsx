@@ -7,8 +7,9 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import StrategyEmbedCard from './StrategyEmbedCard';
 import BacktestEmbedCard from './BacktestEmbedCard';
+import GroupEmbedCard from './GroupEmbedCard';
 
-// allow code blocks, syntax hl, images, blockquotes for forum
+// What we allow in forum markdown (code blocks, images, blockquotes, etc.)
 const sanitizeSchema = {
   ...defaultSchema,
   tagNames: [
@@ -44,18 +45,19 @@ const proseClasses = [
   '[&_blockquote]:border-l-4 [&_blockquote]:border-gray-300 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-gray-600',
 ].join(' ');
 
-// @username -> profile links
+// Turn @username into profile links
 function linkifyMentions(text: string): string {
   return text.replace(/@([a-zA-Z0-9_]+)/g, (_, username) => `[@${username}](/profile/${username})`);
 }
 
-// [strategy:token|Title] or [backtest:token|symbol]
-const EMBED_REGEX = /\[(strategy|backtest):([a-zA-Z0-9_-]+)[|:]([^\]]*)\]/g;
+// Match embed syntax: [strategy:token|Title], [backtest:token|symbol], [group:token|Name]
+const EMBED_REGEX = /\[(strategy|backtest|group):([a-zA-Z0-9_-]+)[|:]([^\]]*)\]/g;
 
 type EmbedPart =
   | { type: 'text'; value: string }
   | { type: 'strategy'; token: string; title: string }
-  | { type: 'backtest'; token: string; symbol: string };
+  | { type: 'backtest'; token: string; symbol: string }
+  | { type: 'group'; token: string; title: string };
 
 export default function MarkdownContent({ content, className = '' }: MarkdownContentProps) {
   if (!content?.trim()) return null;
@@ -69,11 +71,13 @@ export default function MarkdownContent({ content, className = '' }: MarkdownCon
     if (match.index > lastIndex) {
       parts.push({ type: 'text', value: content.slice(lastIndex, match.index) });
     }
-    const kind = match[1] as 'strategy' | 'backtest';
+    const kind = match[1] as 'strategy' | 'backtest' | 'group';
     const token = match[2];
-    const label = match[3]?.trim() || (kind === 'strategy' ? 'Strategy' : 'Backtest');
+    const label = match[3]?.trim() || (kind === 'strategy' ? 'Strategy' : kind === 'group' ? 'Group' : 'Backtest');
     if (kind === 'strategy') {
       parts.push({ type: 'strategy', token, title: label });
+    } else if (kind === 'group') {
+      parts.push({ type: 'group', token, title: label });
     } else {
       parts.push({ type: 'backtest', token, symbol: label });
     }
@@ -97,11 +101,10 @@ export default function MarkdownContent({ content, className = '' }: MarkdownCon
                   a: ({ href, children, ...props }) => {
                     const safe =
                       href &&
-                      (href.startsWith('/') ||
-                        href.startsWith('https://') ||
-                        href.startsWith('http://'));
+                      ((href.startsWith('/') && !href.startsWith('//')) ||
+                        href.toLowerCase().startsWith('https://'));
                     const safeHref = safe ? href : '#';
-                    const isInternal = href?.startsWith('/');
+                    const isInternal = href?.startsWith('/') && !href?.startsWith('//');
                     return (
                       <a
                         href={safeHref}
@@ -114,10 +117,9 @@ export default function MarkdownContent({ content, className = '' }: MarkdownCon
                   },
                   img: ({ src, alt }) => {
                     const safeSrc =
-                      (typeof src === 'string' &&
-                      (src.startsWith('/') ||
-                        src.startsWith('https://') ||
-                        src.startsWith('http://')));
+                      typeof src === 'string' &&
+                      ((src.startsWith('/') && !src.startsWith('//')) ||
+                        src.toLowerCase().startsWith('https://'));
                     return (
                       <span className="block my-2">
                         <img
@@ -154,6 +156,9 @@ export default function MarkdownContent({ content, className = '' }: MarkdownCon
         }
         if (part.type === 'strategy') {
           return <StrategyEmbedCard key={i} shareToken={part.token} title={part.title} />;
+        }
+        if (part.type === 'group') {
+          return <GroupEmbedCard key={i} shareToken={part.token} title={part.title} />;
         }
         return <BacktestEmbedCard key={i} shareToken={part.token} symbol={part.symbol} />;
       })}

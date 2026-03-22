@@ -38,7 +38,7 @@ export default function BacktestEmbedCard({ shareToken, symbol, className = '' }
       .finally(() => setLoading(false));
   }, [shareToken, loaded]);
 
-  // Auto-load on mount
+  // Load on mount
   if (!loaded && !loading && !error) {
     loadData();
   }

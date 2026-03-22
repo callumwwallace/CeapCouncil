@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
   MessageSquare,
   Users,
@@ -25,6 +26,7 @@ import {
 } from 'lucide-react';
 import api from '@/lib/api';
 import type { ForumTopicResponse, ForumSearchResult } from '@/types';
+import GroupEmbedCard from '@/components/forum/GroupEmbedCard';
 
 const SECTION_CONFIG: Record<string, { title: string; icon: React.ReactNode }> = {
   official: { title: 'Official', icon: <Megaphone className="h-5 w-5 text-emerald-600" /> },
@@ -80,6 +82,8 @@ const SECTION_OPTIONS = [
 ];
 
 export default function CommunityPage() {
+  const searchParams = useSearchParams();
+  const groupToken = searchParams.get('group');
   const [topics, setTopics] = useState<ForumTopicResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchExpanded, setSearchExpanded] = useState(false);
@@ -154,6 +158,12 @@ export default function CommunityPage() {
             Discuss strategies, share ideas, get help, and connect with other Ceap Council traders.
           </p>
         </div>
+
+        {groupToken && (
+          <div className="mb-8">
+            <GroupEmbedCard shareToken={groupToken} title="Shared group" />
+          </div>
+        )}
 
         {/* Advanced search */}
         <div className="mb-8 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">

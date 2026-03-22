@@ -21,6 +21,34 @@ export interface NotificationPreferences {
   email_marketing: boolean;
 }
 
+// Strategy group types
+export interface StrategyGroup {
+  id: number;
+  name: string;
+  description: string | null;
+  user_id: number;
+  is_default: boolean;
+  share_token: string;
+  is_shareable: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GroupEmbedResponse {
+  id: number;
+  name: string;
+  share_token: string;
+  author_username: string;
+  strategy_count: number;
+  strategies: Array<{ id: number; title: string; share_token: string; is_public: boolean }>;
+}
+
+export interface ForkGroupResponse {
+  group: StrategyGroup;
+  strategies: Strategy[];
+  forked_count: number;
+}
+
 // Strategy types
 export interface Strategy {
   id: number;
@@ -31,6 +59,8 @@ export interface Strategy {
   parameters: Record<string, unknown>;
   is_public: boolean;
   author_id: number;
+  group_id: number | null;
+  group_name: string | null;
   vote_count: number;
   view_count: number;
   fork_count: number;
@@ -45,6 +75,7 @@ export interface StrategyCreate {
   code: string;
   parameters?: Record<string, unknown>;
   is_public?: boolean;
+  group_id?: number | null;
 }
 
 // Backtest types

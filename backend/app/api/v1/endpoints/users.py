@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Request, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -25,6 +26,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Username in path: letters, numbers, underscore (same as registration)
+UsernamePath = Annotated[str, Path(pattern=r'^[a-zA-Z0-9_]+$', min_length=3, max_length=50)]
 
 REP_MIN_ACCOUNT_DAYS = 7
 REP_MAX_PER_24H = 10
@@ -255,7 +259,7 @@ async def get_my_badges(
 @limiter.limit("60/minute")
 async def get_user_forum_stats(
     request: Request,
-    username: str,
+    username: UsernamePath,
     db: AsyncSession = Depends(get_db),
 ):
     """Get a user's forum thread and post counts."""
@@ -272,7 +276,7 @@ async def get_user_forum_stats(
 @limiter.limit("60/minute")
 async def get_user_forum_activity(
     request: Request,
-    username: str,
+    username: UsernamePath,
     limit: int = 10,
     db: AsyncSession = Depends(get_db),
 ):
@@ -335,7 +339,7 @@ async def get_user_forum_activity(
 @limiter.limit("60/minute")
 async def get_user_strategy_count(
     request: Request,
-    username: str,
+    username: UsernamePath,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
 ):
@@ -358,7 +362,7 @@ async def get_user_strategy_count(
 @limiter.limit("60/minute")
 async def get_user_competition_history(
     request: Request,
-    username: str,
+    username: UsernamePath,
     db: AsyncSession = Depends(get_db),
 ):
     """Get a user's competition entry history (entries with competition and strategy info)."""
@@ -399,7 +403,7 @@ async def get_user_competition_history(
 @limiter.limit("60/minute")
 async def get_user_badges(
     request: Request,
-    username: str,
+    username: UsernamePath,
     db: AsyncSession = Depends(get_db),
 ):
     """Get badges for a user by username."""
@@ -427,7 +431,7 @@ async def get_user_badges(
 @limiter.limit("60/minute")
 async def get_user_achievements(
     request: Request,
-    username: str,
+    username: UsernamePath,
     db: AsyncSession = Depends(get_db),
 ):
     """Get achievements for a user by username."""
@@ -464,7 +468,7 @@ async def get_user_achievements(
 @limiter.limit("60/minute")
 async def get_user_rep(
     request: Request,
-    username: str,
+    username: UsernamePath,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
 ):
@@ -500,7 +504,7 @@ async def get_user_rep(
 @limiter.limit("20/minute")
 async def give_rep(
     request: Request,
-    username: str,
+    username: UsernamePath,
     body: RepGive,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -577,7 +581,7 @@ async def give_rep(
 @limiter.limit("60/minute")
 async def get_user_by_username(
     request: Request,
-    username: str,
+    username: UsernamePath,
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(User).where(User.username == username))

@@ -23,6 +23,7 @@ interface FloatingCodeEditorProps {
   onCodeChange: (code: string) => void;
   savedStrategyId: number | null;
   strategyParams: Record<string, number>;
+  additionalSymbols?: string[];
   onSetStrategyParams: (params: Record<string, number>) => void;
   effectiveChartTheme: 'light' | 'dark';
   user: { username: string } | null;
@@ -38,6 +39,7 @@ export default function FloatingCodeEditor({
   onCodeChange,
   savedStrategyId,
   strategyParams,
+  additionalSymbols = [],
   onSetStrategyParams,
   effectiveChartTheme,
   user,
@@ -59,19 +61,19 @@ export default function FloatingCodeEditor({
   const [lastEditorSaveTime, setLastEditorSaveTime] = useState<number | null>(null);
   const [editorSaveStatus, setEditorSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-  // Set initial position on mount
+  // Position the editor on first mount
   useEffect(() => {
     setEditorPosition({ x: 20, y: window.innerHeight - 470 });
   }, []);
 
-  // Clear "saved" feedback after a few seconds
+  // Hide the "saved" message after a bit
   useEffect(() => {
     if (editorSaveStatus !== 'saved') return;
     const t = setTimeout(() => setEditorSaveStatus('idle'), 2500);
     return () => clearTimeout(t);
   }, [editorSaveStatus]);
 
-  // Load version history when editor opens for a saved strategy
+  // Fetch version history when opening a saved strategy
   useEffect(() => {
     if (visible && savedStrategyId) {
       setVersionLoading(true);
@@ -135,6 +137,7 @@ export default function FloatingCodeEditor({
               <span className="text-sm text-gray-900 font-medium truncate">
                 {strategyTitle}
               </span>
+              {/* Version control tab commented out for now — keep Code editor only
               {!editorMinimized && savedStrategyId && (
                 <div className="flex items-center gap-0.5 bg-gray-100 rounded-md p-0.5">
                   <button
@@ -153,6 +156,7 @@ export default function FloatingCodeEditor({
                   </button>
                 </div>
               )}
+              */}
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {!editorMinimized && savedStrategyId && (
@@ -168,7 +172,9 @@ export default function FloatingCodeEditor({
                       if (!savedStrategyId) return;
                       setEditorSaveStatus('saving');
                       try {
-                        await api.updateStrategy(savedStrategyId, { code, parameters: strategyParams });
+                        const params = { ...strategyParams } as Record<string, unknown>;
+                        if (additionalSymbols.length > 0) params.additional_symbols = additionalSymbols;
+                        await api.updateStrategy(savedStrategyId, { code, parameters: params });
                         const now = Date.now();
                         setLastEditorSaveTime(now);
                         setEditorSaveStatus('saved');
@@ -220,17 +226,16 @@ export default function FloatingCodeEditor({
             </div>
           </div>
           
-          {/* Editor Content */}
+          {/* Editor Content — Code editor and Save only; Version control commented out below */}
           {!editorMinimized && (
             <div className="flex flex-col flex-1 min-h-0 overflow-hidden rounded-b-lg">
-              {editorTab === 'code' ? (
-                <div className="flex-1 min-h-0" style={{ height: '480px' }}>
-                  <ErrorBoundary label="Code Editor">
-                    <CodeEditor value={code} onChange={onCodeChange} error={error} />
-                  </ErrorBoundary>
-                </div>
-              ) : savedStrategyId ? (
-                /* Version Control tab - GitHub-style, theme-aware (light/dark) */
+              <div className="flex-1 min-h-0" style={{ height: '480px' }}>
+                <ErrorBoundary label="Code Editor">
+                  <CodeEditor value={code} onChange={onCodeChange} error={error} />
+                </ErrorBoundary>
+              </div>
+              {/* Version control tab — commented out for now (set to true to re-enable) */}
+              {false && savedStrategyId && (
                 <div className={`flex flex-col flex-1 min-h-0 overflow-hidden ${
                   effectiveChartTheme === 'light' ? 'bg-gray-100 border-t border-gray-200' : 'bg-gray-800/50'
                 }`}>
@@ -262,7 +267,9 @@ export default function FloatingCodeEditor({
                             e.preventDefault();
                             if (!savedStrategyId || !commitTitleInput.trim()) return;
                             const msg = commitTitleInput.trim() + (commitDescriptionInput.trim() ? '\n\n' + commitDescriptionInput.trim() : '');
-                            api.updateStrategy(savedStrategyId, { code, parameters: strategyParams })
+                            const params = { ...strategyParams } as Record<string, unknown>;
+                            if (additionalSymbols.length > 0) params.additional_symbols = additionalSymbols;
+                            api.updateStrategy(savedStrategyId, { code, parameters: params })
                               .then(() => api.createVersion(savedStrategyId!, msg))
                               .then(() => {
                                 setCommitTitleInput('');
@@ -279,7 +286,9 @@ export default function FloatingCodeEditor({
                           if (!savedStrategyId || !commitTitleInput.trim()) return;
                           try {
                             const msg = commitTitleInput.trim() + (commitDescriptionInput.trim() ? '\n\n' + commitDescriptionInput.trim() : '');
-                            await api.updateStrategy(savedStrategyId, { code, parameters: strategyParams });
+                            const params = { ...strategyParams } as Record<string, unknown>;
+                            if (additionalSymbols.length > 0) params.additional_symbols = additionalSymbols;
+                            await api.updateStrategy(savedStrategyId, { code, parameters: params });
                             await api.createVersion(savedStrategyId, msg);
                             setCommitTitleInput('');
                             setCommitDescriptionInput('');
@@ -440,8 +449,6 @@ export default function FloatingCodeEditor({
                     )}
                   </div>
                 </div>
-              ) : (
-                <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">Save your strategy to enable version control</div>
               )}
             </div>
           )}

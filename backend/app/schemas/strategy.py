@@ -11,7 +11,7 @@ class StrategyBase(BaseModel):
 
 
 class StrategyCreate(StrategyBase):
-    pass
+    group_id: int | None = None
 
 
 class StrategyUpdate(BaseModel):
@@ -20,12 +20,15 @@ class StrategyUpdate(BaseModel):
     code: str | None = None
     parameters: dict | None = None
     is_public: bool | None = None
+    group_id: int | None = None
 
 
 class StrategyResponse(StrategyBase):
     id: int
     share_token: str
     author_id: int
+    group_id: int | None = None
+    group_name: str | None = None
     vote_count: int
     view_count: int
     fork_count: int
@@ -33,7 +36,7 @@ class StrategyResponse(StrategyBase):
     version: int = 1
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 

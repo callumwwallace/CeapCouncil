@@ -1,8 +1,9 @@
 """Follow system and skill endorsement API endpoints."""
 
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, union_all
@@ -20,8 +21,10 @@ from app.services.notifications import create_notification
 
 router = APIRouter()
 
+UsernamePath = Annotated[str, Path(pattern=r'^[a-zA-Z0-9_]+$', min_length=3, max_length=50)]
 
-# ─── Follow / Unfollow ────────────────────────────────────────────
+
+# Follow / Unfollow
 
 class FollowResponse(BaseModel):
     is_following: bool
@@ -33,7 +36,7 @@ class FollowResponse(BaseModel):
 @limiter.limit("30/minute")
 async def follow_user(
     request: Request,
-    username: str,
+    username: UsernamePath,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -56,7 +59,7 @@ async def follow_user(
     follow = UserFollow(follower_id=current_user.id, following_id=target.id)
     db.add(follow)
 
-    # Notify the followed user
+    # Let them know they have a new follower
     await create_notification(
         db,
         target.id,
@@ -83,7 +86,7 @@ async def follow_user(
 @limiter.limit("30/minute")
 async def unfollow_user(
     request: Request,
-    username: str,
+    username: UsernamePath,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -118,7 +121,7 @@ async def unfollow_user(
 @limiter.limit("60/minute")
 async def get_follow_stats(
     request: Request,
-    username: str,
+    username: UsernamePath,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
 ):
@@ -155,7 +158,7 @@ async def get_follow_stats(
 @limiter.limit("60/minute")
 async def get_followers(
     request: Request,
-    username: str,
+    username: UsernamePath,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -189,7 +192,7 @@ async def get_followers(
 @limiter.limit("60/minute")
 async def get_following(
     request: Request,
-    username: str,
+    username: UsernamePath,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -219,7 +222,7 @@ async def get_following(
     ]
 
 
-# ─── Activity Feed ────────────────────────────────────────────────
+# Activity Feed
 
 @router.get("/me/feed")
 @limiter.limit("60/minute")
@@ -363,7 +366,7 @@ async def get_feed(
     return combined[skip : skip + limit]
 
 
-# ─── Skill Endorsements ──────────────────────────────────────────
+# Skill Endorsements
 
 class EndorseRequest(BaseModel):
     skill: str
@@ -373,7 +376,7 @@ class EndorseRequest(BaseModel):
 @limiter.limit("60/minute")
 async def get_user_endorsements(
     request: Request,
-    username: str,
+    username: UsernamePath,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
 ):
@@ -421,7 +424,7 @@ async def get_user_endorsements(
 @limiter.limit("30/minute")
 async def endorse_skill(
     request: Request,
-    username: str,
+    username: UsernamePath,
     data: EndorseRequest,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -468,7 +471,7 @@ async def endorse_skill(
 @limiter.limit("30/minute")
 async def remove_endorsement(
     request: Request,
-    username: str,
+    username: UsernamePath,
     skill: str,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),

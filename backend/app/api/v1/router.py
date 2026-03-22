@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, users, strategies, backtests, social, market_data, competitions, blog, forum, notifications, follows, admin
+from app.api.v1.endpoints import auth, users, strategies, strategy_groups, backtests, social, market_data, competitions, blog, forum, notifications, follows, admin
 
 api_router = APIRouter()
 
@@ -11,6 +11,7 @@ api_router.include_router(forum.router, prefix="/forum", tags=["forum"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(follows.router, prefix="/users", tags=["follows"])
 api_router.include_router(strategies.router, prefix="/strategies", tags=["strategies"])
+api_router.include_router(strategy_groups.router, prefix="/strategy-groups", tags=["strategy-groups"])
 api_router.include_router(backtests.router, prefix="/backtests", tags=["backtests"])
 api_router.include_router(social.router, prefix="/social", tags=["social"])
 api_router.include_router(market_data.router, prefix="/market-data", tags=["market-data"])

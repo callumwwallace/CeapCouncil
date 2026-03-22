@@ -171,3 +171,17 @@ body {
     @apply text-gray-400 hover:text-gray-200 hover:bg-gray-700/30;
   }
 }
+
+@keyframes lab-modal-fade-slide {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-lab-fade-slide {
+  animation: lab-modal-fade-slide 0.3s ease-out forwards;
+}

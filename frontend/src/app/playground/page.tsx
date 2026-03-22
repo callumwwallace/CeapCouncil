@@ -61,6 +61,7 @@ import AssetSelector from '@/components/playground/AssetSelector';
 import ConfigSelect from '@/components/playground/ConfigSelect';
 import ChartHeader from '@/components/playground/ChartHeader';
 import ResultsBar from '@/components/playground/ResultsBar';
+import SignInPrompt from '@/components/auth/SignInPrompt';
 import api from '@/lib/api';
 import type { BacktestTrade, EquityCurvePoint, DrawdownPoint, Strategy } from '@/types';
 import {
@@ -105,14 +106,22 @@ export default function PlaygroundPage() {
   
   const [code, setCode] = useState(DEFAULT_CODE);
   const [selectedStarter, setSelectedStarter] = useState<StrategyTemplateKey>('sma_crossover');
+  const [strategySource, setStrategySource] = useState<'starter' | 'lab'>('lab');
   const [savedStrategyId, setSavedStrategyId] = useState<number | null>(null);
   const [savedStrategies, setSavedStrategies] = useState<Strategy[]>([]);
   const [savedStrategiesLoading, setSavedStrategiesLoading] = useState(false);
+  const [strategyGroups, setStrategyGroups] = useState<{ id: number; name: string }[]>([]);
+  const [labStrategies, setLabStrategies] = useState<Strategy[]>([]);
+  const [selectedLabGroupId, setSelectedLabGroupId] = useState<number | null>(null);
+  const [labStrategiesLoading, setLabStrategiesLoading] = useState(false);
   const [strategyBoxMinimised, setStrategyBoxMinimised] = useState(false);
   const [editingRenameId, setEditingRenameId] = useState<number | null>(null);
   const [renameInputValue, setRenameInputValue] = useState('');
+  const [showSaveAsNewPrompt, setShowSaveAsNewPrompt] = useState(false);
+  const [saveAsNewTitleInput, setSaveAsNewTitleInput] = useState('');
+  const [showSignInPrompt, setShowSignInPrompt] = useState(false);
 
-  // Dynamic parameter introspection from code
+  // Params are pulled from the code
   const paramDefs = useMemo(() => extractParamsFromCode(code), [code]);
 
   const [config, setConfig] = useState<BacktestConfig>({
@@ -154,7 +163,7 @@ export default function PlaygroundPage() {
   const [showEngineSection, setShowEngineSection] = useState(false);
   const [showAdvancedSetupSection, setShowAdvancedSetupSection] = useState(false);
   const [additionalSymbols, setAdditionalSymbols] = useState<string[]>([]);
-  const [activeSetupPanel, setActiveSetupPanel] = useState<'strategy' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine' | 'history' | null>(null);
+  const [activeSetupPanel, setActiveSetupPanel] = useState<'strategy' | 'data' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine' | 'history' | null>(null);
   const [setupPanelPosition, setSetupPanelPosition] = useState({ x: 70, y: 120 });
   const [setupPanelSize, setSetupPanelSize] = useState({ w: 320, h: 400 });
   const [isDraggingSetupPanel, setIsDraggingSetupPanel] = useState(false);
@@ -166,12 +175,12 @@ export default function PlaygroundPage() {
     setCanPortal(true);
   }, []);
 
-  // Check for injected code from docs "Try in Playground" or forum embed cards
+  // Code from docs "Try in Playground" or forum embeds
   useEffect(() => {
     const injectedCode = sessionStorage.getItem('playground_inject_code');
     if (injectedCode) {
       setCode(injectedCode);
-      setSelectedStarter('custom');
+      setSelectedStarter('sma_crossover');
       setSavedStrategyId(null);
       const extracted = extractParamsFromCode(injectedCode);
       const defaultParams: Record<string, number> = {};
@@ -182,26 +191,35 @@ export default function PlaygroundPage() {
     }
   }, []);
 
-  // Handle ?strategy=ID share links (load a public strategy by ID)
+  // Load shared strategies from ?strategy=ID in the URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const strategyIdParam = params.get('strategy');
+    const strategyIdParam = params.get('strategy') ?? params.get('strategy_id');
     if (!strategyIdParam) return;
     const id = parseInt(strategyIdParam, 10);
     if (isNaN(id)) return;
 
+    loadedFromUrlRef.current = true;
+    setLoadError(null);
     api.getStrategy(id)
       .then((strategy) => {
+        const params = (strategy.parameters ?? {}) as Record<string, unknown>;
+        const additional = params.additional_symbols;
+        const cleanParams = { ...params };
+        delete cleanParams.additional_symbols;
         setCode(strategy.code);
-        setSelectedStarter('custom');
-        setSavedStrategyId(null);
+        setSelectedStarter('sma_crossover');
+        setSavedStrategyId(strategy.id);
         const extracted = extractParamsFromCode(strategy.code);
         const defaultParams: Record<string, number> = {};
         extracted.forEach(p => { defaultParams[p.key] = p.defaultValue; });
-        setStrategyParams(defaultParams);
+        setStrategyParams((cleanParams as Record<string, number>) || defaultParams);
+        setAdditionalSymbols(Array.isArray(additional) ? (additional as string[]) : []);
+        setStrategySource('lab');
+        if (strategy.group_id) setSelectedLabGroupId(strategy.group_id);
       })
       .catch(() => {
-        setError('Could not load shared strategy — it may be private or deleted');
+        setLoadError('Could not load strategy — it may be private or deleted');
       });
   }, []);
 
@@ -210,7 +228,7 @@ export default function PlaygroundPage() {
   const [resultsPanelWidth, setResultsPanelWidth] = useState(320);
   const [isResizingResults, setIsResizingResults] = useState(false);
   const resizeStartRef = useRef<{ x: number; w: number }>({ x: 0, w: 320 });
-  const [uiScale, setUiScale] = useState(1); // 0.75–1.25, applied to sidebars only (not chart)
+  const [uiScale, setUiScale] = useState(1); // 0.75–1.25 for sidebars
   const [showCodeEditor, setShowCodeEditor] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [lastBacktestShareToken, setLastBacktestShareToken] = useState<string | null>(null);
@@ -236,6 +254,8 @@ export default function PlaygroundPage() {
   }, [theme]);
   const [results, setResults] = useState<BacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadedFromUrlRef = useRef(false);
   const [comparisonHistory, setComparisonHistory] = useState<(BacktestResult & {
     label: string;
     timestamp: number;
@@ -243,7 +263,7 @@ export default function PlaygroundPage() {
     paramsSnapshot: Record<string, number>;
   })[]>([]);
   const [showComparison, setShowComparison] = useState(false);
-  // Advanced analytics (extracted hook)
+  // Analytics hook
   const analytics = useAnalytics({ config, code, paramDefs, strategyParams });
   const {
     optimizeResults, walkForwardResults, oosResults, cpcvResults, factorResults, monteCarloResults,
@@ -264,7 +284,7 @@ export default function PlaygroundPage() {
     handleRunCpcv, handleRunFactorAttribution, handleRunMonteCarlo,
   } = analytics;
   
-  // Derive trade markers from real backend trades
+  // Trade markers from backend
   const tradeMarkers: TradeMarker[] = useMemo(() => {
     if (!results?.trades) return [];
     const markers: TradeMarker[] = [];
@@ -275,7 +295,7 @@ export default function PlaygroundPage() {
     return markers;
   }, [results?.trades]);
 
-  // Use real equity curve from backend, mapped for drawdown chart compat
+  // Equity curve from backend, formatted for the drawdown chart
   const equityCurveData = useMemo(() => {
     return results?.equity_curve || [];
   }, [results?.equity_curve]);
@@ -329,14 +349,14 @@ export default function PlaygroundPage() {
     return hints;
   }, [config.startDate, config.endDate, config.initialCapital, config.slippage, config.commission, code]);
 
-  // Clear validation errors when user fixes config
+  // Clear validation/backtest errors when config changes (keep loadError)
   useEffect(() => {
     if (error && !isRunning && validateConfig() === null) {
       setError(null);
     }
   }, [config, code, isRunning]); // eslint-disable-line react-hooks/exhaustive-deps -- error intentionally excluded to avoid loops
 
-  // Auto-open code editor when error has parseable line numbers (code-related failure)
+  // Open code editor when we can point to a line number in the error
   useEffect(() => {
     if (error && parseErrorLines(error).length > 0) {
       setShowCodeEditor(true);
@@ -345,7 +365,7 @@ export default function PlaygroundPage() {
 
   const handleRunBacktest = useCallback(async () => {
     if (!isAuthenticated) {
-      setError('Please sign in to run backtests');
+      setShowSignInPrompt(true);
       return;
     }
 
@@ -363,8 +383,7 @@ export default function PlaygroundPage() {
     const startTime = Date.now();
 
     try {
-      // Strategy params (user-defined in code) are kept separate from engine config
-      // so self.params in the strategy only contains trading parameters, not engine noise.
+      // User params stay separate from engine config so self.params is clean
       const backtestConfig = {
         symbol: config.symbol,
         symbols: additionalSymbols.length > 0 ? additionalSymbols : undefined,
@@ -374,9 +393,8 @@ export default function PlaygroundPage() {
         slippage: config.slippage / 100,
         commission: config.commission / 100,
         parameters: {
-          // Strategy params (appear in self.params)
           ...strategyParams,
-          // Engine config (consumed by EngineConfig, also lands in self.params for now)
+          // Engine config
           spread_model: config.spreadModel,
           slippage_model: config.slippageModel,
           margin_enabled: config.marginEnabled,
@@ -393,7 +411,7 @@ export default function PlaygroundPage() {
         interval: config.interval,
       };
 
-      // Always pass code from editor so Run uses current code (no Save required)
+      // Use current editor code (no save needed)
       const CREATE_TIMEOUT_MS = 30000; // 30 seconds
       const createPromise = api.createBacktestWithCode({ ...backtestConfig, code });
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -531,43 +549,45 @@ export default function PlaygroundPage() {
     setSelectedStarter(templateKey);
     const newCode = STRATEGY_TEMPLATES[templateKey].code;
     setCode(newCode);
-    // Extract params dynamically from the new code
     const extracted = extractParamsFromCode(newCode);
     const defaultParams: Record<string, number> = {};
     extracted.forEach(p => { defaultParams[p.key] = p.defaultValue; });
     setStrategyParams(defaultParams);
-    setSavedStrategyId(null); // Loading a starter detaches from saved strategy
+    setSavedStrategyId(null);
+    setStrategySource('starter');
   };
+
+  const applyStrategyLoad = useCallback((strategy: Strategy) => {
+    setCode(strategy.code);
+    setSavedStrategyId(strategy.id);
+    const params = (strategy.parameters ?? {}) as Record<string, unknown>;
+    const additional = params.additional_symbols;
+    const cleanParams = { ...params };
+    delete cleanParams.additional_symbols;
+    setStrategyParams(cleanParams as Record<string, number>);
+    setAdditionalSymbols(Array.isArray(additional) ? (additional as string[]) : []);
+    setSelectedLabGroupId(strategy.group_id ?? null);
+  }, []);
 
   const handleSavedStrategySelect = async (value: string) => {
     const id = parseInt(value, 10);
     if (isNaN(id)) return;
     try {
       const strategy = await api.getStrategy(id);
-      setCode(strategy.code);
-      setSavedStrategyId(strategy.id);
-      setStrategyParams((strategy.parameters as Record<string, number>) || {});
+      applyStrategyLoad(strategy);
+      setStrategySource('lab');
+      if (strategy.group_id) setSelectedLabGroupId(strategy.group_id);
     } catch {
       setCode(DEFAULT_CODE);
       setSavedStrategyId(null);
     }
   };
 
-  const handleCreateNewStrategy = useCallback(async () => {
-    if (!isAuthenticated) return;
-    try {
-      const strat = await api.createStrategy({
-        title: 'New Strategy',
-        code,
-        parameters: strategyParams,
-        is_public: false,
-      });
-      setSavedStrategies(prev => [strat, ...prev]);
-      setSavedStrategyId(strat.id);
-    } catch (err) {
-      setError(extractApiError(err, 'Failed to create strategy'));
-    }
-  }, [isAuthenticated, code, strategyParams]);
+  const handleLabStrategySelect = (strategy: Strategy) => {
+    applyStrategyLoad(strategy);
+    setStrategySource('lab');
+  };
+
 
   const refetchSavedStrategies = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -589,29 +609,103 @@ export default function PlaygroundPage() {
     [savedStrategies, deletedStrategyIds]
   );
 
-  // Load saved strategies when authenticated
+  // Fetch saved strategies
   useEffect(() => {
     if (isAuthenticated) {
       refetchSavedStrategies();
     }
   }, [isAuthenticated, refetchSavedStrategies]);
 
+  // Fetch groups when using Lab
+  useEffect(() => {
+    if (isAuthenticated && strategySource === 'lab') {
+      api.getStrategyGroups().then((g) => setStrategyGroups(g)).catch(() => setStrategyGroups([]));
+    } else {
+      setStrategyGroups([]);
+    }
+  }, [isAuthenticated, strategySource]);
+
+  // Pick first group if we have groups but none selected
+  useEffect(() => {
+    if (strategySource === 'lab' && isAuthenticated && strategyGroups.length > 0 && selectedLabGroupId === null) {
+      setSelectedLabGroupId(strategyGroups[0].id);
+    }
+  }, [strategySource, isAuthenticated, strategyGroups, selectedLabGroupId]);
+
+  // Fetch strategies for the selected group
+  useEffect(() => {
+    if (!isAuthenticated || strategySource !== 'lab') {
+      setLabStrategies([]);
+      return;
+    }
+    if (selectedLabGroupId == null) {
+      setLabStrategies([]);
+      setSavedStrategyId(null);
+      return;
+    }
+    setLabStrategiesLoading(true);
+    api
+      .getMyStrategies({ group_id: selectedLabGroupId })
+      .then((list) => {
+        setLabStrategies(list);
+        const wasLoadedFromUrl = loadedFromUrlRef.current;
+        loadedFromUrlRef.current = false;
+        // Deselect if strategy isn't in this group (unless we loaded from URL)
+        setSavedStrategyId((prev) => {
+          if (prev !== null && !list.some((s) => s.id === prev) && !wasLoadedFromUrl) return null;
+          return prev;
+        });
+      })
+      .catch(() => setLabStrategies([]))
+      .finally(() => setLabStrategiesLoading(false));
+  }, [isAuthenticated, strategySource, selectedLabGroupId]);
+
   const handleDuplicateStrategy = useCallback(async () => {
     if (!savedStrategyId || !isAuthenticated) return;
-    const current = displayedSavedStrategies.find(s => s.id === savedStrategyId);
+    const current = labStrategies.find(s => s.id === savedStrategyId) ?? displayedSavedStrategies.find(s => s.id === savedStrategyId);
     try {
       const strat = await api.createStrategy({
         title: `Copy of ${current?.title ?? 'Strategy'}`,
         code,
         parameters: strategyParams,
         is_public: false,
+        group_id: selectedLabGroupId ?? undefined,
       });
       setSavedStrategyId(strat.id);
       setSavedStrategies(prev => [strat, ...prev]);
+      setLabStrategies(prev => [strat, ...prev]);
     } catch (err) {
       setError(extractApiError(err, 'Failed to duplicate strategy'));
     }
-  }, [savedStrategyId, code, strategyParams, displayedSavedStrategies, isAuthenticated]);
+  }, [savedStrategyId, code, strategyParams, labStrategies, displayedSavedStrategies, isAuthenticated, selectedLabGroupId]);
+
+  const handleSaveAsNewConfirm = useCallback(async () => {
+    if (!isAuthenticated) return;
+    const title = (saveAsNewTitleInput || 'New Strategy').trim() || 'New Strategy';
+    setShowSaveAsNewPrompt(false);
+    setSaveAsNewTitleInput('');
+    try {
+      const strat = await api.createStrategy({
+        title,
+        code,
+        parameters: strategyParams,
+        is_public: false,
+        group_id: selectedLabGroupId ?? undefined,
+      });
+      setSavedStrategies(prev => [strat, ...prev]);
+      setLabStrategies(prev => [strat, ...prev]);
+      setSavedStrategyId(strat.id);
+      setStrategySource('lab');
+    } catch (err) {
+      setError(extractApiError(err, 'Failed to create strategy'));
+    }
+  }, [isAuthenticated, code, strategyParams, selectedLabGroupId, saveAsNewTitleInput]);
+
+  const handleSaveAsNewClick = useCallback(() => {
+    const currentTitle = labStrategies.find(s => s.id === savedStrategyId)?.title ?? displayedSavedStrategies.find(s => s.id === savedStrategyId)?.title;
+    setSaveAsNewTitleInput(currentTitle ? `Copy of ${currentTitle}` : 'New Strategy');
+    setShowSaveAsNewPrompt(true);
+  }, [savedStrategyId, labStrategies, displayedSavedStrategies]);
 
   const handleDeleteStrategy = useCallback(async (strategyId?: number) => {
     const idToDelete = strategyId ?? savedStrategyId;
@@ -663,21 +757,22 @@ export default function PlaygroundPage() {
 
   const handleSave = useCallback(async () => {
     if (!isAuthenticated) return;
-    // Only save if we have a saved strategy to update
     if (!savedStrategyId) return;
     setIsSaving(true);
     setSaveMessage(null);
     try {
-      await api.updateStrategy(savedStrategyId, { code, parameters: strategyParams });
+      const params = { ...strategyParams } as Record<string, unknown>;
+      if (additionalSymbols.length > 0) params.additional_symbols = additionalSymbols;
+      await api.updateStrategy(savedStrategyId, { code, parameters: params });
       setSaveMessage('Strategy saved!');
       setTimeout(() => setSaveMessage(null), 3000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       setSaveMessage('Failed to save');
       setTimeout(() => setSaveMessage(null), 3000);
     } finally {
       setIsSaving(false);
     }
-  }, [isAuthenticated, savedStrategyId, code, strategyParams]);
+  }, [isAuthenticated, savedStrategyId, code, strategyParams, additionalSymbols]);
 
   usePlaygroundShortcuts({
     isRunning,
@@ -690,7 +785,7 @@ export default function PlaygroundPage() {
     onExport: handleExportResults,
   });
 
-  // Setup panel: drag and resize
+  // Drag and resize for setup panel
   const handleSetupPanelDragStart = (e: React.MouseEvent) => {
     e.preventDefault();
     setIsDraggingSetupPanel(true);
@@ -738,7 +833,7 @@ export default function PlaygroundPage() {
     };
   }, [isDraggingSetupPanel, isResizingSetupPanel]);
 
-  // Resize handle for results panel
+  // Results panel resize handle
   const handleResultsResizeStart = (e: React.MouseEvent) => {
     e.preventDefault();
     setIsResizingResults(true);
@@ -796,7 +891,7 @@ export default function PlaygroundPage() {
     }
   }, [config.symbol]);
 
-  // Mobile guard — playground requires tablet or larger
+  // Playground needs tablet or larger
   if (typeof window !== 'undefined' && window.innerWidth < 768) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
@@ -814,7 +909,7 @@ export default function PlaygroundPage() {
   }
 
   return (
-    <div ref={playgroundRef} className="h-full flex flex-col bg-white text-gray-900">
+    <div ref={playgroundRef} className="relative h-full flex flex-col bg-white text-gray-900">
       {/* Chart Header - TradingView style: asset, interval, run, actions */}
       <ChartHeader
         symbol={config.symbol}
@@ -836,32 +931,54 @@ export default function PlaygroundPage() {
         onScreenshot={handleScreenshot}
       />
 
+      {/* Sign-in overlay - shown when they try to run without being signed in */}
+      {!isAuthenticated && showSignInPrompt && (
+        <SignInPrompt
+          variant="modal"
+          title="Sign in to use the Playground"
+          subtitle="Run backtests, save strategies to Lab, and share results in the community."
+          onDismiss={() => setShowSignInPrompt(false)}
+        />
+      )}
+
+      {/* Load error banner - strategy load failures (e.g. from URL), persistent until dismissed */}
+      {loadError && (
+        <div className="flex-shrink-0 flex items-center justify-between gap-3 px-3 py-2 bg-red-900/30 border-b border-red-800/60 text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertCircle className="h-4 w-4 text-red-400 shrink-0" />
+            <span className="text-red-200 truncate">{loadError}</span>
+          </div>
+          <button onClick={() => setLoadError(null)} className="p-1 text-red-400 hover:text-white rounded transition" title="Dismiss">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
       {/* Error banner - visible when backtest/validation fails */}
       {error && (
         <div className="flex-shrink-0 flex items-center justify-between gap-3 px-3 py-2 bg-red-900/30 border-b border-red-800/60 text-xs">
           <div className="flex items-center gap-2 min-w-0">
             <AlertCircle className="h-4 w-4 text-red-400 shrink-0" />
             <span className="text-red-200 truncate">{error}</span>
-                  </div>
+          </div>
           <div className="flex items-center gap-2 shrink-0">
             {!isRunning && (
               <button onClick={handleRetryBacktest} className="px-2.5 py-1 text-xs font-medium text-red-200 hover:text-white bg-red-800/50 hover:bg-red-800 rounded transition">
                 Retry
-                  </button>
+              </button>
             )}
             <button onClick={() => setError(null)} className="p-1 text-red-400 hover:text-white rounded transition" title="Dismiss">
               <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                )}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Area - chart uses full width, icon bar overlays */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* Icon toolbar - absolute overlay on left edge, no layout space */}
         <div className="absolute left-0 top-0 bottom-0 z-30 flex flex-col bg-white border-r border-gray-200 w-12 items-center py-2 gap-0.5 overflow-visible shadow-sm">
             {([
-              'strategy', 'dates',
+              'strategy', 'data', 'dates',
               '---',
               'capital', 'benchmark', 'costs',
               '---',
@@ -870,9 +987,9 @@ export default function PlaygroundPage() {
               'history',
             ] as const).map((item, i) => {
               if (item === '---') return <div key={`sep-${i}`} className="h-px bg-gray-200 w-6 my-1" />;
-              const panel = item as 'strategy' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine' | 'history';
-              const labels = { strategy: 'Strategy', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine', history: 'Run History' };
-              const icons = { strategy: FileCode, dates: Calendar, capital: DollarSign, benchmark: TrendingUp, costs: Percent, risk: Shield, engine: Settings, history: RefreshCw };
+              const panel = item as 'strategy' | 'data' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine' | 'history';
+              const labels = { strategy: 'Strategy', data: 'Data', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine', history: 'Run History' };
+              const icons = { strategy: FileCode, data: Layers, dates: Calendar, capital: DollarSign, benchmark: TrendingUp, costs: Percent, risk: Shield, engine: Settings, history: RefreshCw };
               const Icon = icons[panel];
               const isActive = activeSetupPanel === panel;
               return (
@@ -985,7 +1102,7 @@ export default function PlaygroundPage() {
             onMouseDown={handleSetupPanelDragStart}
           >
             <span className="text-xs font-semibold text-gray-900">
-              {({ strategy: 'Strategy', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine', history: 'Run History' } as Record<string, string>)[activeSetupPanel]}
+              {({ strategy: 'Strategy', data: 'Data', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine', history: 'Run History' } as Record<string, string>)[activeSetupPanel]}
             </span>
             <button
               onClick={() => setActiveSetupPanel(null)}
@@ -1000,14 +1117,87 @@ export default function PlaygroundPage() {
             {activeSetupPanel === 'strategy' && (
               <div className="space-y-2">
                 <p className="text-[10px] text-gray-400 leading-relaxed">Sidebar controls the environment (capital, costs, dates). Your code controls the trading logic.</p>
-                {/* Load starter code */}
+                {/* Source: Starter | From Lab */}
                 <div>
-                  <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-1">Load Starter</div>
-                  <ConfigSelect value={selectedStarter} onChange={(v) => handleStarterChange(v as StrategyTemplateKey)} light options={Object.entries(STRATEGY_TEMPLATES).map(([key, t]) => ({ value: key, label: t.name }))} />
+                  <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-1">Source</div>
+                  <ConfigSelect
+                    value={strategySource}
+                    onChange={(v) => {
+                      setStrategySource(v as 'starter' | 'lab');
+                      if (v === 'starter') {
+                        setSavedStrategyId(null);
+                        handleStarterChange(selectedStarter);
+                      }
+                    }}
+                    light
+                    options={[
+                      { value: 'lab', label: 'Lab' },
+                      { value: 'starter', label: 'Templates' },
+                    ]}
+                  />
                 </div>
+                {strategySource === 'starter' && (
+                  <div>
+                    <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-1">Load Starter</div>
+                    <ConfigSelect value={selectedStarter} onChange={(v) => handleStarterChange(v as StrategyTemplateKey)} light options={Object.entries(STRATEGY_TEMPLATES).map(([key, t]) => ({ value: key, label: t.name }))} />
+                  </div>
+                )}
+                {strategySource === 'lab' && isAuthenticated && strategyGroups.length > 0 && (
+                  <div className="space-y-2">
+                    <div>
+                      <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-1">Group</div>
+                      <ConfigSelect
+                        value={selectedLabGroupId == null ? '' : String(selectedLabGroupId)}
+                        onChange={(v) => setSelectedLabGroupId(v ? parseInt(v, 10) : null)}
+                        light
+                        options={strategyGroups.map((g) => ({ value: String(g.id), label: g.name }))}
+                      />
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-1">Strategy</div>
+                      {labStrategiesLoading ? (
+                        <div className="text-[10px] text-gray-500 py-1">Loading...</div>
+                      ) : labStrategies.length === 0 ? (
+                        <div className="text-[10px] text-gray-500 py-1">No strategies in this group</div>
+                      ) : (
+                        <div className="space-y-0.5 max-h-28 overflow-y-auto">
+                          {labStrategies.map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => handleLabStrategySelect(s)}
+                              className={`w-full text-left px-2 py-1.5 rounded-md text-xs truncate ${savedStrategyId === s.id ? 'bg-emerald-50 text-emerald-600' : 'text-gray-700 hover:bg-gray-50'}`}
+                            >
+                              {s.title}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {strategySource === 'lab' && !isAuthenticated && (
+                  <p className="text-[10px] text-amber-600 py-1">Sign in to load strategies from Lab.</p>
+                )}
 
-                {/* Dynamic parameters (extracted from code) */}
-                {paramDefs.length > 0 && (
+                {/* Prompt when Lab selected but no groups yet */}
+                {strategySource === 'lab' && savedStrategyId === null && isAuthenticated && strategyGroups.length === 0 && (
+                  <div className="pt-2 border-t border-gray-200">
+                    <p className="text-[11px] text-gray-600 mb-2">
+                      Create groups and strategies in Lab to get started.
+                    </p>
+                    <Link
+                      href="/lab"
+                      className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
+                    >
+                      Go to Lab
+                      <ChevronDown className="h-3.5 w-3.5 -rotate-90" />
+                    </Link>
+                  </div>
+                )}
+
+                {/* Dynamic parameters (extracted from code) — only when a strategy is selected */}
+                {paramDefs.length > 0 && (strategySource !== 'lab' || savedStrategyId !== null) && (
                   <div className="space-y-2 pt-2 border-t border-gray-200">
                     <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Parameters</div>
                     {paramDefs.map((p) => (
@@ -1031,70 +1221,53 @@ export default function PlaygroundPage() {
                   </div>
                 )}
 
-                {/* Saved strategies */}
-                {isAuthenticated && (
-                  <div className="space-y-2 pt-2 border-t border-gray-200">
-                    <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Saved Strategies</div>
-                    {savedStrategiesLoading ? <div className="text-[10px] text-gray-500 py-1">Loading...</div> : displayedSavedStrategies.length > 0 ? (
-                      <div className="space-y-0.5 max-h-32 overflow-y-auto">
-                        {displayedSavedStrategies.map(s => (
-                          <div
-                            key={s.id}
-                            className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs ${editingRenameId === s.id ? '' : 'cursor-pointer'} ${savedStrategyId === s.id && editingRenameId !== s.id ? 'bg-emerald-50 text-emerald-600' : 'text-gray-700 hover:bg-gray-50'}`}
-                            onClick={() => editingRenameId !== s.id && handleSavedStrategySelect(String(s.id))}
-                          >
-                            {editingRenameId === s.id ? (
-                              <input
-                                type="text"
-                                value={renameInputValue}
-                                onChange={(e) => setRenameInputValue(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') saveRenameStrategy();
-                                  if (e.key === 'Escape') cancelRenameStrategy();
-                                }}
-                                onBlur={() => saveRenameStrategy()}
-                                autoFocus
-                                className="flex-1 min-w-0 px-2 py-1 text-xs bg-white border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            ) : (
-                              <>
-                                <span className="flex-1 truncate min-w-0">{s.title}</span>
-                                <button
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); startRenameStrategy(s.id); }}
-                                  className="p-1 rounded text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 shrink-0"
-                                  title="Rename strategy"
-                                >
-                                  <Pencil className="h-3 w-3" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); handleDeleteStrategy(s.id); }}
-                                  className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 shrink-0"
-                                  title="Delete strategy"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        ))}
+                {/* Save as New, Refresh & Open Editor — only when using Lab with a strategy selected */}
+                {strategySource === 'lab' && savedStrategyId !== null && (
+                  <>
+                    {isAuthenticated && (
+                      <div className="flex gap-2 pt-2 border-t border-gray-200">
+                        <button type="button" onClick={handleSaveAsNewClick} disabled={savedStrategiesLoading} className="flex-1 py-2 text-[11px] font-medium text-emerald-600 hover:text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md">Save as New</button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            refetchSavedStrategies();
+                            setLabStrategiesLoading(true);
+                            if (selectedLabGroupId != null) {
+                              api.getMyStrategies({ group_id: selectedLabGroupId }).then(setLabStrategies).catch(() => setLabStrategies([])).finally(() => setLabStrategiesLoading(false));
+                            } else {
+                              api.getMyStrategies().then(setLabStrategies).catch(() => setLabStrategies([])).finally(() => setLabStrategiesLoading(false));
+                            }
+                          }}
+                          disabled={savedStrategiesLoading}
+                          className="px-3 py-2 text-[11px] text-gray-500 hover:text-gray-900 bg-gray-100 rounded-md"
+                        >
+                          Refresh
+                        </button>
                       </div>
-                    ) : <div className="text-[10px] text-gray-500 py-1">No saved strategies yet</div>}
-                    <div className="flex gap-2">
-                      <button type="button" onClick={handleCreateNewStrategy} disabled={!isAuthenticated || savedStrategiesLoading} className="flex-1 py-2 text-[11px] font-medium text-emerald-600 hover:text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md">Save as New</button>
-                      <button type="button" onClick={() => refetchSavedStrategies()} disabled={savedStrategiesLoading} className="px-3 py-2 text-[11px] text-gray-500 hover:text-gray-900 bg-gray-100 rounded-md">Refresh</button>
-                    </div>
-                  </div>
+                    )}
+                    <button onClick={() => setShowCodeEditor(true)} className="w-full py-2 text-[11px] text-emerald-600 border border-emerald-200 rounded-md mt-2 hover:bg-emerald-50">Open Editor</button>
+                  </>
                 )}
-
-                {/* Multi-symbol for multi-asset strategies */}
-                <div className="space-y-1.5 pt-2 border-t border-gray-200">
+              </div>
+            )}
+            {activeSetupPanel === 'data' && (
+              <div className="space-y-3">
+                <div>
+                  <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-1">Primary Symbol</div>
+                  <p className="text-[10px] text-gray-400 leading-relaxed mb-2">
+                    The main trading symbol. Change it in the chart header (top left).
+                  </p>
+                  <div className="px-3 py-2 bg-gray-50 rounded-lg border border-gray-200 text-sm font-mono text-gray-900">
+                    {config.symbol}
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-gray-200">
                   <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Additional Symbols</div>
-                  <p className="text-[10px] text-gray-400 leading-relaxed">Add extra symbols for multi-asset strategies. Data is passed to <code className="bg-gray-100 px-0.5 rounded">self.history(symbol)</code>.</p>
+                  <p className="text-[10px] text-gray-400 leading-relaxed mb-2">
+                    Add extra symbols for multi-asset strategies. Data is passed to <code className="bg-gray-100 px-0.5 rounded">self.history(symbol)</code>.
+                  </p>
                   {additionalSymbols.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap gap-1 mb-2">
                       {additionalSymbols.map((sym) => (
                         <span key={sym} className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 text-gray-700 text-[10px] font-medium rounded-md">
                           {sym}
@@ -1141,9 +1314,6 @@ export default function PlaygroundPage() {
                     </button>
                   </div>
                 </div>
-
-                {/* Open code editor — always available */}
-                <button onClick={() => setShowCodeEditor(true)} className="w-full py-2 text-[11px] text-emerald-600 border border-emerald-200 rounded-md mt-2 hover:bg-emerald-50">Open Editor</button>
               </div>
             )}
             {activeSetupPanel === 'dates' && (
@@ -1381,8 +1551,49 @@ export default function PlaygroundPage() {
         document.getElementById('portal-root') ?? document.body
       )}
 
+      {/* Save as New title prompt modal */}
+      {showSaveAsNewPrompt && canPortal && typeof window !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[2147483646] flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl border border-gray-200 p-4 w-full max-w-sm mx-4">
+            <h3 className="text-sm font-semibold text-gray-900 mb-2">Save as New</h3>
+            <p className="text-xs text-gray-500 mb-3">Enter a title for the new strategy.</p>
+            <input
+              type="text"
+              value={saveAsNewTitleInput}
+              onChange={(e) => setSaveAsNewTitleInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveAsNewConfirm();
+                if (e.key === 'Escape') setShowSaveAsNewPrompt(false);
+              }}
+              placeholder="New Strategy"
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 mb-4"
+              autoFocus
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => { setShowSaveAsNewPrompt(false); setSaveAsNewTitleInput(''); }}
+                className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveAsNewConfirm}
+                disabled={savedStrategiesLoading}
+                className="px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg disabled:opacity-50"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.getElementById('portal-root') ?? document.body
+      )}
+
       {/* Floating Code Editor */}
       <FloatingCodeEditor
+        additionalSymbols={additionalSymbols}
         visible={showCodeEditor}
         onClose={() => setShowCodeEditor(false)}
         code={code}
@@ -1393,7 +1604,7 @@ export default function PlaygroundPage() {
         effectiveChartTheme={effectiveChartTheme}
         user={user ? { username: user.username } : null}
         onError={setError}
-        strategyTitle={displayedSavedStrategies.find(s => s.id === savedStrategyId)?.title ?? 'strategy.py'}
+        strategyTitle={displayedSavedStrategies.find(s => s.id === savedStrategyId)?.title ?? labStrategies.find(s => s.id === savedStrategyId)?.title ?? 'strategy.py'}
         error={error}
       />
     </div>

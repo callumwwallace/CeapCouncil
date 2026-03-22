@@ -89,11 +89,12 @@ export default function CommunityTopicPage() {
   const [newBody, setNewBody] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [myStrategies, setMyStrategies] = useState<{ id: number; share_token: string; title: string }[]>([]);
+  const [myStrategies, setMyStrategies] = useState<{ id: number; share_token: string; title: string; group_id?: number | null }[]>([]);
+  const [myGroups, setMyGroups] = useState<{ id: number; share_token: string; name: string }[]>([]);
   const [myBacktests, setMyBacktests] = useState<{ id: number; share_token: string; symbol: string; total_return: number | null; sharpe_ratio: number | null }[]>([]);
   const [sortBy, setSortBy] = useState<'updated_at' | 'created_at' | 'vote_score'>('updated_at');
 
-  // Proposal form state
+  // For competition proposal threads
   const [proposalSymbols, setProposalSymbols] = useState<string[]>(['SPY']);
   const [symbolSearch, setSymbolSearch] = useState('');
   const [symbolDropdownOpen, setSymbolDropdownOpen] = useState(false);
@@ -109,7 +110,10 @@ export default function CommunityTopicPage() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      api.getMyStrategies().then((s) => setMyStrategies(s.map((x) => ({ id: x.id, share_token: x.share_token, title: x.title })))).catch(() => {});
+      api.getMyStrategies().then((s) => setMyStrategies(s.filter((x) => x.is_public).map((x) => ({ id: x.id, share_token: x.share_token, title: x.title, group_id: x.group_id })))).catch(() => {});
+      api.getStrategyGroups().then((g) => setMyGroups(
+        g.filter((x) => x.is_shareable).map((x) => ({ id: x.id, share_token: x.share_token, name: x.name }))
+      )).catch(() => {});
       api.getMyBacktests().then((bts) => setMyBacktests(
         bts.filter((b) => b.status === 'completed').slice(0, 20).map((b) => ({
           id: b.id, share_token: b.share_token, symbol: b.symbol, total_return: b.total_return, sharpe_ratio: b.sharpe_ratio,
@@ -118,7 +122,7 @@ export default function CommunityTopicPage() {
     }
   }, [isAuthenticated]);
 
-  // Set default sort when topic changes
+  // Reset sort when switching topics
   useEffect(() => {
     setSortBy(isProposalTopic ? 'vote_score' : 'updated_at');
   }, [isProposalTopic]);
@@ -263,6 +267,7 @@ export default function CommunityTopicPage() {
                   maxLength={10000}
                   disabled={submitting}
                   strategies={myStrategies}
+                  groups={myGroups}
                   backtests={myBacktests}
                 />
               </div>
