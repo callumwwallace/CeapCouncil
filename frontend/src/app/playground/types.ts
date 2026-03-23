@@ -65,8 +65,16 @@ export interface BacktestResult {
   total_funding_paid?: number;
   total_funding_received?: number;
   net_funding?: number;
+  avg_win?: number;
+  avg_loss?: number;
+  loss_rate?: number;
+  cagr?: number;
+  num_days?: number;
+  treynor_ratio?: number;
   rolling_sharpe?: Array<{date: string; value: number}>;
   rolling_sortino?: Array<{date: string; value: number}>;
+  rolling_beta?: Array<{date: string; value: number}>;
+  rolling_vol?: Array<{date: string; value: number}>;
   var_95?: number;
   cvar_95?: number;
   var_99?: number;

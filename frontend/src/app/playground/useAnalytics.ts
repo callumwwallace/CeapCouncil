@@ -56,7 +56,7 @@ export function useAnalytics({
   // Shared
   const [lastBacktestId, setLastBacktestId] = useState<number | null>(null);
 
-  // ─── Optimization ──────────────────────────────────────────────────
+  // Optimization
 
   const handleRunOptimization = useCallback(async () => {
     if (paramDefs.length === 0) return;
@@ -169,7 +169,7 @@ export function useAnalytics({
     }
   }, [paramDefs, strategyParams, config, code, optimizeMethod, optConstraints, showConstraints, heatmapParamX, heatmapParamY, multiObjMetrics]);
 
-  // ─── Walk-forward ──────────────────────────────────────────────────
+  // Walk-forward
 
   const handleRunWalkForward = useCallback(async () => {
     setWalkForwardLoading(true);
@@ -199,7 +199,7 @@ export function useAnalytics({
     }
   }, [code, config, walkForwardPurgeBars, walkForwardWindowMode]);
 
-  // ─── Out-of-sample ─────────────────────────────────────────────────
+  // Out-of-sample
 
   const handleRunOos = useCallback(async () => {
     setOosLoading(true);
@@ -229,7 +229,7 @@ export function useAnalytics({
     }
   }, [code, config, oosNfolds, paramDefs]);
 
-  // ─── CPCV ──────────────────────────────────────────────────────────
+  // CPCV
 
   const handleRunCpcv = useCallback(async () => {
     setCpcvLoading(true);
@@ -261,7 +261,7 @@ export function useAnalytics({
     }
   }, [code, config, cpcvNGroups, cpcvPurgeBars, paramDefs]);
 
-  // ─── Factor attribution ────────────────────────────────────────────
+  // Factor attribution
 
   const handleRunFactorAttribution = useCallback(async () => {
     if (!lastBacktestId) return;
@@ -278,7 +278,7 @@ export function useAnalytics({
     }
   }, [lastBacktestId]);
 
-  // ─── Monte Carlo ───────────────────────────────────────────────────
+  // Monte Carlo
 
   const handleRunMonteCarlo = useCallback(async () => {
     if (!lastBacktestId) return;

@@ -16,12 +16,10 @@ import {
   usePlotArea,
   useYAxisDomain,
 } from 'recharts';
-import { ChevronDown, ZoomIn, ZoomOut, Maximize2, CircleOff, TrendingUp, TrendingDown } from 'lucide-react';
+import { ChevronDown, ZoomIn, ZoomOut, Maximize2, CircleOff } from 'lucide-react';
 import api from '@/lib/api';
 
-// ============================================================================
-// Type Exports
-// ============================================================================
+// Type exports
 
 export type ChartType =
   | 'candles'
@@ -50,13 +48,21 @@ export interface DrawdownPoint {
 
 export type ChartTheme = 'light' | 'dark';
 
+export interface ActiveMAs {
+  sma9: boolean; sma20: boolean; sma50: boolean; sma100: boolean; sma200: boolean;
+  ema12: boolean; ema26: boolean; ema50: boolean;
+}
+
+export const DEFAULT_ACTIVE_MAS: ActiveMAs = {
+  sma9: false, sma20: false, sma50: false, sma100: false, sma200: false,
+  ema12: false, ema26: false, ema50: false,
+};
+
 export interface AssetChartProps {
   symbol: string;
   startDate: string;
   endDate: string;
   interval?: string;
-  showIndicators?: { ma20: boolean; ma50: boolean };
-  onIndicatorsChange?: (indicators: { ma20: boolean; ma50: boolean }) => void;
   trades?: TradeMarker[];
   equityCurve?: EquityCurvePoint[];
   drawdownSeries?: DrawdownPoint[];
@@ -72,13 +78,17 @@ export interface PriceDataPoint {
   close: number;
   volume: number;
   return: number;
-  ma20?: number;
-  ma50?: number;
+  sma9?: number;
+  sma20?: number;
+  sma50?: number;
+  sma100?: number;
+  sma200?: number;
+  ema12?: number;
+  ema26?: number;
+  ema50?: number;
 }
 
-// ============================================================================
-// Chart Type Definitions & Icons
-// ============================================================================
+// Chart types and icons
 
 function CandleIcon() {
   return (
@@ -162,15 +172,13 @@ const CHART_TYPES: { value: ChartType; label: string; icon: React.ReactNode }[] 
   { value: 'baseline', label: 'Baseline', icon: <BaselineChartIcon /> },
 ];
 
-// ============================================================================
-// Interval & Helpers
-// ============================================================================
+// Interval and helpers
 
 function isIntraday(interval: string): boolean {
   return interval !== '1d';
 }
 
-/** Optimal chart type per asset class */
+/** Pick chart type based on symbol (forex, crypto, indices, etc) */
 function getOptimalChartType(symbol: string): ChartType {
   const s = symbol.toUpperCase();
   if (s.endsWith('=X')) return 'ohlcBars';  // Forex
@@ -180,9 +188,7 @@ function getOptimalChartType(symbol: string): ChartType {
   return 'candles';  // Stocks
 }
 
-// ============================================================================
-// Smart X-Axis Tick Formatter (TradingView-style)
-// ============================================================================
+// Smart x-axis tick formatter (TradingView-style)
 
 function createSmartTickFormatter(interval: string, data: PriceDataPoint[]) {
   const dayStarts = new Set<string>();
@@ -220,9 +226,7 @@ function createSmartTickFormatter(interval: string, data: PriceDataPoint[]) {
   };
 }
 
-// ============================================================================
-// Session Boundaries (for intraday dividers)
-// ============================================================================
+// Session boundaries for intraday dividers
 
 function getSessionBoundaries(data: PriceDataPoint[]): string[] {
   const boundaries: string[] = [];
@@ -235,9 +239,7 @@ function getSessionBoundaries(data: PriceDataPoint[]): string[] {
   return boundaries;
 }
 
-// ============================================================================
-// Heikin-Ashi Data Transformation
-// ============================================================================
+// Heikin-Ashi transform
 
 function computeHeikinAshi(data: PriceDataPoint[]): PriceDataPoint[] {
   if (data.length === 0) return [];
@@ -259,27 +261,44 @@ function computeHeikinAshi(data: PriceDataPoint[]): PriceDataPoint[] {
   return ha;
 }
 
-// ============================================================================
-// Moving Averages
-// ============================================================================
+// Moving averages
+
+function sma(data: PriceDataPoint[], period: number, key: keyof PriceDataPoint) {
+  for (let i = period - 1; i < data.length; i++) {
+    const sum = data.slice(i - period + 1, i + 1).reduce((acc, d) => acc + d.close, 0);
+    (data[i] as any)[key] = parseFloat((sum / period).toFixed(2));
+  }
+}
+
+function ema(data: PriceDataPoint[], period: number, key: keyof PriceDataPoint) {
+  const alpha = 2 / (period + 1);
+  let prev: number | null = null;
+  for (let i = 0; i < data.length; i++) {
+    if (i < period - 1) continue;
+    if (prev === null) {
+      // Seed with SMA of first `period` bars
+      const seed = data.slice(0, period).reduce((acc, d) => acc + d.close, 0) / period;
+      prev = seed;
+    }
+    const val = parseFloat((alpha * data[i].close + (1 - alpha) * prev).toFixed(2));
+    (data[i] as any)[key] = val;
+    prev = val;
+  }
+}
 
 function addMovingAverages(data: PriceDataPoint[]): PriceDataPoint[] {
-  for (let i = 0; i < data.length; i++) {
-    if (i >= 19) {
-      const sum20 = data.slice(i - 19, i + 1).reduce((acc, d) => acc + d.close, 0);
-      data[i].ma20 = parseFloat((sum20 / 20).toFixed(2));
-    }
-    if (i >= 49) {
-      const sum50 = data.slice(i - 49, i + 1).reduce((acc, d) => acc + d.close, 0);
-      data[i].ma50 = parseFloat((sum50 / 50).toFixed(2));
-    }
-  }
+  sma(data, 9, 'sma9');
+  sma(data, 20, 'sma20');
+  sma(data, 50, 'sma50');
+  sma(data, 100, 'sma100');
+  sma(data, 200, 'sma200');
+  ema(data, 12, 'ema12');
+  ema(data, 26, 'ema26');
+  ema(data, 50, 'ema50');
   return data;
 }
 
-// ============================================================================
-// Price Bars Layer (Candlestick / Hollow / OHLC)
-// ============================================================================
+// Price bars (candlestick, hollow, OHLC)
 
 const BULL_COLOR = '#26a69a';
 const BEAR_COLOR = '#ef5350';
@@ -289,7 +308,7 @@ const SELL_GLOW = '#f59e0b';
 
 export type TradeMarkerStyle = 'none' | 'dot' | 'pro' | 'box';
 
-/** Trade markers: supports none, dot, pro (TradingView-style), or box style */
+/** Trade markers: none, dot, pro (TradingView), or box */
 function TradeMarkersLayer({
   trades,
   data,
@@ -444,9 +463,7 @@ function PriceBarsLayer({ data, chartType }: { data: PriceDataPoint[]; chartType
   );
 }
 
-// ============================================================================
-// Crosshair Cursor
-// ============================================================================
+// Crosshair cursor
 
 function CustomCursor({ points, width, height }: any) {
   if (!points || !points.length) return null;
@@ -460,12 +477,10 @@ function CustomCursor({ points, width, height }: any) {
   );
 }
 
-// ============================================================================
-// TradingView-Style Tooltip
-// ============================================================================
+// TradingView-style tooltip
 
-function TradingViewTooltip({ active, payload, interval, activeIndicators, showPerfOverlay, showDrawdownOverlay, tc }: {
-  active?: boolean; payload?: any[]; interval: string; activeIndicators: { ma20: boolean; ma50: boolean };
+function TradingViewTooltip({ active, payload, interval, activeMAs, showPerfOverlay, showDrawdownOverlay, tc }: {
+  active?: boolean; payload?: any[]; interval: string; activeMAs: ActiveMAs;
   showPerfOverlay?: boolean; showDrawdownOverlay?: boolean;
   tc: { tooltipBg: string; tooltipBorder: string; tooltipText: string; tooltipTextMuted: string };
 }) {
@@ -508,10 +523,11 @@ function TradingViewTooltip({ active, payload, interval, activeIndicators, showP
           {d.volume >= 1_000_000 ? `${(d.volume / 1_000_000).toFixed(2)}M` : d.volume >= 1_000 ? `${(d.volume / 1_000).toFixed(1)}K` : d.volume.toLocaleString()}
         </span>
       </div>
-      {(activeIndicators.ma20 || activeIndicators.ma50) && (
-        <div className="mt-1.5 pt-1.5 flex gap-3 font-sans text-[11px]" style={{ borderTop: `1px solid ${tc.tooltipBorder}` }}>
-          {d.ma20 !== undefined && activeIndicators.ma20 && <span className="text-blue-400">MA20: {fmt(d.ma20)}</span>}
-          {d.ma50 !== undefined && activeIndicators.ma50 && <span className="text-orange-400">MA50: {fmt(d.ma50)}</span>}
+      {MA_OPTIONS.some((o) => activeMAs[o.key] && (d as any)[o.key] !== undefined) && (
+        <div className="mt-1.5 pt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 font-sans text-[11px]" style={{ borderTop: `1px solid ${tc.tooltipBorder}` }}>
+          {MA_OPTIONS.filter((o) => activeMAs[o.key] && (d as any)[o.key] !== undefined).map((o) => (
+            <span key={o.key} style={{ color: o.color }}>{o.label}: {fmt((d as any)[o.key])}</span>
+          ))}
         </div>
       )}
       <div className="mt-1.5 pt-1.5 flex items-center justify-between font-sans text-[11px]" style={{ borderTop: `1px solid ${tc.tooltipBorder}` }}>
@@ -560,9 +576,7 @@ function TradingViewTooltip({ active, payload, interval, activeIndicators, showP
   );
 }
 
-// ============================================================================
-// Trade Marker Style Selector
-// ============================================================================
+// Trade marker style selector
 
 function DotMarkerIcon() {
   return (
@@ -636,9 +650,7 @@ function TradeMarkerStyleSelector({ value, onChange, hasTrades, chartTheme }: { 
   );
 }
 
-// ============================================================================
-// Chart Type Selector Dropdown
-// ============================================================================
+// Chart type selector
 
 function ChartTypeSelector({ value, onChange, chartTheme }: { value: ChartType; onChange: (ct: ChartType) => void; chartTheme: ChartTheme }) {
   const [open, setOpen] = useState(false);
@@ -680,9 +692,237 @@ function ChartTypeSelector({ value, onChange, chartTheme }: { value: ChartType; 
   );
 }
 
-// ============================================================================
-// Main Component
-// ============================================================================
+// Charts dropdown (overlays + trade markers)
+
+interface ChartsDropdownProps {
+  hasEquity: boolean;
+  hasBenchmark: boolean;
+  hasDrawdown: boolean;
+  showEquity: boolean; onEquityChange: (v: boolean) => void;
+  showBenchmark: boolean; onBenchmarkChange: (v: boolean) => void;
+  showDrawdown: boolean; onDrawdownChange: (v: boolean) => void;
+  hasTrades: boolean;
+  showEntries: boolean; onEntriesChange: (v: boolean) => void;
+  showExits: boolean; onExitsChange: (v: boolean) => void;
+  chartTheme: ChartTheme;
+}
+
+function ChartsDropdown({
+  hasEquity, hasBenchmark, hasDrawdown,
+  showEquity, onEquityChange,
+  showBenchmark, onBenchmarkChange,
+  showDrawdown, onDrawdownChange,
+  hasTrades,
+  showEntries, onEntriesChange,
+  showExits, onExitsChange,
+  chartTheme,
+}: ChartsDropdownProps) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const activeCount = [
+    hasEquity && showEquity,
+    hasBenchmark && showBenchmark,
+    hasDrawdown && showDrawdown,
+    hasTrades && showEntries,
+    hasTrades && showExits,
+  ].filter(Boolean).length;
+
+  const isDark = chartTheme === 'dark';
+  const menuCls = isDark ? 'bg-gray-900 border-gray-700 text-gray-300' : 'bg-white border-gray-200 text-gray-700';
+  const sectionCls = isDark ? 'text-gray-500' : 'text-gray-400';
+  const itemHover = isDark ? 'hover:bg-gray-800/70 hover:text-gray-100' : 'hover:bg-gray-50 hover:text-gray-900';
+  const sepCls = isDark ? 'border-gray-800' : 'border-gray-100';
+
+  function CB({ on, color }: { on: boolean; color: string }) {
+    return (
+      <span className="w-3.5 h-3.5 flex-shrink-0 rounded-[3px] border flex items-center justify-center transition-colors"
+        style={{ background: on ? color : 'transparent', borderColor: on ? color : isDark ? '#4b5563' : '#d1d5db' }}>
+        {on && <svg width="8" height="8" viewBox="0 0 8 8"><polyline points="1,4 3,6 7,1.5" stroke="#fff" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+      </span>
+    );
+  }
+
+  function ColorLine({ color, dashed }: { color: string; dashed?: boolean }) {
+    return (
+      <span className="w-4 h-0.5 rounded flex-shrink-0" style={{
+        background: dashed ? 'none' : color,
+        borderTop: dashed ? `2px dashed ${color}` : undefined,
+        opacity: dashed ? 0.8 : 1,
+      }} />
+    );
+  }
+
+  function Badge({ label }: { label: string }) {
+    return (
+      <span className={`text-[10px] px-1.5 py-0 rounded font-mono ${isDark ? 'bg-gray-800 text-gray-500' : 'bg-gray-100 text-gray-400'}`}>{label}</span>
+    );
+  }
+
+  function Item({ on, onToggle, color, dashed, label, badge, icon }: {
+    on: boolean; onToggle: () => void; color: string; dashed?: boolean;
+    label: string; badge?: string; icon?: React.ReactNode;
+  }) {
+    return (
+      <button onClick={onToggle}
+        className={`w-full flex items-center justify-between px-2.5 py-1.5 text-[11px] rounded-md transition-colors gap-4 ${itemHover}`}>
+        <span className="flex items-center gap-1.5 min-w-0">
+          <CB on={on} color={color} />
+          {icon ?? <ColorLine color={color} dashed={dashed} />}
+          <span className="truncate">{label}</span>
+        </span>
+        {badge && <Badge label={badge} />}
+      </button>
+    );
+  }
+
+  const showSection = hasEquity || hasBenchmark || hasDrawdown || hasTrades;
+  if (!showSection) return null;
+
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1.5 h-7 px-2 rounded-md border transition-all text-[11px] ${
+          isDark
+            ? `border-gray-700 bg-gray-800/80 hover:border-gray-600 text-gray-300 ${open ? 'border-gray-600' : ''}`
+            : `border-gray-200 bg-white/90 hover:border-gray-300 text-gray-700 ${open ? 'border-gray-300' : ''}`
+        }`}>
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><polyline points="1,10 4,6 6.5,8 10,3 13,4" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        <span>Overlays</span>
+        {activeCount > 0 && (
+          <span className="text-[10px] px-1.5 py-0 rounded font-medium" style={{ background: isDark ? '#14532d' : '#dcfce7', color: isDark ? '#4ade80' : '#166534' }}>{activeCount}</span>
+        )}
+        <ChevronDown size={11} className={`text-gray-500 transition-transform flex-shrink-0 ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className={`absolute top-full right-0 mt-1.5 z-50 rounded-lg shadow-xl border min-w-[208px] p-1 ${menuCls}`}>
+          {(hasEquity || hasBenchmark || hasDrawdown) && (
+            <>
+              <div className={`px-2.5 py-1 text-[10px] font-medium uppercase tracking-wider ${sectionCls}`}>Performance</div>
+              {hasEquity && <Item on={showEquity} onToggle={() => onEquityChange(!showEquity)} color="#1D9E75" label="Equity curve" badge="PnL" />}
+              {hasBenchmark && <Item on={showBenchmark} onToggle={() => onBenchmarkChange(!showBenchmark)} color="#6366f1" dashed label="vs Benchmark" badge="rel" />}
+              {hasDrawdown && <Item on={showDrawdown} onToggle={() => onDrawdownChange(!showDrawdown)} color="#e53935" label="Drawdown" badge="%" />}
+            </>
+          )}
+          {hasTrades && (hasEquity || hasBenchmark || hasDrawdown) && <div className={`my-1 border-t ${sepCls}`} />}
+          {hasTrades && (
+            <>
+              <div className={`px-2.5 py-1 text-[10px] font-medium uppercase tracking-wider ${sectionCls}`}>Trade Markers</div>
+              <Item on={showEntries} onToggle={() => onEntriesChange(!showEntries)} color="#1D9E75" label="Entry signals"
+                icon={<svg width="10" height="10" viewBox="0 0 10 10" className="flex-shrink-0"><polygon points="5,1 9,9 1,9" fill="#1D9E75" /></svg>} />
+              <Item on={showExits} onToggle={() => onExitsChange(!showExits)} color="#e53935" label="Exit signals"
+                icon={<svg width="10" height="10" viewBox="0 0 10 10" className="flex-shrink-0"><polygon points="5,9 9,1 1,1" fill="#e53935" /></svg>} />
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// MA dropdown
+
+const MA_OPTIONS = [
+  { key: 'sma9'  as keyof ActiveMAs, label: 'SMA 9',   color: '#f59e0b', hint: 'scalp', section: 'sma' },
+  { key: 'sma20' as keyof ActiveMAs, label: 'SMA 20',  color: '#10b981', hint: 'short', section: 'sma' },
+  { key: 'sma50' as keyof ActiveMAs, label: 'SMA 50',  color: '#6366f1', hint: 'mid',   section: 'sma' },
+  { key: 'sma100'as keyof ActiveMAs, label: 'SMA 100', color: '#0ea5e9', hint: '',       section: 'sma' },
+  { key: 'sma200'as keyof ActiveMAs, label: 'SMA 200', color: '#e53935', hint: 'long',  section: 'sma' },
+  { key: 'ema12' as keyof ActiveMAs, label: 'EMA 12',  color: '#f97316', hint: 'fast',  section: 'ema' },
+  { key: 'ema26' as keyof ActiveMAs, label: 'EMA 26',  color: '#8b5cf6', hint: 'slow',  section: 'ema' },
+  { key: 'ema50' as keyof ActiveMAs, label: 'EMA 50',  color: '#ec4899', hint: '',       section: 'ema' },
+];
+
+function MADropdown({ activeMAs, onChange, chartTheme }: { activeMAs: ActiveMAs; onChange: (v: ActiveMAs) => void; chartTheme: ChartTheme }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const activeCount = MA_OPTIONS.filter((o) => activeMAs[o.key]).length;
+  const isDark = chartTheme === 'dark';
+  const menuCls = isDark ? 'bg-gray-900 border-gray-700 text-gray-300' : 'bg-white border-gray-200 text-gray-700';
+  const sectionCls = isDark ? 'text-gray-500' : 'text-gray-400';
+  const itemHover = isDark ? 'hover:bg-gray-800/70 hover:text-gray-100' : 'hover:bg-gray-50 hover:text-gray-900';
+  const sepCls = isDark ? 'border-gray-800' : 'border-gray-100';
+
+  const toggle = (key: keyof ActiveMAs) => onChange({ ...activeMAs, [key]: !activeMAs[key] });
+
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1.5 h-7 px-2 rounded-md border transition-all text-[11px] ${
+          isDark
+            ? `border-gray-700 bg-gray-800/80 hover:border-gray-600 text-gray-300 ${open ? 'border-gray-600' : ''}`
+            : `border-gray-200 bg-white/90 hover:border-gray-300 text-gray-700 ${open ? 'border-gray-300' : ''}`
+        }`}>
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><polyline points="1,10 3.5,6 6.5,7.5 9.5,4 13,5" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        <span>Avgs</span>
+        {activeCount > 0 && (
+          <span className="text-[10px] px-1.5 py-0 rounded font-medium" style={{ background: isDark ? '#14532d' : '#dcfce7', color: isDark ? '#4ade80' : '#166534' }}>{activeCount}</span>
+        )}
+        <ChevronDown size={11} className={`text-gray-500 transition-transform flex-shrink-0 ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className={`absolute top-full right-0 mt-1.5 z-50 rounded-lg shadow-xl border min-w-[184px] p-1 ${menuCls}`}>
+          <div className={`px-2.5 py-1 text-[10px] font-medium uppercase tracking-wider ${sectionCls}`}>Simple (SMA)</div>
+          {MA_OPTIONS.filter((o) => o.section === 'sma').map((opt) => {
+            const on = activeMAs[opt.key];
+            return (
+              <button key={opt.key} onClick={() => toggle(opt.key)}
+                className={`w-full flex items-center justify-between px-2.5 py-1.5 text-[11px] rounded-md transition-colors gap-4 ${itemHover}`}>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3.5 h-3.5 flex-shrink-0 rounded-[3px] border flex items-center justify-center transition-colors"
+                    style={{ background: on ? opt.color : 'transparent', borderColor: on ? opt.color : isDark ? '#4b5563' : '#d1d5db' }}>
+                    {on && <svg width="8" height="8" viewBox="0 0 8 8"><polyline points="1,4 3,6 7,1.5" stroke="#fff" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                  </span>
+                  <span className="w-4 h-0.5 rounded flex-shrink-0" style={{ background: opt.color }} />
+                  <span>{opt.label}</span>
+                </span>
+                {opt.hint && <span className={`text-[10px] font-mono ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>{opt.hint}</span>}
+              </button>
+            );
+          })}
+          <div className={`my-1 border-t ${sepCls}`} />
+          <div className={`px-2.5 py-1 text-[10px] font-medium uppercase tracking-wider ${sectionCls}`}>Exponential (EMA)</div>
+          {MA_OPTIONS.filter((o) => o.section === 'ema').map((opt) => {
+            const on = activeMAs[opt.key];
+            return (
+              <button key={opt.key} onClick={() => toggle(opt.key)}
+                className={`w-full flex items-center justify-between px-2.5 py-1.5 text-[11px] rounded-md transition-colors gap-4 ${itemHover}`}>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3.5 h-3.5 flex-shrink-0 rounded-[3px] border flex items-center justify-center transition-colors"
+                    style={{ background: on ? opt.color : 'transparent', borderColor: on ? opt.color : isDark ? '#4b5563' : '#d1d5db' }}>
+                    {on && <svg width="8" height="8" viewBox="0 0 8 8"><polyline points="1,4 3,6 7,1.5" stroke="#fff" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                  </span>
+                  <span className="w-4 h-0.5 rounded flex-shrink-0" style={{ background: opt.color }} />
+                  <span>{opt.label}</span>
+                </span>
+                {opt.hint && <span className={`text-[10px] font-mono ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>{opt.hint}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Main component
 
 const CHART_THEME_COLORS: Record<ChartTheme, { grid: string; axis: string; axisTick: string; volume: string; sessionBoundary: string; baseline: string; markerStroke: string; tooltipBg: string; tooltipBorder: string; tooltipText: string; tooltipTextMuted: string; controlBg: string; controlBorder: string; controlText: string; controlTextMuted: string }> = {
   dark: {
@@ -726,8 +966,6 @@ export default function AssetChart({
   startDate,
   endDate,
   interval = '1d',
-  showIndicators = { ma20: false, ma50: false },
-  onIndicatorsChange,
   trades = [],
   equityCurve,
   drawdownSeries,
@@ -735,15 +973,17 @@ export default function AssetChart({
   chartTheme = 'dark',
 }: AssetChartProps) {
   const tc = CHART_THEME_COLORS[chartTheme];
-  const [internalIndicators, setInternalIndicators] = useState(showIndicators);
+  const [activeMAs, setActiveMAs] = useState<ActiveMAs>(DEFAULT_ACTIVE_MAS);
   const [realData, setRealData] = useState<PriceDataPoint[] | null>(null);
   const [effectiveInterval, setEffectiveInterval] = useState<string | undefined>(undefined);
   const [dataLoading, setDataLoading] = useState(false);
   const [chartType, setChartType] = useState<ChartType>(() => getOptimalChartType(symbol));
-  const [tradeMarkerStyle, setTradeMarkerStyle] = useState<TradeMarkerStyle>('pro');
+  const [tradeMarkerStyle] = useState<TradeMarkerStyle>('pro');
   const [showEquityOverlay, setShowEquityOverlay] = useState(true);
   const [showBenchmarkOverlay, setShowBenchmarkOverlay] = useState(true);
   const [showDrawdownOverlay, setShowDrawdownOverlay] = useState(false);
+  const [showEntrySignals, setShowEntrySignals] = useState(true);
+  const [showExitSignals, setShowExitSignals] = useState(true);
 
   // Auto-switch chart type when symbol (asset) changes
   useEffect(() => {
@@ -758,14 +998,6 @@ export default function AssetChart({
   const viewStartRef = useRef(0);
   const viewEndRef = useRef(0);
   const dataLenRef = useRef(0);
-
-  const activeIndicators = onIndicatorsChange ? showIndicators : internalIndicators;
-
-  const handleIndicatorToggle = (indicator: 'ma20' | 'ma50') => {
-    const newIndicators = { ...activeIndicators, [indicator]: !activeIndicators[indicator] };
-    if (onIndicatorsChange) onIndicatorsChange(newIndicators);
-    else setInternalIndicators(newIndicators);
-  };
 
   const fetchKey = `${symbol}|${startDate}|${endDate}|${interval}`;
 
@@ -1176,64 +1408,54 @@ export default function AssetChart({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
       >
-        {/* TradingView-style floating toolbar - top right, packed over chart */}
-        <div className="absolute top-3 right-4 z-20 flex items-center gap-1.5 flex-wrap justify-end pointer-events-auto">
-          <div className="flex items-center gap-1 rounded-lg border backdrop-blur-sm px-2 py-1 shadow-lg" style={{ borderColor: tc.controlBorder, backgroundColor: tc.controlBg }} data-testid="chart-controls">
+        {/* TradingView-style floating toolbar - top right */}
+        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+        <div className="absolute top-3 right-4 z-20 flex items-center gap-1.5 flex-wrap justify-end pointer-events-auto" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-1 rounded-lg border backdrop-blur-sm px-1.5 py-1 shadow-lg" style={{ borderColor: tc.controlBorder, backgroundColor: tc.controlBg }} data-testid="chart-controls">
+            {/* Chart type dropdown */}
             <ChartTypeSelector value={chartType} onChange={setChartType} chartTheme={chartTheme} />
-            <TradeMarkerStyleSelector value={tradeMarkerStyle} onChange={setTradeMarkerStyle} hasTrades={tradeMarkers.length > 0} chartTheme={chartTheme} />
-            {equityCurve?.length && (
-              <button onClick={() => setShowEquityOverlay((v) => !v)} title={showEquityOverlay ? 'Hide equity' : 'Show equity'}
-                className={`flex items-center gap-1 h-7 px-2 rounded text-[11px] font-medium transition-all ${
-                  showEquityOverlay ? 'bg-emerald-500/20 text-emerald-400' : chartTheme === 'light' ? 'text-gray-500 hover:text-gray-700' : 'text-gray-500 hover:text-gray-300'
-                }`}>
-                <TrendingUp className="h-3.5 w-3.5" /><span className="hidden sm:inline">Equity</span>
-              </button>
+            {/* Overlays dropdown — only shown when there is overlay data available */}
+            {(Boolean(equityCurve?.length) || benchmarkReturn != null || Boolean(drawdownSeries?.length) || tradeMarkers.length > 0) && (
+              <>
+                <div className={`h-4 w-px self-center mx-0.5 ${chartTheme === 'light' ? 'bg-gray-200' : 'bg-gray-700/60'}`} aria-hidden />
+                <ChartsDropdown
+                  hasEquity={Boolean(equityCurve?.length)}
+                  hasBenchmark={benchmarkReturn != null}
+                  hasDrawdown={Boolean(drawdownSeries?.length)}
+                  showEquity={showEquityOverlay} onEquityChange={setShowEquityOverlay}
+                  showBenchmark={showBenchmarkOverlay} onBenchmarkChange={setShowBenchmarkOverlay}
+                  showDrawdown={showDrawdownOverlay} onDrawdownChange={setShowDrawdownOverlay}
+                  hasTrades={tradeMarkers.length > 0}
+                  showEntries={showEntrySignals} onEntriesChange={setShowEntrySignals}
+                  showExits={showExitSignals} onExitsChange={setShowExitSignals}
+                  chartTheme={chartTheme}
+                />
+              </>
             )}
-            {equityCurve?.length && benchmarkReturn != null && (
-              <button onClick={() => setShowBenchmarkOverlay((v) => !v)} title={showBenchmarkOverlay ? 'Hide benchmark' : 'Show benchmark'}
-                className={`flex items-center gap-1 h-7 px-2 rounded text-[11px] font-medium transition-all ${
-                  showBenchmarkOverlay ? 'bg-emerald-500/20 text-emerald-400' : chartTheme === 'light' ? 'text-gray-500 hover:text-gray-700' : 'text-gray-500 hover:text-gray-300'
-                }`}>
-                <svg width="12" height="10" viewBox="0 0 14 12" className="flex-shrink-0"><path d="M1 9 L4 5 L7 8 L11 2 L13 4" stroke="currentColor" strokeWidth={1.2} fill="none" /><path d="M1 11 L4 9 L7 11 L11 7 L13 9" stroke="currentColor" strokeWidth={0.8} fill="none" strokeDasharray="2 2" opacity={0.7} /></svg>
-                <span className="hidden sm:inline">vs Bench</span>
-              </button>
-            )}
-            {drawdownSeries?.length && (
-              <button onClick={() => setShowDrawdownOverlay((v) => !v)} title={showDrawdownOverlay ? 'Hide drawdown' : 'Show drawdown'}
-                className={`flex items-center gap-1 h-7 px-2 rounded text-[11px] font-medium transition-all ${
-                  showDrawdownOverlay ? 'bg-amber-500/20 text-amber-400' : chartTheme === 'light' ? 'text-gray-500 hover:text-gray-700' : 'text-gray-500 hover:text-gray-300'
-                }`}>
-                <TrendingDown className="h-3.5 w-3.5" /><span className="hidden sm:inline">DD</span>
-              </button>
-            )}
-            <div className={`h-4 w-px self-center ${chartTheme === 'light' ? 'bg-gray-300' : 'bg-gray-600/60'}`} aria-hidden />
-            <div className="flex items-center gap-1" data-testid="indicator-toggles">
-            <button onClick={() => handleIndicatorToggle('ma20')}
-              className={`h-7 px-2 rounded text-[11px] font-medium transition-all ${
-                activeIndicators.ma20 ? 'bg-blue-500/20 text-blue-400' : chartTheme === 'light' ? 'text-gray-500 hover:text-gray-700' : 'text-gray-500 hover:text-gray-300'
-              }`} data-testid="indicator-ma20">MA20</button>
-            <button onClick={() => handleIndicatorToggle('ma50')}
-              className={`h-7 px-2 rounded text-[11px] font-medium transition-all ${
-                activeIndicators.ma50 ? 'bg-orange-500/20 text-orange-400' : chartTheme === 'light' ? 'text-gray-500 hover:text-gray-700' : 'text-gray-500 hover:text-gray-300'
-              }`} data-testid="indicator-ma50">MA50</button>
-          </div>
-            <div className={`h-4 w-px self-center ${chartTheme === 'light' ? 'bg-gray-300' : 'bg-gray-600/60'}`} aria-hidden />
-            <button onClick={zoomIn} title="Zoom In" className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${chartTheme === 'light' ? 'text-gray-500 hover:text-gray-800' : 'text-gray-500 hover:text-gray-200'}`}>
-            <ZoomIn size={14} />
-          </button>
-            <button onClick={zoomOut} title="Zoom Out" className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${chartTheme === 'light' ? 'text-gray-500 hover:text-gray-800' : 'text-gray-500 hover:text-gray-200'}`}>
-            <ZoomOut size={14} />
-          </button>
-          {isZoomed && (
-              <button onClick={resetZoom} title="Reset Zoom" className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${chartTheme === 'light' ? 'text-gray-500 hover:text-gray-800' : 'text-gray-500 hover:text-gray-200'}`}>
-              <Maximize2 size={14} />
+            {/* Separator */}
+            <div className={`h-4 w-px self-center mx-0.5 ${chartTheme === 'light' ? 'bg-gray-200' : 'bg-gray-700/60'}`} aria-hidden />
+            {/* Avgs dropdown */}
+            <MADropdown activeMAs={activeMAs} onChange={setActiveMAs} chartTheme={chartTheme} />
+            {/* Separator */}
+            <div className={`h-4 w-px self-center mx-0.5 ${chartTheme === 'light' ? 'bg-gray-200' : 'bg-gray-700/60'}`} aria-hidden />
+            {/* Zoom In */}
+            <button onClick={zoomIn} title="Zoom In" className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${chartTheme === 'light' ? 'text-gray-500 hover:text-gray-800 hover:bg-gray-100' : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800/60'}`}>
+              <ZoomIn size={14} />
             </button>
-          )}
+            {/* Zoom Out */}
+            <button onClick={zoomOut} title="Zoom Out" className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${chartTheme === 'light' ? 'text-gray-500 hover:text-gray-800 hover:bg-gray-100' : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800/60'}`}>
+              <ZoomOut size={14} />
+            </button>
+            {isZoomed && (
+              <button onClick={resetZoom} title="Reset Zoom" className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${chartTheme === 'light' ? 'text-gray-500 hover:text-gray-800 hover:bg-gray-100' : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800/60'}`}>
+                <Maximize2 size={14} />
+              </button>
+            )}
             {isZoomed && <span className={`text-[10px] px-0.5 ${chartTheme === 'light' ? 'text-gray-600' : 'text-gray-500'}`}>{data.length}/{transformedData.length}</span>}
-        </div>
+          </div>
           {dataLoading && <span className={`text-[10px] animate-pulse px-2 py-0.5 rounded ${chartTheme === 'light' ? 'text-gray-600 bg-white/80' : 'text-gray-500 bg-gray-900/80'}`}>Loading…</span>}
           {!realData && !dataLoading && data.length === 0 && <span className={`text-[10px] text-amber-500/90 px-2 py-0.5 rounded ${chartTheme === 'light' ? 'bg-white/80' : 'bg-gray-900/80'}`}>No data</span>}
-      </div>
+        </div>
 
         {/* Placeholder when no real data - never show mock */}
         {!realData && (
@@ -1244,7 +1466,7 @@ export default function AssetChart({
           </div>
         )}
         <ResponsiveContainer width="100%" height="100%" minHeight={200}>
-          <ComposedChart data={chartData} margin={{ top: 20, right: (hasPerfOverlay && hasDrawdownOverlay) ? 95 : (hasPerfOverlay || hasDrawdownOverlay) ? 55 : 70, left: 10, bottom: 20 }}>
+          <ComposedChart data={chartData} margin={{ top: 20, right: 4, left: 10, bottom: 20 }}>
             <defs>
               <filter id="trade-buy-glow" x="-30%" y="-30%" width="160%" height="160%">
                 <feDropShadow dx="0" dy="0" stdDeviation="2" floodColor={BUY_GLOW} floodOpacity="0.7" />
@@ -1286,21 +1508,22 @@ export default function AssetChart({
                 return v.toFixed(v >= 100 ? 0 : 2);
               }}
               width={55} tick={{ fill: tc.axisTick }} />
-            <YAxis yAxisId="volume" orientation="right" domain={[0, maxVolume * 4]} hide />
-            {hasPerfOverlay && (
-              <YAxis yAxisId="perf" orientation="right" stroke={tc.axisTick} fontSize={9} tickLine={false} axisLine={{ stroke: hasDrawdownOverlay ? '#10b98140' : tc.sessionBoundary }}
-                domain={perfDomain}
-                tickFormatter={(v: number) => `${v >= 100 ? '+' : ''}${(v - 100).toFixed(0)}%`}
-                width={40} tick={{ fill: hasDrawdownOverlay ? '#10b981' : '#6b7280' }} />
-            )}
-            {hasDrawdownOverlay && (
-              <YAxis yAxisId="dd" orientation="right" stroke={tc.axisTick} fontSize={9} tickLine={false} axisLine={{ stroke: hasPerfOverlay ? '#f59e0b60' : tc.sessionBoundary }}
-                domain={ddDomain}
-                tickFormatter={(v: number) => `${v}%`}
-                width={40} tick={{ fill: '#f59e0b' }} />
-            )}
+            <YAxis yAxisId="volume" orientation="right" domain={[0, maxVolume * 4]} hide width={0} />
+            {/* Always-rendered right axes — fixed width keeps plot area stable when toggling overlays */}
+            <YAxis yAxisId="perf" orientation="right" fontSize={9} tickLine={false}
+              axisLine={hasPerfOverlay ? { stroke: hasDrawdownOverlay ? '#10b98140' : tc.sessionBoundary } : false}
+              domain={perfDomain}
+              tickFormatter={(v: number) => hasPerfOverlay ? `${v >= 100 ? '+' : ''}${(v - 100).toFixed(0)}%` : ''}
+              width={44}
+              tick={hasPerfOverlay ? { fill: hasDrawdownOverlay ? '#10b981' : '#6b7280' } : false} />
+            <YAxis yAxisId="dd" orientation="right" fontSize={9} tickLine={false}
+              axisLine={hasDrawdownOverlay ? { stroke: hasPerfOverlay ? '#f59e0b60' : tc.sessionBoundary } : false}
+              domain={ddDomain}
+              tickFormatter={(v: number) => hasDrawdownOverlay ? `${v}%` : ''}
+              width={44}
+              tick={hasDrawdownOverlay ? { fill: '#f59e0b' } : false} />
 
-            <Tooltip content={(props: any) => <TradingViewTooltip {...props} interval={interval} activeIndicators={activeIndicators} showPerfOverlay={hasPerfOverlay} showDrawdownOverlay={hasDrawdownOverlay} tc={tc} />}
+            <Tooltip content={(props: any) => <TradingViewTooltip {...props} interval={interval} activeMAs={activeMAs} showPerfOverlay={hasPerfOverlay} showDrawdownOverlay={hasDrawdownOverlay} tc={tc} />}
               cursor={<CustomCursor />} isAnimationActive={false} />
 
             {data.length > 0 && (
@@ -1346,12 +1569,9 @@ export default function AssetChart({
                 activeDot={false} isAnimationActive={false} />
             )}
 
-            {activeIndicators.ma20 && (
-              <Line yAxisId="price" type="monotone" dataKey="ma20" stroke="#3b82f6" strokeWidth={1} dot={false} connectNulls isAnimationActive={false} />
-            )}
-            {activeIndicators.ma50 && (
-              <Line yAxisId="price" type="monotone" dataKey="ma50" stroke="#f97316" strokeWidth={1} dot={false} connectNulls isAnimationActive={false} />
-            )}
+            {MA_OPTIONS.filter((o) => activeMAs[o.key]).map((o) => (
+              <Line key={o.key} yAxisId="price" type="monotone" dataKey={o.key} stroke={o.color} strokeWidth={1.2} dot={false} connectNulls isAnimationActive={false} />
+            ))}
 
             {hasPerfOverlay && (
               <>
@@ -1370,9 +1590,11 @@ export default function AssetChart({
                 dot={false} connectNulls isAnimationActive={false} strokeOpacity={0.9} />
             )}
 
-            {tradeMarkers.length > 0 && isCandleType && tradeMarkerStyle !== 'none' && (
+            {tradeMarkers.length > 0 && isCandleType && (showEntrySignals || showExitSignals) && (
               <TradeMarkersLayer
-                trades={tradeMarkers}
+                trades={tradeMarkers.filter((t) =>
+                  (t.type === 'buy' && showEntrySignals) || (t.type === 'sell' && showExitSignals)
+                )}
                 data={data}
                 scale={Math.max(1.2, Math.min(2.2, 180 / data.length))}
                 style={tradeMarkerStyle}
@@ -1381,58 +1603,57 @@ export default function AssetChart({
           </ComposedChart>
         </ResponsiveContainer>
 
-        {/* ═══════════ Top-Left OHLCV Info Bar ═══════════ */}
+        {/* ═══════════ Top-Left OHLCV Info Bar + Legend ═══════════ */}
         {lastBar && (
-          <div className="absolute top-5 left-16 flex items-center gap-3 text-[11px] font-mono pointer-events-none">
-            <span className="text-gray-300 font-sans font-semibold text-xs">{symbol}</span>
-            <span className="text-gray-500 font-sans uppercase">
-              {effectiveInterval && effectiveInterval !== interval
-                ? (effectiveInterval === '1wk' ? 'Weekly' : effectiveInterval === '1mo' ? 'Monthly' : effectiveInterval)
-                : interval}
-            </span>
-            {chartType === 'heikinAshi' && <span className="text-amber-500/70 font-sans text-[10px]">HA</span>}
-            <span className="text-gray-500">O</span><span className="text-gray-300">{lastBar.open.toFixed(2)}</span>
-            <span className="text-gray-500">H</span><span style={{ color: BULL_COLOR }}>{lastBar.high.toFixed(2)}</span>
-            <span className="text-gray-500">L</span><span style={{ color: BEAR_COLOR }}>{lastBar.low.toFixed(2)}</span>
-            <span className="text-gray-500">C</span>
-            <span className="font-semibold" style={{ color: isPositive ? BULL_COLOR : BEAR_COLOR }}>{lastBar.close.toFixed(2)}</span>
-            <span className="font-sans text-[10px] px-1.5 py-0.5 rounded"
-              style={{ backgroundColor: isPositive ? `${BULL_COLOR}20` : `${BEAR_COLOR}20`, color: isPositive ? BULL_COLOR : BEAR_COLOR }}>
-              {isPositive ? '+' : ''}{priceChange.toFixed(2)} ({isPositive ? '+' : ''}{data[0]?.close ? ((priceChange / data[0].close) * 100).toFixed(2) : '0.00'}%)
-            </span>
-          </div>
-        )}
-
-        {(activeIndicators.ma20 || activeIndicators.ma50 || hasPerfOverlay || hasDrawdownOverlay) && (
-          <div className="absolute bottom-10 left-16 flex items-center gap-3 text-[11px] pointer-events-none flex-wrap">
-            {activeIndicators.ma20 && (
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-[2px] bg-blue-500 rounded" />
-                <span className="text-blue-400/80 font-mono">MA20{lastBar?.ma20 ? `: ${lastBar.ma20.toFixed(2)}` : ''}</span>
-              </div>
-            )}
-            {activeIndicators.ma50 && (
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-[2px] bg-orange-500 rounded" />
-                <span className="text-orange-400/80 font-mono">MA50{lastBar?.ma50 ? `: ${lastBar.ma50.toFixed(2)}` : ''}</span>
-              </div>
-            )}
-            {showEquityOverlay && equityCurve?.length && (
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-[2px] bg-emerald-500 rounded" />
-                <span className="text-emerald-400/80 font-mono">Equity</span>
-          </div>
-        )}
-            {showBenchmarkOverlay && benchmarkReturn != null && (
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-0 border-t border-dashed border-gray-500" />
-                <span className="text-gray-400/80 font-mono">Benchmark</span>
-              </div>
-            )}
-            {showDrawdownOverlay && drawdownSeries?.length && (
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-[2px] bg-amber-500 rounded" />
-                <span className="text-amber-400/80 font-mono">DD</span>
+          <div className="absolute top-5 left-16 flex flex-col gap-1 pointer-events-none">
+            {/* OHLCV row */}
+            <div className="flex items-center gap-3 text-[11px] font-mono">
+              <span className="text-gray-300 font-sans font-semibold text-xs">{symbol}</span>
+              <span className="text-gray-500 font-sans uppercase">
+                {effectiveInterval && effectiveInterval !== interval
+                  ? (effectiveInterval === '1wk' ? 'Weekly' : effectiveInterval === '1mo' ? 'Monthly' : effectiveInterval)
+                  : interval}
+              </span>
+              {chartType === 'heikinAshi' && <span className="text-amber-500/70 font-sans text-[10px]">HA</span>}
+              <span className="text-gray-500">O</span><span className="text-gray-300">{lastBar.open.toFixed(2)}</span>
+              <span className="text-gray-500">H</span><span style={{ color: BULL_COLOR }}>{lastBar.high.toFixed(2)}</span>
+              <span className="text-gray-500">L</span><span style={{ color: BEAR_COLOR }}>{lastBar.low.toFixed(2)}</span>
+              <span className="text-gray-500">C</span>
+              <span className="font-semibold" style={{ color: isPositive ? BULL_COLOR : BEAR_COLOR }}>{lastBar.close.toFixed(2)}</span>
+              <span className="font-sans text-[10px] px-1.5 py-0.5 rounded"
+                style={{ backgroundColor: isPositive ? `${BULL_COLOR}20` : `${BEAR_COLOR}20`, color: isPositive ? BULL_COLOR : BEAR_COLOR }}>
+                {isPositive ? '+' : ''}{priceChange.toFixed(2)} ({isPositive ? '+' : ''}{data[0]?.close ? ((priceChange / data[0].close) * 100).toFixed(2) : '0.00'}%)
+              </span>
+            </div>
+            {/* Legend row — only when there's something to show */}
+            {(MA_OPTIONS.some((o) => activeMAs[o.key]) || hasPerfOverlay || hasDrawdownOverlay) && (
+              <div className="flex items-center gap-3 text-[11px] flex-wrap">
+                {MA_OPTIONS.filter((o) => activeMAs[o.key]).map((o) => (
+                  <div key={o.key} className="flex items-center gap-1.5">
+                    <div className="w-3.5 h-[2px] rounded flex-shrink-0" style={{ background: o.color }} />
+                    <span className="font-mono" style={{ color: o.color + 'cc' }}>
+                      {o.label}{(lastBar as any)?.[o.key] ? `: ${((lastBar as any)[o.key] as number).toFixed(2)}` : ''}
+                    </span>
+                  </div>
+                ))}
+                {hasPerfOverlay && equityCurve?.length && showEquityOverlay && (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3.5 h-[2px] bg-emerald-500 rounded flex-shrink-0" />
+                    <span className="text-emerald-400/80 font-mono">Equity</span>
+                  </div>
+                )}
+                {showBenchmarkOverlay && benchmarkReturn != null && (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3.5 h-0 border-t border-dashed border-gray-500 flex-shrink-0" />
+                    <span className="text-gray-400/80 font-mono">Benchmark</span>
+                  </div>
+                )}
+                {hasDrawdownOverlay && drawdownSeries?.length && showDrawdownOverlay && (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3.5 h-[2px] bg-amber-500 rounded flex-shrink-0" />
+                    <span className="text-amber-400/80 font-mono">DD</span>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -166,6 +166,12 @@ export interface BacktestResults {
     created_at: string | null;
     filled_at: string | null;
   }>;
+  avg_win?: number;
+  avg_loss?: number;
+  loss_rate?: number;
+  cagr?: number;
+  num_days?: number;
+  treynor_ratio?: number;
   expectancy?: number | null;
   volatility_annual?: number | null;
   information_ratio?: number | null;
@@ -181,6 +187,7 @@ export interface BacktestResults {
   rolling_sharpe?: Array<{date: string; value: number}> | null;
   rolling_sortino?: Array<{date: string; value: number}> | null;
   rolling_beta?: Array<{date: string; value: number}> | null;
+  rolling_vol?: Array<{date: string; value: number}> | null;
   var_95?: number | null;
   cvar_95?: number | null;
   var_99?: number | null;
@@ -609,14 +616,60 @@ export interface OptimizeResults {
     [key: string]: unknown;
   }>;
   heatmap?: Array<{ x: number; y: number; value: number }>;
+  /** Parameter heatmap grid format (from optimize/heatmap task) */
+  param_x?: string;
+  param_y?: string;
+  x_values?: number[];
+  y_values?: number[];
+  z_values?: (number | null)[][];
+  metric?: string;
+  valid_count?: number;
+  total_count?: number;
+  stats?: { best: number; worst: number; median: number; mean: number; std: number };
+  optimal?: { xi: number; yi: number; value: number; [k: string]: number };
+  diagnostics?: Array<{ reason: string; [k: string]: unknown }>;
+  warning?: string;
+  /** First combo that failed (for debugging) */
+  first_failing_combo?: Record<string, number>;
+}
+
+export interface WalkForwardWindow {
+  window?: number;
+  // Period objects (backend format)
+  train_period?: { start: string; end: string };
+  test_period?: { start: string; end: string };
+  // Flat fields (legacy / splits format)
+  train_start?: string;
+  train_end?: string;
+  oos_start?: string;
+  test_start?: string;
+  oos_end?: string;
+  test_end?: string;
+  // Metrics
+  train_return?: number;
+  test_return?: number;
+  oos_return?: number;
+  train_sharpe?: number | null;
+  test_sharpe?: number | null;
+  oos_sharpe?: number;
+  train_trades?: number;
+  test_trades?: number;
+  overfit_score?: number | null;
+  best_params?: Record<string, number>;
+  train_error?: string | null;
+  test_error?: string | null;
 }
 
 export interface WalkForwardResults {
   status?: string;
   error?: string;
   avg_oos_return?: number;
-  windows?: Array<{ train_start: string; train_end: string; oos_start: string; oos_end: string; oos_return: number; oos_sharpe: number }>;
-  splits?: Array<{ train_start: string; train_end: string; oos_start: string; oos_end: string; oos_return: number; oos_sharpe: number }>;
+  avg_oos_sharpe?: number | null;
+  avg_is_sharpe?: number | null;
+  overall_overfit_score?: number | null;
+  n_splits?: number;
+  windows?: WalkForwardWindow[];
+  splits?: WalkForwardWindow[];
 }
 
 export interface OosResults {
@@ -642,6 +695,18 @@ export interface MonteCarloResults {
   status?: string;
   error?: string;
   percentiles?: Record<string, number>;
+  mean_final?: number;
+  std_final?: number;
+  probability_of_loss?: number;
+  n_simulations?: number;
+  sample_curves?: number[][];
+  percentile_curves?: {
+    p5: number[];
+    p25: number[];
+    p50: number[];
+    p75: number[];
+    p95: number[];
+  };
 }
 
 export interface CpcvResults {

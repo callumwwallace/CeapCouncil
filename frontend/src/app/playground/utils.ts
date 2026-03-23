@@ -43,10 +43,13 @@ export function formatCommitTime(iso: string | null): string {
   return new Date(iso).toLocaleDateString();
 }
 
-// Pull a readable error message out of API responses
+// Extract a readable error from API responses
 export function extractApiError(err: unknown, fallback = 'Something went wrong'): string {
   if (err instanceof Error && !('response' in err)) return err.message;
-  const ax = err as { response?: { data?: { detail?: string | Array<{ loc?: unknown[]; msg: string }> } } };
+  const ax = err as { response?: { status?: number; data?: { detail?: string | Array<{ loc?: unknown[]; msg: string }> } } };
+  if (ax.response?.status === 429) {
+    return 'Rate limit exceeded. Please wait a minute before trying again.';
+  }
   const d = ax.response?.data?.detail;
   if (typeof d === 'string') return d;
   if (Array.isArray(d) && d.length > 0) {
@@ -57,7 +60,7 @@ export function extractApiError(err: unknown, fallback = 'Something went wrong')
   return fallback;
 }
 
-// Poll until the task finishes or times out
+// Poll until task finishes or times out
 export async function pollTaskResult<T extends { status: string; error?: string }>(
   fetchResult: (taskId: string) => Promise<T>,
   taskId: string,

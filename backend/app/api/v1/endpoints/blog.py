@@ -99,7 +99,6 @@ async def get_blog_post(
 
 
 @router.post("", status_code=201)
-@router.post("/", status_code=201)  # accept trailing slash for compatibility
 @limiter.limit("20/minute")
 async def create_blog_post(
     request: Request,

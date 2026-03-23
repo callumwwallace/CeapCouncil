@@ -12,7 +12,7 @@ export interface ExtractedParam {
   step: number;
 }
 
-// ─── Core extraction ───────────────────────────────────────────────
+// Core extraction
 
 const PARAM_REGEX = /self\.params\.setdefault\(\s*['"](\w+)['"]\s*,\s*([^)]+)\)/g;
 
@@ -52,22 +52,22 @@ export function extractParamsFromCode(code: string): ExtractedParam[] {
   return params;
 }
 
-// ─── Range heuristics for the optimizer ─────────────────────────────
+// Range heuristics for optimizer
 
 export function deriveRange(
   key: string,
   value: number,
   type: 'int' | 'float',
 ): { min: number; max: number; step: number } {
-  // Special-case common parameter names
+  // Common param names get smarter defaults
   const k = key.toLowerCase();
 
-  // Boolean-like toggles (0/1)
+  // Boolean toggles (0/1)
   if ((value === 0 || value === 1) && (k.includes('enable') || k.includes('filter') || k.includes('use_'))) {
     return { min: 0, max: 1, step: 1 };
   }
 
-  // Percentage-like (0-100 range)
+  // Percentages (0-100)
   if (k.includes('pct') || k.includes('percent') || k.includes('overbought') || k.includes('oversold')) {
     if (type === 'int') {
       return { min: Math.max(0, value - 30), max: Math.min(100, value + 30), step: 1 };
@@ -75,14 +75,14 @@ export function deriveRange(
     return { min: Math.max(0, value - 30), max: Math.min(100, value + 30), step: 0.5 };
   }
 
-  // Period/lookback (always >= 2 for moving averages)
+  // Period/lookback: min 2 for MAs
   if (k.includes('period') || k.includes('lookback') || k.includes('window') || k === 'fast' || k === 'slow' || k === 'signal') {
     const lo = Math.max(2, Math.floor(value * 0.3));
     const hi = Math.ceil(value * 3);
     return { min: lo, max: hi, step: 1 };
   }
 
-  // Multiplier / factor / threshold (float)
+  // Multipliers, factors, thresholds
   if (type === 'float') {
     const lo = Math.max(0, +(value * 0.25).toFixed(2));
     const hi = +(value * 4).toFixed(2);
@@ -90,7 +90,7 @@ export function deriveRange(
     return { min: lo, max: hi || 1, step };
   }
 
-  // Generic integer
+  // Fallback for other ints
   const halfVal = Math.max(2, Math.floor(value * 0.5));
   return {
     min: Math.max(1, value - halfVal * 2),
@@ -99,7 +99,7 @@ export function deriveRange(
   };
 }
 
-// ─── Update code with param values ──────────────────────────────────
+// Update code with param values
 
 /**
  * Replace self.params.setdefault('key', ...) values in-place within
@@ -120,7 +120,7 @@ export function updateCodeWithParams(
   return result;
 }
 
-// ─── Build param_ranges for optimizer/OOS/CPCV ──────────────────────
+// Build param_ranges for optimizer / OOS / CPCV
 
 /**
  * Build param_ranges dict for the optimizer endpoint from extracted params.
@@ -136,7 +136,7 @@ export function buildParamRanges(
   return ranges;
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────
+// Helpers
 
 function formatLabel(key: string): string {
   return key

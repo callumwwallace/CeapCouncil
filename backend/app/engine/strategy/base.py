@@ -33,6 +33,7 @@ class StrategyContext:
     data_feed: DataFeed | None = None
     current_time: datetime | None = None
     bar_index: int = 0
+    initial_capital: float = 0.0
 
 
 class StrategyBase(ABC):
@@ -75,9 +76,6 @@ class StrategyBase(ABC):
         # Execution algo tracking
         self._executors: list[TWAPExecutor | VWAPExecutor | IcebergExecutor | POVExecutor] = []
 
-        # Object store
-        self._store: dict[str, Any] = {}
-
     def _set_context(self, ctx: StrategyContext) -> None:
         self._context = ctx
 
@@ -96,6 +94,14 @@ class StrategyBase(ABC):
         """Called when an order fills. Override for fill-based logic."""
         pass
 
+    def on_order_cancel(self, order: Order) -> None:
+        """Called when an order is cancelled. Override to react to cancellations."""
+        pass
+
+    def on_order_reject(self, order: Order) -> None:
+        """Called when an order is rejected (e.g. by a risk limit). Override to handle rejections."""
+        pass
+
     def on_end(self) -> None:
         """Called when the backtest finishes. Override for cleanup."""
         pass
@@ -110,6 +116,16 @@ class StrategyBase(ABC):
         """
         self._warmup_bars = bars
         self._warmup_complete = bars <= 0
+        # Ensure history buffer is large enough to hold the warm-up period
+        if bars > self._max_history:
+            self._max_history = bars + 50
+
+    def set_history_length(self, length: int) -> None:
+        """Set the maximum number of bars retained per symbol in history().
+
+        Call this in on_init() if your strategy needs more than the default 500 bars.
+        """
+        self._max_history = max(length, 1)
 
     @property
     def is_warming_up(self) -> bool:
@@ -146,9 +162,25 @@ class StrategyBase(ABC):
         return self._context.bar_index
 
     @property
-    def store(self) -> dict[str, Any]:
-        """Simple key-value store for persisting state between bars."""
-        return self._store
+    def cash(self) -> float:
+        """Current available cash."""
+        return self.portfolio.cash
+
+    @property
+    def equity(self) -> float:
+        """Current total portfolio value (cash + open positions)."""
+        return self.portfolio.equity
+
+    @property
+    def initial_capital(self) -> float:
+        """Starting capital configured for this backtest."""
+        return self._context.initial_capital
+
+    @property
+    def symbols(self) -> list[str]:
+        """All symbols loaded in the engine."""
+        feed = self._context.data_feed
+        return feed.symbols if feed else []
 
     def history(self, symbol: str | None = None, length: int = 1) -> list[BarData]:
         """Get recent bars for a symbol. Default: primary symbol."""
@@ -273,7 +305,9 @@ class StrategyBase(ABC):
             "_quantity": quantity,
         }
 
-        return {"entry": entry, "take_profit": None, "stop_loss": None}
+        # TP/SL orders are submitted automatically when the entry fills.
+        # Only the entry order exists at this point.
+        return {"entry": entry}
 
     def oco_order(
         self, symbol: str,
@@ -529,18 +563,23 @@ class StrategyBase(ABC):
     # -- Scheduling --
 
     def schedule(self, name: str, every_n_bars: int, callback: Any) -> None:
-        """Schedule a callback to run every N bars."""
+        """Schedule a callback to run every N bars.
+
+        The callback receives the current bar as its only argument:
+            def my_callback(bar): ...
+        """
         self._scheduled.append((name, every_n_bars, callback))
 
-    def _check_schedules(self, bar_index: int) -> None:
+    def _check_schedules(self, bar_index: int, bar: BarData) -> None:
         """Run scheduled events (called by engine)."""
         for name, interval, callback in self._scheduled:
             if bar_index > 0 and bar_index % interval == 0:
-                callback()
+                callback(bar)
 
     # -- Position helpers --
 
     def position_size(self, symbol: str) -> float:
+        """Current quantity held in symbol (positive = long, negative = short)."""
         return self.portfolio.get_position_quantity(symbol)
 
     def is_long(self, symbol: str) -> bool:
@@ -551,3 +590,13 @@ class StrategyBase(ABC):
 
     def is_flat(self, symbol: str) -> bool:
         return not self.portfolio.has_position(symbol)
+
+    def unrealized_pnl(self, symbol: str) -> float:
+        """Unrealized P&L for an open position at the current market price."""
+        pos = self.portfolio.get_position(symbol)
+        price = self.portfolio._current_prices.get(symbol, pos.avg_cost)
+        return pos.unrealized_pnl(price)
+
+    def avg_cost(self, symbol: str) -> float:
+        """Average cost basis of the current position in symbol."""
+        return self.portfolio.get_position(symbol).avg_cost

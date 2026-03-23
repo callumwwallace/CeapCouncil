@@ -12,7 +12,7 @@ import {
   GitBranch,
   Filter,
   Layers,
-  PieChart,
+  PieChart as PieChartIcon,
   Shuffle,
   Shield,
   Calendar,
@@ -30,12 +30,18 @@ import {
   YAxis,
   ResponsiveContainer,
   Tooltip,
+  ReferenceLine,
   ScatterChart,
   Scatter,
   ZAxis,
   Cell,
   LineChart,
   Line,
+  BarChart,
+  Bar,
+  ComposedChart,
+  PieChart,
+  Pie,
 } from 'recharts';
 import TradeLog from '@/components/playground/TradeLog';
 import ErrorBoundary from '@/components/ErrorBoundary';
@@ -53,6 +59,8 @@ interface ResultsTabContentProps {
   onTabChange: (tab: ResultsTab) => void;
   analytics: AnalyticsState;
   paramDefs: ExtractedParam[];
+  /** Hides built-in tab nav when sidebar owns it */
+  hideTabNav?: boolean;
 }
 
 export default function ResultsTabContent({
@@ -61,6 +69,7 @@ export default function ResultsTabContent({
   onTabChange: setActiveResultsTab,
   analytics,
   paramDefs,
+  hideTabNav = false,
 }: ResultsTabContentProps) {
   const {
     optimizeResults, walkForwardResults, oosResults, cpcvResults, factorResults, monteCarloResults,
@@ -78,9 +87,34 @@ export default function ResultsTabContent({
     handleRunCpcv, handleRunFactorAttribution, handleRunMonteCarlo,
   } = analytics;
 
+  // Stats shown in chart headers
+  const equityValues = results.equity_curve?.map((p) => p.equity) ?? [];
+  const pnl =
+    equityValues.length >= 2
+      ? ((equityValues.at(-1)! - equityValues[0]) / equityValues[0]) * 100
+      : null;
+  // drawdown_pct is positive (9.09 = 9%). Worst = max of these
+  const maxDrawdown = results.drawdown_series?.length
+    ? Math.max(...results.drawdown_series.map((p) => p.drawdown_pct))
+    : null;
+  const lastSharpe =
+    results.rolling_sharpe?.filter((p) => p.value != null).at(-1)?.value ?? null;
+  const lastSortino =
+    results.rolling_sortino?.filter((p) => p.value != null).at(-1)?.value ?? null;
+
+  const tooltipStyle: React.CSSProperties = {
+    background: 'var(--color-surface, #ffffff)',
+    border: '0.5px solid rgba(0,0,0,0.1)',
+    borderRadius: '6px',
+    fontSize: 11,
+    fontFamily: 'monospace',
+    color: 'inherit',
+    padding: '6px 10px',
+  };
+
   return (
                 <div className="p-3 pb-6">
-                  <div className="space-y-3 pb-3 border-b border-gray-200">
+                  {!hideTabNav && <div className="space-y-3 pb-3 border-b border-gray-200">
                     <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Analysis</div>
                     {/* main tabs */}
                     <div className="flex gap-1 p-1 rounded-lg bg-gray-100 border border-gray-200">
@@ -106,7 +140,7 @@ export default function ResultsTabContent({
                     {/* advanced tabs */}
                     <div className="grid grid-cols-4 gap-1.5">
                       {(['tca', 'optimize', 'walkforward', 'oos', 'cpcv', 'factors', 'montecarlo', 'risk', 'heatmap', 'distribution', 'compare'] as const).map((tab) => {
-                        const secondaryIcons = { tca: Activity, optimize: Sliders, walkforward: GitBranch, oos: Filter, cpcv: Layers, factors: PieChart, montecarlo: Shuffle, risk: Shield, heatmap: Calendar, distribution: BarChart2, compare: GitCompare };
+                        const secondaryIcons = { tca: Activity, optimize: Sliders, walkforward: GitBranch, oos: Filter, cpcv: Layers, factors: PieChartIcon, montecarlo: Shuffle, risk: Shield, heatmap: Calendar, distribution: BarChart2, compare: GitCompare };
                         const Icon = secondaryIcons[tab];
                         const label = ({ tca: 'TCA', optimize: 'Optimize', walkforward: 'Walk-Fwd', oos: 'OOS', cpcv: 'CPCV', factors: 'Factors', montecarlo: 'Monte Carlo', risk: 'Risk', heatmap: 'Monthly', distribution: 'Dist.', compare: 'Compare' } as Record<string, string>)[tab];
                         return (
@@ -125,7 +159,7 @@ export default function ResultsTabContent({
                         );
                       })}
                   </div>
-                </div>
+                </div>}
                   <div className="pt-3 min-h-[200px] flex flex-col">
                 <ErrorBoundary label="Results">
                       {activeResultsTab === 'summary' && (
@@ -223,67 +257,565 @@ export default function ResultsTabContent({
                         <div className="text-center py-8 text-gray-500 text-xs">Order history shown above.</div>
                       )}
                       {activeResultsTab === 'charts' && (
-                        <div className="space-y-4">
+                        <div className="space-y-3">
                           {results.equity_curve?.length ? (
-                            <div className="h-32">
-                              <div className="text-[10px] text-gray-500 mb-0.5">Equity curve</div>
-                            <ResponsiveContainer width="100%" height="100%" minHeight={128}>
-                                <AreaChart data={results.equity_curve.map(p => ({ ...p, value: p.equity }))} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                                <defs>
-                                  <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.4} />
-                                    <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
-                                  </linearGradient>
-                                </defs>
-                                <XAxis dataKey="date" hide />
-                                  <YAxis hide domain={['auto', 'auto']} />
-                                  <Tooltip contentStyle={{ background: '#1f2937', border: '1px solid #374151', fontSize: 11 }} />
-                                  <Area type="monotone" dataKey="value" stroke="#10b981" fill="url(#eqGrad)" strokeWidth={1.5} />
-                              </AreaChart>
-                            </ResponsiveContainer>
-                          </div>
-                          ) : null}
-                          {results.drawdown_series?.length ? (
-                            <div className="h-24">
-                              <div className="text-[10px] text-gray-500 mb-0.5">Drawdown</div>
-                            <ResponsiveContainer width="100%" height="100%" minHeight={96}>
-                                <AreaChart data={results.drawdown_series} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                                <defs>
-                                  <linearGradient id="ddGrad" x1="0" y1="0" x2="0" y2="1">
-                                      <stop offset="0%" stopColor="#ef4444" stopOpacity={0.4} />
-                                      <stop offset="100%" stopColor="#ef4444" stopOpacity={0} />
-                                  </linearGradient>
-                                </defs>
-                                <XAxis dataKey="date" hide />
-                                  <YAxis hide domain={['auto', 0]} />
-                                  <Area type="monotone" dataKey="drawdown_pct" stroke="#ef4444" fill="url(#ddGrad)" strokeWidth={1.5} />
-                              </AreaChart>
-                            </ResponsiveContainer>
-                          </div>
-                          ) : null}
-                          {results.custom_charts && Object.keys(results.custom_charts).length > 0 ? (
-                            <div className="space-y-2">
-                              <div className="text-[10px] text-gray-500">Custom series</div>
-                              {Object.entries(results.custom_charts).map(([name, data]) => (
-                                data?.length ? (
-                                <div key={name} className="h-20">
-                                  <div className="text-[10px] text-gray-400 mb-0.5">{name}</div>
-                                  <ResponsiveContainer width="100%" height="100%" minHeight={80}>
-                                    <LineChart data={data} margin={{ top: 2, right: 2, bottom: 0, left: 0 }}>
-                                      <XAxis dataKey="date" hide />
-                                      <YAxis hide />
-                                      <Line type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={1.5} dot={false} />
-                                    </LineChart>
-                                  </ResponsiveContainer>
-                        </div>
-                                ) : null
-                              ))}
+                            <div>
+                              <div className="flex items-baseline justify-between mb-1">
+                                <span className="text-[11px] font-medium text-gray-500">Equity curve</span>
+                                {pnl != null && (
+                                  <span className={`text-[11px] font-mono font-medium ${pnl >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                                    {pnl >= 0 ? '+' : ''}{pnl.toFixed(1)}%
+                                  </span>
+                                )}
+                              </div>
+                              <div className="h-24">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <AreaChart
+                                    data={results.equity_curve.map((p) => ({ ...p, value: p.equity }))}
+                                    margin={{ top: 4, right: 48, bottom: 0, left: 0 }}
+                                  >
+                                    <defs>
+                                      <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#10b981" stopOpacity={0.2} />
+                                        <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                                      </linearGradient>
+                                    </defs>
+                                    <XAxis dataKey="date" hide />
+                                    <YAxis
+                                      orientation="right"
+                                      width={44}
+                                      tickCount={3}
+                                      tickLine={false}
+                                      axisLine={false}
+                                      tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }}
+                                      tickFormatter={(v: number) =>
+                                        v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v.toFixed(0)}`
+                                      }
+                                      domain={['auto', 'auto']}
+                                    />
+                                    <Tooltip
+                                      contentStyle={tooltipStyle}
+                                      formatter={(v) => [`$${Number(v ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`, 'Equity']}
+                                      labelFormatter={(l) => String(l ?? '')}
+                                      cursor={{ stroke: 'rgba(0,0,0,0.1)', strokeWidth: 1 }}
+                                    />
+                                    <Area
+                                      type="monotone"
+                                      dataKey="value"
+                                      stroke="#10b981"
+                                      fill="url(#eqGrad)"
+                                      strokeWidth={1.5}
+                                    />
+                                  </AreaChart>
+                                </ResponsiveContainer>
+                              </div>
                             </div>
                           ) : null}
-                          {(!results.equity_curve?.length && !results.drawdown_series?.length && (!results.custom_charts || Object.keys(results.custom_charts).length === 0)) && (
-                            <div className="text-center py-6 text-gray-500 text-xs">No chart data.</div>
-                      )}
-                    </div>
+                          {results.drawdown_series?.length ? (
+                            <div>
+                              <div className="flex items-baseline justify-between mb-1">
+                                <span className="text-[11px] font-medium text-gray-500">Drawdown</span>
+                                {maxDrawdown != null && maxDrawdown > 0 && (
+                                  <span className="text-[11px] font-mono font-medium text-red-600">
+                                    −{maxDrawdown.toFixed(1)}%
+                                  </span>
+                                )}
+                              </div>
+                              <div className="h-16">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <AreaChart
+                                    data={results.drawdown_series}
+                                    margin={{ top: 4, right: 48, bottom: 0, left: 0 }}
+                                  >
+                                    <defs>
+                                      <linearGradient id="ddGrad" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#ef4444" stopOpacity={0.2} />
+                                        <stop offset="100%" stopColor="#ef4444" stopOpacity={0} />
+                                      </linearGradient>
+                                    </defs>
+                                    <XAxis dataKey="date" hide />
+                                    <YAxis
+                                      orientation="right"
+                                      width={44}
+                                      tickCount={3}
+                                      tickLine={false}
+                                      axisLine={false}
+                                      tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }}
+                                      tickFormatter={(v: number) => `${v.toFixed(0)}%`}
+                                      domain={['auto', 0]}
+                                    />
+                                    <Tooltip
+                                      contentStyle={tooltipStyle}
+                                      formatter={(v) => [`${Number(v ?? 0).toFixed(2)}%`, 'Drawdown']}
+                                      labelFormatter={(l) => String(l ?? '')}
+                                      cursor={{ stroke: 'rgba(0,0,0,0.1)', strokeWidth: 1 }}
+                                    />
+                                    <Area
+                                      type="monotone"
+                                      dataKey="drawdown_pct"
+                                      stroke="#ef4444"
+                                      fill="url(#ddGrad)"
+                                      strokeWidth={1.5}
+                                    />
+                                  </AreaChart>
+                                </ResponsiveContainer>
+                              </div>
+                            </div>
+                          ) : null}
+                          {/* Top-5 worst drawdown periods */}
+                          {results.drawdown_series && results.drawdown_series.length > 1 && (() => {
+                            type DdPeriod = { start: string; trough: string; end: string; depth: number; duration: number };
+                            const dd = results.drawdown_series;
+                            const periods: DdPeriod[] = [];
+                            let inDd = false;
+                            let start = '';
+                            let troughDate = '';
+                            let troughDepth = 0;
+                            let startIdx = 0;
+                            for (let i = 0; i < dd.length; i++) {
+                              const pt = dd[i]!;
+                              if (!inDd && pt.drawdown_pct > 0) {
+                                inDd = true;
+                                start = pt.date;
+                                startIdx = i;
+                                troughDate = pt.date;
+                                troughDepth = pt.drawdown_pct;
+                              } else if (inDd) {
+                                if (pt.drawdown_pct > troughDepth) {
+                                  troughDepth = pt.drawdown_pct;
+                                  troughDate = pt.date;
+                                }
+                                if (pt.drawdown_pct === 0 || i === dd.length - 1) {
+                                  periods.push({ start, trough: troughDate, end: pt.date, depth: troughDepth, duration: i - startIdx });
+                                  inDd = false;
+                                  troughDepth = 0;
+                                }
+                              }
+                            }
+                            const top5 = [...periods].sort((a, b) => b.depth - a.depth).slice(0, 5);
+                            if (top5.length === 0) return null;
+                            return (
+                              <div>
+                                <div className="text-[11px] font-medium text-gray-500 mb-1">Top Drawdown Periods</div>
+                                <div className="rounded-lg border border-gray-200 overflow-hidden">
+                                  <table className="w-full text-[10px]">
+                                    <thead>
+                                      <tr className="bg-gray-50 border-b border-gray-200 text-gray-500">
+                                        <th className="text-left px-2 py-1.5 font-medium">Start</th>
+                                        <th className="text-left px-2 py-1.5 font-medium">Trough</th>
+                                        <th className="text-right px-2 py-1.5 font-medium">Depth</th>
+                                        <th className="text-right px-2 py-1.5 font-medium">Days</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                      {top5.map((p, i) => (
+                                        <tr key={i} className="hover:bg-gray-50">
+                                          <td className="px-2 py-1.5 font-mono text-gray-600">{p.start}</td>
+                                          <td className="px-2 py-1.5 font-mono text-gray-600">{p.trough}</td>
+                                          <td className="px-2 py-1.5 text-right font-mono text-red-600">−{p.depth.toFixed(1)}%</td>
+                                          <td className="px-2 py-1.5 text-right font-mono text-gray-600">{p.duration}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          {/* Crisis Events */}
+                          {(() => {
+                            const CRISES = [
+                              { name: 'GFC 2008',       start: '2008-09-01', end: '2009-03-31', color: 'text-red-600' },
+                              { name: 'COVID Crash',    start: '2020-02-01', end: '2020-04-30', color: 'text-orange-600' },
+                              { name: 'Bear 2022',      start: '2022-01-01', end: '2022-12-31', color: 'text-amber-600' },
+                              { name: 'Rate Hike 2018', start: '2018-10-01', end: '2018-12-31', color: 'text-yellow-700' },
+                            ];
+                            const ec = results.equity_curve ?? [];
+                            const rows = CRISES.map(c => {
+                              const startPt = ec.find(p => p.date >= c.start);
+                              const endPt = [...ec].reverse().find(p => p.date <= c.end);
+                              if (!startPt || !endPt || startPt.date >= endPt.date) return null;
+                              const ret = ((endPt.equity - startPt.equity) / startPt.equity) * 100;
+                              return { ...c, ret, startDate: startPt.date, endDate: endPt.date };
+                            }).filter(Boolean) as Array<{ name: string; ret: number; startDate: string; endDate: string; color: string }>;
+                            return (
+                              <div>
+                                <div className="text-[11px] font-medium text-gray-500 mb-1">Crisis Events</div>
+                                {rows.length > 0 ? (
+                                  <div className="rounded-lg border border-gray-200 overflow-hidden">
+                                    <table className="w-full text-[10px]">
+                                      <thead>
+                                        <tr className="bg-gray-50 border-b border-gray-200 text-gray-500">
+                                          <th className="text-left px-2 py-1.5 font-medium">Event</th>
+                                          <th className="text-left px-2 py-1.5 font-medium">Period</th>
+                                          <th className="text-right px-2 py-1.5 font-medium">Return</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-gray-100">
+                                        {rows.map((r) => (
+                                          <tr key={r.name} className="hover:bg-gray-50">
+                                            <td className={`px-2 py-1.5 font-medium ${r.color}`}>{r.name}</td>
+                                            <td className="px-2 py-1.5 font-mono text-gray-500">{r.startDate} → {r.endDate}</td>
+                                            <td className={`px-2 py-1.5 text-right font-mono font-semibold ${r.ret >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                              {r.ret >= 0 ? '+' : ''}{r.ret.toFixed(1)}%
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                ) : (
+                                  <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[10px] text-gray-400">
+                                    No known crisis periods overlap this backtest range. Extend your backtest to 2008, 2018, 2020, or 2022 to see crisis performance.
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+                          {results.rolling_sharpe?.length ? (
+                            <div>
+                              <div className="flex items-baseline justify-between mb-1">
+                                <div className="flex items-baseline gap-1.5">
+                                  <span className="text-[11px] font-medium text-gray-500">Rolling Sharpe</span>
+                                  <span className="text-[10px] text-gray-400 font-mono">(63-day)</span>
+                                </div>
+                                {lastSharpe != null && (
+                                  <span className={`text-[11px] font-mono font-medium ${lastSharpe >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                                    {lastSharpe.toFixed(2)}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="h-16">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <LineChart
+                                    data={results.rolling_sharpe}
+                                    margin={{ top: 4, right: 48, bottom: 0, left: 0 }}
+                                  >
+                                    <XAxis dataKey="date" hide />
+                                    <YAxis
+                                      orientation="right"
+                                      width={44}
+                                      tickCount={3}
+                                      tickLine={false}
+                                      axisLine={false}
+                                      tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }}
+                                      tickFormatter={(v: number) => v.toFixed(1)}
+                                      domain={['auto', 'auto']}
+                                    />
+                                    <ReferenceLine
+                                      y={0}
+                                      stroke="rgba(0,0,0,0.15)"
+                                      strokeDasharray="3 3"
+                                      strokeWidth={1}
+                                    />
+                                    <Tooltip
+                                      contentStyle={tooltipStyle}
+                                      formatter={(v) => [v != null && typeof v === 'number' ? v.toFixed(2) : '—', 'Sharpe']}
+                                      labelFormatter={(l) => String(l ?? '')}
+                                      cursor={{ stroke: 'rgba(0,0,0,0.1)', strokeWidth: 1 }}
+                                    />
+                                    <Line
+                                      type="monotone"
+                                      dataKey="value"
+                                      stroke="#10b981"
+                                      strokeWidth={1.5}
+                                      dot={false}
+                                      connectNulls={false}
+                                    />
+                                  </LineChart>
+                                </ResponsiveContainer>
+                              </div>
+                            </div>
+                          ) : null}
+                          {results.rolling_sortino?.length ? (
+                            <div>
+                              <div className="flex items-baseline justify-between mb-1">
+                                <div className="flex items-baseline gap-1.5">
+                                  <span className="text-[11px] font-medium text-gray-500">Rolling Sortino</span>
+                                  <span className="text-[10px] text-gray-400 font-mono">(63-day)</span>
+                                </div>
+                                {lastSortino != null && (
+                                  <span className={`text-[11px] font-mono font-medium ${lastSortino >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                                    {lastSortino.toFixed(2)}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="h-16">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <LineChart
+                                    data={results.rolling_sortino}
+                                    margin={{ top: 4, right: 48, bottom: 0, left: 0 }}
+                                  >
+                                    <XAxis dataKey="date" hide />
+                                    <YAxis
+                                      orientation="right"
+                                      width={44}
+                                      tickCount={3}
+                                      tickLine={false}
+                                      axisLine={false}
+                                      tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }}
+                                      tickFormatter={(v: number) => v.toFixed(1)}
+                                      domain={['auto', 'auto']}
+                                    />
+                                    <ReferenceLine
+                                      y={0}
+                                      stroke="rgba(0,0,0,0.15)"
+                                      strokeDasharray="3 3"
+                                      strokeWidth={1}
+                                    />
+                                    <Tooltip
+                                      contentStyle={tooltipStyle}
+                                      formatter={(v) => [v != null && typeof v === 'number' ? v.toFixed(2) : '—', 'Sortino']}
+                                      labelFormatter={(l) => String(l ?? '')}
+                                      cursor={{ stroke: 'rgba(0,0,0,0.1)', strokeWidth: 1 }}
+                                    />
+                                    <Line
+                                      type="monotone"
+                                      dataKey="value"
+                                      stroke="#6366f1"
+                                      strokeWidth={1.5}
+                                      dot={false}
+                                      connectNulls={false}
+                                    />
+                                  </LineChart>
+                                </ResponsiveContainer>
+                              </div>
+                            </div>
+                          ) : null}
+                          {/* Daily Returns */}
+                          {results.equity_curve && results.equity_curve.length >= 2 && (() => {
+                            const ec = results.equity_curve;
+                            const dailyReturns = ec.map((p, i) =>
+                              i === 0 ? null : {
+                                date: p.date,
+                                pct: ((p.equity - ec[i - 1].equity) / ec[i - 1].equity) * 100,
+                              }
+                            ).filter(Boolean) as { date: string; pct: number }[];
+                            // Throttle to ~200 bars for perf
+                            const maxBars = 200;
+                            const displayed = dailyReturns.length > maxBars
+                              ? dailyReturns.filter((_, i) => i % Math.ceil(dailyReturns.length / maxBars) === 0)
+                              : dailyReturns;
+                            return (
+                              <div>
+                                <div className="flex items-baseline justify-between mb-1">
+                                  <span className="text-[11px] font-medium text-gray-500">Daily Returns</span>
+                                  <span className="text-[10px] text-gray-400 font-mono">%</span>
+                                </div>
+                                <div className="h-16">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={displayed} margin={{ top: 4, right: 48, bottom: 0, left: 0 }} barCategoryGap="10%">
+                                      <XAxis dataKey="date" hide />
+                                      <YAxis
+                                        orientation="right"
+                                        width={44}
+                                        tickCount={3}
+                                        tickLine={false}
+                                        axisLine={false}
+                                        tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }}
+                                        tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+                                        domain={['auto', 'auto']}
+                                      />
+                                      <ReferenceLine y={0} stroke="rgba(0,0,0,0.15)" strokeWidth={1} />
+                                      <Tooltip
+                                        contentStyle={tooltipStyle}
+                                        formatter={(v) => [typeof v === 'number' ? `${v.toFixed(3)}%` : '—', 'Return']}
+                                        labelFormatter={(l) => String(l ?? '')}
+                                        cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                                      />
+                                      <Bar dataKey="pct" maxBarSize={6}>
+                                        {displayed.map((entry, index) => (
+                                          <Cell key={index} fill={entry.pct >= 0 ? '#3b82f6' : '#9ca3af'} />
+                                        ))}
+                                      </Bar>
+                                    </BarChart>
+                                  </ResponsiveContainer>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          {/* Annual Returns */}
+                          {results.equity_curve && results.equity_curve.length >= 2 && (() => {
+                            const ec = results.equity_curve;
+                            const byYear: Record<string, { first: number; last: number }> = {};
+                            for (const p of ec) {
+                              const yr = p.date.slice(0, 4);
+                              if (!byYear[yr]) byYear[yr] = { first: p.equity, last: p.equity };
+                              byYear[yr].last = p.equity;
+                            }
+                            const annualReturns = Object.entries(byYear).map(([year, { first, last }]) => ({
+                              year,
+                              pct: ((last / first) - 1) * 100,
+                            }));
+                            if (annualReturns.length < 1) return null;
+                            return (
+                              <div>
+                                <div className="flex items-baseline justify-between mb-1">
+                                  <span className="text-[11px] font-medium text-gray-500">Annual Returns</span>
+                                  <span className="text-[10px] text-gray-400 font-mono">%</span>
+                                </div>
+                                <div className="h-16">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={annualReturns} margin={{ top: 4, right: 48, bottom: 0, left: 0 }} barCategoryGap="20%">
+                                      <XAxis
+                                        dataKey="year"
+                                        tickLine={false}
+                                        axisLine={false}
+                                        tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }}
+                                      />
+                                      <YAxis
+                                        orientation="right"
+                                        width={44}
+                                        tickCount={3}
+                                        tickLine={false}
+                                        axisLine={false}
+                                        tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }}
+                                        tickFormatter={(v: number) => `${v.toFixed(0)}%`}
+                                        domain={['auto', 'auto']}
+                                      />
+                                      <ReferenceLine y={0} stroke="rgba(0,0,0,0.15)" strokeWidth={1} />
+                                      <Tooltip
+                                        contentStyle={tooltipStyle}
+                                        formatter={(v) => [typeof v === 'number' ? `${v.toFixed(2)}%` : '—', 'Return']}
+                                        labelFormatter={(l) => String(l ?? '')}
+                                        cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                                      />
+                                      <Bar dataKey="pct" maxBarSize={40}>
+                                        {annualReturns.map((entry, index) => (
+                                          <Cell key={index} fill={entry.pct >= 0 ? '#3b82f6' : '#9ca3af'} />
+                                        ))}
+                                      </Bar>
+                                    </BarChart>
+                                  </ResponsiveContainer>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          {/* Asset Allocation donut */}
+                          {results.trades && results.trades.length > 0 && (() => {
+                            const trades = results.trades;
+                            const hasShorts = trades.some(t => t.type === 'SHORT');
+                            type Slice = { name: string; value: number; color: string };
+                            let slices: Slice[];
+                            if (hasShorts) {
+                              const longWins = trades.filter(t => t.type === 'LONG' && t.pnl > 0).length;
+                              const longLoss = trades.filter(t => t.type === 'LONG' && t.pnl <= 0).length;
+                              const shortWins = trades.filter(t => t.type === 'SHORT' && t.pnl > 0).length;
+                              const shortLoss = trades.filter(t => t.type === 'SHORT' && t.pnl <= 0).length;
+                              slices = [
+                                { name: 'Long wins', value: longWins, color: '#10b981' },
+                                { name: 'Long losses', value: longLoss, color: '#6ee7b7' },
+                                { name: 'Short wins', value: shortWins, color: '#3b82f6' },
+                                { name: 'Short losses', value: shortLoss, color: '#93c5fd' },
+                              ].filter(s => s.value > 0);
+                            } else {
+                              const wins = trades.filter(t => t.pnl > 0).length;
+                              const losses = trades.filter(t => t.pnl <= 0).length;
+                              slices = [
+                                { name: 'Winners', value: wins, color: '#10b981' },
+                                { name: 'Losers', value: losses, color: '#f87171' },
+                              ];
+                            }
+                            const total = slices.reduce((s, x) => s + x.value, 0);
+                            if (total === 0) return null;
+                            return (
+                              <div>
+                                <div className="flex items-baseline justify-between mb-1">
+                                  <span className="text-[11px] font-medium text-gray-500">Trade Allocation</span>
+                                  <span className="text-[10px] text-gray-400 font-mono">{total} trades</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <div className="h-20 w-20 shrink-0">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                      <PieChart>
+                                        <Pie
+                                          data={slices}
+                                          cx="50%"
+                                          cy="50%"
+                                          innerRadius="55%"
+                                          outerRadius="80%"
+                                          dataKey="value"
+                                          strokeWidth={0}
+                                        >
+                                          {slices.map((s, i) => (
+                                            <Cell key={i} fill={s.color} />
+                                          ))}
+                                        </Pie>
+                                        <Tooltip
+                                          contentStyle={tooltipStyle}
+                                          formatter={(v, name) => [`${v} trades (${((Number(v) / total) * 100).toFixed(0)}%)`, name]}
+                                        />
+                                      </PieChart>
+                                    </ResponsiveContainer>
+                                  </div>
+                                  <div className="flex-1 space-y-1">
+                                    {slices.map((s) => (
+                                      <div key={s.name} className="flex items-center justify-between text-[10px]">
+                                        <div className="flex items-center gap-1.5">
+                                          <div className="w-2 h-2 rounded-full shrink-0" style={{ background: s.color }} />
+                                          <span className="text-gray-600">{s.name}</span>
+                                        </div>
+                                        <span className="font-mono text-gray-900">{s.value} ({((s.value / total) * 100).toFixed(0)}%)</span>
+                                      </div>
+                                    ))}
+                                    {results.exposure_pct != null && (
+                                      <div className="pt-1 text-[10px] text-gray-400 border-t border-gray-100">
+                                        {results.exposure_pct.toFixed(0)}% time in market
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          {results.custom_charts && Object.keys(results.custom_charts).length > 0 && (
+                            <div className="space-y-2 pt-1">
+                              <div className="text-[10px] text-gray-400 uppercase tracking-wider">Custom series</div>
+                              {Object.entries(results.custom_charts).map(([name, data]) =>
+                                data?.length ? (
+                                  <div key={name}>
+                                    <div className="text-[11px] font-medium text-gray-500 mb-1">{name}</div>
+                                    <div className="h-14">
+                                      <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={data} margin={{ top: 2, right: 48, bottom: 0, left: 0 }}>
+                                          <XAxis dataKey="date" hide />
+                                          <YAxis
+                                            orientation="right"
+                                            width={44}
+                                            tickCount={2}
+                                            tickLine={false}
+                                            axisLine={false}
+                                            tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }}
+                                            tickFormatter={(v: number) => v.toFixed(2)}
+                                          />
+                                          <Tooltip
+                                            contentStyle={tooltipStyle}
+                                            formatter={(v) => [Number(v ?? 0).toFixed(4), name]}
+                                            cursor={{ stroke: 'rgba(0,0,0,0.1)', strokeWidth: 1 }}
+                                          />
+                                          <Line
+                                            type="monotone"
+                                            dataKey="value"
+                                            stroke="#6366f1"
+                                            strokeWidth={1.5}
+                                            dot={false}
+                                          />
+                                        </LineChart>
+                                      </ResponsiveContainer>
+                                    </div>
+                                  </div>
+                                ) : null
+                              )}
+                            </div>
+                          )}
+                          {(results.equity_curve?.length ?? 0) < 2 &&
+                            !results.drawdown_series?.length &&
+                            !results.rolling_sharpe?.length &&
+                            !results.rolling_sortino?.length &&
+                            (!results.custom_charts || Object.keys(results.custom_charts).length === 0) && (
+                              <div className="text-center py-6 text-gray-400 text-xs">No chart data.</div>
+                            )}
+                        </div>
                       )}
                       {activeResultsTab === 'optimize' && (
                         <div className="space-y-3">
@@ -319,7 +851,7 @@ export default function ResultsTabContent({
                               {optimizeResults?.error && (
                                 <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs">{optimizeResults.error}</div>
                               )}
-                              {optimizeResults && !optimizeResults.error && optimizeResults.results && (
+                              {optimizeResults && !optimizeResults.error && optimizeResults.results && !optimizeResults.x_values && (
                                 <div className="rounded-lg border border-gray-200 overflow-hidden">
                                   <div className="overflow-x-auto max-h-48 overflow-y-auto">
                                     <table className="w-full text-xs">
@@ -345,9 +877,127 @@ export default function ResultsTabContent({
                             </div>
                             </div>
                               )}
-                              {optimizeResults?.heatmap && (
-                                <div className="px-3 py-2 rounded-lg bg-gray-50 border border-gray-200 text-[11px] text-gray-500">Heatmap: use Setup panel for full 2D view.</div>
-                              )}
+                              {optimizeResults && !optimizeResults.error && optimizeResults.x_values && optimizeResults.y_values && optimizeResults.z_values && (() => {
+                                const xs = optimizeResults.x_values;
+                                const ys = optimizeResults.y_values;
+                                const zs = optimizeResults.z_values;
+                                const metricLabel = (optimizeResults.metric ?? 'sharpe_ratio') === 'sharpe_ratio' ? 'Sharpe' : (optimizeResults.metric ?? '').replace(/_/g, ' ');
+                                const flat = zs.flat().filter((v): v is number => v != null && typeof v === 'number');
+                                const zMin = flat.length ? Math.min(...flat) : 0;
+                                const zMax = flat.length ? Math.max(...flat) : 1;
+                                const range = zMax - zMin || 1;
+                                const sorted = [...flat].sort((a, b) => a - b);
+                                const zMed = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+                                const validCount = flat.length;
+                                const totalCount = xs.length * ys.length;
+                                let optYi = 0, optXi = 0, optV = -Infinity;
+                                zs.forEach((row, yi) =>
+                                  row.forEach((v, xi) => {
+                                    if (v != null && v > optV) { optV = v; optYi = yi; optXi = xi; }
+                                  })
+                                );
+                                const toColor = (v: number | null) => {
+                                  if (v == null) return 'rgb(229 231 235)';
+                                  const t = (v - zMin) / range;
+                                  const r = Math.round(239 - t * 223);
+                                  const g = Math.round(68 + t * 117);
+                                  const b = Math.round(68 + t * 61);
+                                  return `rgb(${r} ${g} ${b})`;
+                                };
+                                const norm = (v: number) => (v - zMin) / range;
+                                const textColor = (v: number | null) => {
+                                  if (v == null) return undefined;
+                                  return norm(v) > 0.55 ? 'rgba(255,255,255,0.92)' : 'rgba(0,0,0,0.75)';
+                                };
+                                return (
+                                  <div className="space-y-2">
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                                      {optimizeResults.param_x} × {optimizeResults.param_y} — {metricLabel}
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-3 text-[10px] mb-2">
+                                      <span className="uppercase tracking-wider font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-500">
+                                        {metricLabel}
+                                      </span>
+                                      {[['best', zMax], ['worst', zMin], ['median', zMed]].map(([label, val]) => (
+                                        <span key={label} className="text-gray-400">
+                                          {label} <strong className="text-gray-700 font-medium">{(val as number).toFixed(3)}</strong>
+                                        </span>
+                                      ))}
+                                      <span className="text-gray-400">
+                                        valid <strong className="text-gray-700 font-medium">{validCount}/{totalCount}</strong>
+                                      </span>
+                                    </div>
+                                    <div className="overflow-auto max-h-64 rounded-lg border border-gray-200">
+                                      <table className="w-full text-[10px] border-collapse">
+                                        <thead>
+                                          <tr>
+                                            <th className="p-0.5 bg-gray-50 border border-gray-200 font-medium text-gray-500" />
+                                            {xs.map((x, i) => (
+                                              <th key={i} className="p-0.5 bg-gray-50 border border-gray-200 font-mono text-gray-600 min-w-[38px]">{x}</th>
+                                            ))}
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {ys.map((y, yi) => (
+                                            <tr key={yi}>
+                                              <td className="p-0.5 bg-gray-50 border border-gray-200 font-mono text-gray-600 sticky left-0 h-7">{y}</td>
+                                              {xs.map((_, xi) => {
+                                                const v = zs[yi]?.[xi];
+                                                return (
+                                                  <td
+                                                    key={xi}
+                                                    className="p-0.5 border border-gray-200 text-center font-medium min-w-[38px] h-7 cursor-crosshair relative"
+                                                    style={{
+                                                      backgroundColor: toColor(v ?? null),
+                                                      color: textColor(v ?? null),
+                                                    }}
+                                                    title={`${optimizeResults.param_x}=${xs[xi]} ${optimizeResults.param_y}=${y} ${metricLabel}=${v != null ? v.toFixed(4) : 'N/A'}`}
+                                                  >
+                                                    {v != null ? v.toFixed(2) : '—'}
+                                                    {yi === optYi && xi === optXi && (
+                                                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-black opacity-70 ml-0.5 align-middle" />
+                                                    )}
+                                                  </td>
+                                                );
+                                              })}
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-2">
+                                      <span className="text-[10px] font-mono text-gray-400 w-8 text-right">{zMin.toFixed(2)}</span>
+                                      <div
+                                        className="flex-1 h-2 rounded-full"
+                                        style={{
+                                          background: `linear-gradient(to right, ${toColor(zMin)}, ${toColor((zMin + zMax) / 2)}, ${toColor(zMax)})`,
+                                        }}
+                                      />
+                                      <span className="text-[10px] font-mono text-gray-400 w-8">{zMax.toFixed(2)}</span>
+                                    </div>
+                                    {validCount === 0 && (
+                                      <div className="mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px]">
+                                        All backtests failed. {optimizeResults.error && (
+                                          <span>Error: {optimizeResults.error}</span>
+                                        )}
+                                        {optimizeResults.first_failing_combo && (
+                                          <span className="block mt-1 font-mono text-[10px]">
+                                            First failing combo: {JSON.stringify(optimizeResults.first_failing_combo)}
+                                          </span>
+                                        )}
+                                        {!optimizeResults.error && (
+                                          <span>Common causes: constraints too strict, param names mismatch, or insufficient data. Run a single backtest first.</span>
+                                        )}
+                                      </div>
+                                    )}
+                                    {validCount > 0 && optimizeResults.warning && (
+                                      <div className="mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px]">
+                                        {optimizeResults.warning}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                         </>
                       ) : (
                             <div className="text-center py-8 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 text-xs">No tunable parameters detected. Add <code className="bg-gray-200 px-1 rounded">self.params.setdefault(&apos;key&apos;, value)</code> to your strategy code.</div>
@@ -678,28 +1328,110 @@ export default function ResultsTabContent({
                           {walkForwardResults?.error && (
                             <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs">{walkForwardResults.error}</div>
                       )}
-                          {walkForwardResults && !walkForwardResults.error && (walkForwardResults.windows?.length || walkForwardResults.splits?.length) && (
-                        <div className="space-y-2">
-                              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Out-of-sample results</div>
-                              {walkForwardResults.avg_oos_return != null && (
-                                <div className="text-xs text-gray-700">Avg OOS return: <span className="font-semibold">{(walkForwardResults.avg_oos_return * 100).toFixed(1)}%</span></div>
-                              )}
-                              <div className="rounded-lg border border-gray-200 divide-y divide-gray-100 max-h-48 overflow-y-auto">
-                                {(walkForwardResults.windows ?? walkForwardResults.splits ?? []).map((w: { window?: number; train_period?: { start: string; end: string }; test_period?: { start: string; end: string }; train_start?: string; train_end?: string; test_start?: string; test_end?: string; test_sharpe?: number; test_return?: number; sharpe?: number; total_return?: number }, i: number) => {
-                                  const testStart = w.test_period?.start ?? w.test_start ?? '-';
-                                  const testEnd = w.test_period?.end ?? w.test_end ?? '-';
-                                  const sharpe = w.test_sharpe ?? w.sharpe;
-                                  const ret = w.test_return ?? w.total_return ?? 0;
-                                    return (
-                                    <div key={i} className="px-3 py-2 flex items-center justify-between text-xs hover:bg-gray-50">
-                                      <span className="text-gray-600 font-mono">{testStart} → {testEnd}</span>
-                                      <span className="text-gray-900">Sharpe {sharpe != null ? sharpe.toFixed(2) : '-'} · Return {(ret * 100).toFixed(1)}%</span>
+                          {walkForwardResults && !walkForwardResults.error && (walkForwardResults.windows?.length || walkForwardResults.splits?.length) && (() => {
+                            const wins = walkForwardResults.windows ?? walkForwardResults.splits ?? [];
+                            // One row per window: IS/OOS Sharpe + OOS return
+                            const chartData = wins.map((w, i) => ({
+                              label: `W${(w.window ?? i + 1)}`,
+                              is_sharpe: w.train_sharpe ?? null,
+                              oos_sharpe: w.test_sharpe ?? w.oos_sharpe ?? null,
+                              oos_return: (w.test_return ?? w.oos_return ?? 0) * 100,
+                              testStart: w.test_period?.start ?? w.test_start ?? '-',
+                              testEnd: w.test_period?.end ?? w.oos_end ?? '-',
+                            }));
+                            const hasIS = chartData.some(d => d.is_sharpe != null);
+                            return (
+                              <div className="space-y-3">
+                                {/* Summary row */}
+                                <div className="grid grid-cols-3 gap-2">
+                                  {walkForwardResults.avg_oos_return != null && (
+                                    <div className="p-2 rounded-lg border border-gray-200 bg-white">
+                                      <div className="text-[10px] text-gray-500 mb-0.5">Avg OOS Return</div>
+                                      <div className={`text-sm font-semibold ${walkForwardResults.avg_oos_return >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                        {(walkForwardResults.avg_oos_return * 100).toFixed(1)}%
                                       </div>
-                                    );
-                                })}
-                          </div>
-                        </div>
-                      )}
+                                    </div>
+                                  )}
+                                  {walkForwardResults.avg_oos_sharpe != null && (
+                                    <div className="p-2 rounded-lg border border-gray-200 bg-white">
+                                      <div className="text-[10px] text-gray-500 mb-0.5">Avg OOS Sharpe</div>
+                                      <div className={`text-sm font-semibold ${(walkForwardResults.avg_oos_sharpe ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                        {walkForwardResults.avg_oos_sharpe.toFixed(2)}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {walkForwardResults.overall_overfit_score != null && (
+                                    <div className="p-2 rounded-lg border border-gray-200 bg-white">
+                                      <div className="text-[10px] text-gray-500 mb-0.5">Overfit Score</div>
+                                      <div className={`text-sm font-semibold ${walkForwardResults.overall_overfit_score < 40 ? 'text-emerald-600' : walkForwardResults.overall_overfit_score < 70 ? 'text-amber-600' : 'text-red-500'}`}>
+                                        {walkForwardResults.overall_overfit_score.toFixed(0)}%
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* IS vs OOS Sharpe bar chart */}
+                                <div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                                    {hasIS ? 'IS vs OOS Sharpe per Window' : 'OOS Sharpe per Window'}
+                                  </div>
+                                  <div className="h-32">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                      <BarChart data={chartData} margin={{ top: 4, right: 48, bottom: 0, left: 0 }} barCategoryGap="25%">
+                                        <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }} />
+                                        <YAxis orientation="right" width={44} tickCount={3} tickLine={false} axisLine={false} tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }} tickFormatter={(v: number) => v.toFixed(1)} domain={['auto', 'auto']} />
+                                        <ReferenceLine y={0} stroke="rgba(0,0,0,0.15)" strokeWidth={1} />
+                                        <Tooltip
+                                          contentStyle={tooltipStyle}
+                                          formatter={(v, name) => [v != null ? Number(v).toFixed(2) : '—', name === 'is_sharpe' ? 'IS Sharpe' : 'OOS Sharpe']}
+                                        />
+                                        {hasIS && <Bar dataKey="is_sharpe" name="is_sharpe" fill="#94a3b8" radius={[2, 2, 0, 0]} maxBarSize={20} />}
+                                        <Bar dataKey="oos_sharpe" name="oos_sharpe" radius={[2, 2, 0, 0]} maxBarSize={20}>
+                                          {chartData.map((d, i) => (
+                                            <Cell key={i} fill={(d.oos_sharpe ?? 0) >= 0 ? '#10b981' : '#f87171'} />
+                                          ))}
+                                        </Bar>
+                                      </BarChart>
+                                    </ResponsiveContainer>
+                                  </div>
+                                </div>
+
+                                {/* OOS Return bar chart */}
+                                <div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">OOS Return per Window (%)</div>
+                                  <div className="h-20">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                      <BarChart data={chartData} margin={{ top: 4, right: 48, bottom: 0, left: 0 }} barCategoryGap="25%">
+                                        <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }} />
+                                        <YAxis orientation="right" width={44} tickCount={3} tickLine={false} axisLine={false} tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }} tickFormatter={(v: number) => `${v.toFixed(0)}%`} domain={['auto', 'auto']} />
+                                        <ReferenceLine y={0} stroke="rgba(0,0,0,0.15)" strokeWidth={1} />
+                                        <Tooltip contentStyle={tooltipStyle} formatter={(v) => [v != null ? `${Number(v).toFixed(1)}%` : '—', 'OOS Return']} />
+                                        <Bar dataKey="oos_return" radius={[2, 2, 0, 0]} maxBarSize={20}>
+                                          {chartData.map((d, i) => (
+                                            <Cell key={i} fill={d.oos_return >= 0 ? '#10b981' : '#f87171'} />
+                                          ))}
+                                        </Bar>
+                                      </BarChart>
+                                    </ResponsiveContainer>
+                                  </div>
+                                </div>
+
+                                {/* Detail list */}
+                                <div className="rounded-lg border border-gray-200 divide-y divide-gray-100 max-h-40 overflow-y-auto">
+                                  {chartData.map((d, i) => (
+                                    <div key={i} className="px-3 py-1.5 flex items-center justify-between text-[10px] hover:bg-gray-50">
+                                      <span className="text-gray-500 font-mono">{d.testStart} → {d.testEnd}</span>
+                                      <span className="text-gray-800">
+                                        OOS Sharpe {d.oos_sharpe != null ? d.oos_sharpe.toFixed(2) : '—'}
+                                        {d.is_sharpe != null ? ` · IS ${d.is_sharpe.toFixed(2)}` : ''}
+                                        {' '}· Return {d.oos_return.toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
                           {walkForwardResults && !walkForwardResults.error && !walkForwardResults.windows?.length && !walkForwardResults.splits?.length && (
                             <div className="px-3 py-4 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 text-xs text-center">Run completed. No splits data returned.</div>
                           )}
@@ -722,20 +1454,115 @@ export default function ResultsTabContent({
                           {monteCarloResults?.error && (
                             <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs">{monteCarloResults.error}</div>
                           )}
-                          {monteCarloResults && !monteCarloResults.error && monteCarloResults.percentiles && (
-                            <div className="space-y-2">
-                              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Percentiles</div>
-                              <div className="grid grid-cols-2 gap-2">
-                                {Object.entries(monteCarloResults.percentiles).map(([p, v]: [string, unknown]) => (
-                                  <div key={p} className="p-2 rounded-lg border border-gray-200 bg-white">
-                                    <span className="text-[10px] text-gray-500">{p}</span>
-                                    <div className="text-sm font-semibold text-gray-900">{typeof v === 'number' ? v.toFixed(2) : String(v)}</div>
+                          {monteCarloResults && !monteCarloResults.error && (monteCarloResults.percentiles || monteCarloResults.percentile_curves) && (
+                            <div className="space-y-3">
+                              {/* Summary stats */}
+                              <div className="grid grid-cols-3 gap-2">
+                                {monteCarloResults.probability_of_loss != null && (
+                                  <div className="p-2 rounded-lg border border-gray-200 bg-white">
+                                    <div className="text-[10px] text-gray-500 mb-0.5">Prob. of Loss</div>
+                                    <div className={`text-sm font-semibold ${monteCarloResults.probability_of_loss > 30 ? 'text-red-500' : 'text-emerald-600'}`}>
+                                      {monteCarloResults.probability_of_loss.toFixed(1)}%
+                                    </div>
+                                  </div>
+                                )}
+                                {monteCarloResults.mean_final != null && (
+                                  <div className="p-2 rounded-lg border border-gray-200 bg-white">
+                                    <div className="text-[10px] text-gray-500 mb-0.5">Mean Final</div>
+                                    <div className="text-sm font-semibold text-gray-900">${monteCarloResults.mean_final.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                                  </div>
+                                )}
+                                {monteCarloResults.std_final != null && (
+                                  <div className="p-2 rounded-lg border border-gray-200 bg-white">
+                                    <div className="text-[10px] text-gray-500 mb-0.5">Std Dev</div>
+                                    <div className="text-sm font-semibold text-gray-900">${monteCarloResults.std_final.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                                  </div>
+                                )}
                               </div>
-                                ))}
-                          </div>
-                    </div>
+
+                              {/* Fan chart if percentile_curves available, else table fallback */}
+                              {monteCarloResults.percentile_curves ? (() => {
+                                const pc = monteCarloResults.percentile_curves!;
+                                const fanData = pc.p5.map((v, i) => ({
+                                  step: i,
+                                  // Deltas for stacked bands
+                                  p5: v,
+                                  d_p5_p25: pc.p25[i] - v,
+                                  d_p25_p75: pc.p75[i] - pc.p25[i],
+                                  d_p75_p95: pc.p95[i] - pc.p75[i],
+                                  // Absolute vals for tooltip
+                                  abs_p5: v,
+                                  abs_p25: pc.p25[i],
+                                  abs_p50: pc.p50[i],
+                                  abs_p75: pc.p75[i],
+                                  abs_p95: pc.p95[i],
+                                  p50: pc.p50[i],
+                                }));
+                                const fmt = (v: number) => `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+                                const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ payload: typeof fanData[0] }> }) => {
+                                  if (!active || !payload?.length) return null;
+                                  const d = payload[0].payload;
+                                  return (
+                                    <div style={tooltipStyle}>
+                                      <div className="text-[10px] text-gray-400 mb-1">Step {d.step + 1}</div>
+                                      {[['p95', d.abs_p95], ['p75', d.abs_p75], ['p50', d.abs_p50], ['p25', d.abs_p25], ['p5', d.abs_p5]].map(([label, val]) => (
+                                        <div key={String(label)} className="flex justify-between gap-3 text-[10px]">
+                                          <span className="text-gray-500">{String(label)}</span>
+                                          <span className="font-mono text-gray-900">{fmt(Number(val))}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  );
+                                };
+                                return (
+                                  <div>
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Equity Fan</div>
+                                    <div className="h-40">
+                                      <ResponsiveContainer width="100%" height="100%">
+                                        <ComposedChart data={fanData} margin={{ top: 4, right: 48, bottom: 0, left: 0 }}>
+                                          <XAxis dataKey="step" hide />
+                                          <YAxis
+                                            orientation="right"
+                                            width={52}
+                                            tickCount={4}
+                                            tickLine={false}
+                                            axisLine={false}
+                                            tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }}
+                                            tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
+                                            domain={['auto', 'auto']}
+                                          />
+                                          <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(0,0,0,0.1)', strokeWidth: 1 }} />
+                                          {/* p5→p25, p25→p75, p75→p95 stacked bands */}
+                                          <Area stackId="fan" type="monotone" dataKey="p5" fill="transparent" stroke="none" />
+                                          <Area stackId="fan" type="monotone" dataKey="d_p5_p25" fill="#bfdbfe" fillOpacity={0.5} stroke="none" />
+                                          <Area stackId="fan" type="monotone" dataKey="d_p25_p75" fill="#93c5fd" fillOpacity={0.4} stroke="none" />
+                                          <Area stackId="fan" type="monotone" dataKey="d_p75_p95" fill="#bfdbfe" fillOpacity={0.5} stroke="none" />
+                                          {/* Median line (ignores stack) */}
+                                          <Line type="monotone" dataKey="p50" stroke="#2563eb" strokeWidth={2} dot={false} />
+                                        </ComposedChart>
+                                      </ResponsiveContainer>
+                                    </div>
+                                  </div>
+                                );
+                              })() : (
+                                /* No fan chart — show percentile table */
+                                monteCarloResults.percentiles && (
+                                  <div>
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Final Value Percentiles</div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      {Object.entries(monteCarloResults.percentiles).map(([p, v]: [string, unknown]) => (
+                                        <div key={p} className="p-2 rounded-lg border border-gray-200 bg-white">
+                                          <span className="text-[10px] text-gray-500">{p}</span>
+                                          <div className="text-sm font-semibold text-gray-900">{typeof v === 'number' ? v.toFixed(2) : String(v)}</div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )
+                              )}
+                            </div>
                           )}
-                          {monteCarloResults && !monteCarloResults.error && !monteCarloResults.percentiles && (
+                          {monteCarloResults && !monteCarloResults.error && !monteCarloResults.percentiles && !monteCarloResults.percentile_curves && (
                             <div className="px-3 py-4 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 text-xs text-center">Simulation completed. No percentile data returned.</div>
                           )}
                         </div>
@@ -794,27 +1621,38 @@ export default function ResultsTabContent({
                     </div>
                       )}
                       {activeResultsTab === 'heatmap' && (() => {
-                        const trades = results.trades || [];
-                        const byMonth: Record<string, number> = {};
-                        for (const t of trades) {
-                          const m = t.exit_date?.slice(0, 7) || t.entry_date?.slice(0, 7);
-                          if (m) byMonth[m] = (byMonth[m] || 0) + (t.pnl ?? 0);
+                        const ec = results.equity_curve || [];
+                        const byMonth: Record<string, { first: number; last: number }> = {};
+                        for (const p of ec) {
+                          const m = p.date?.slice(0, 7);
+                          if (!m) continue;
+                          if (!byMonth[m]) byMonth[m] = { first: p.equity, last: p.equity };
+                          else byMonth[m]!.last = p.equity;
                         }
                         const months = Object.keys(byMonth).sort();
-                        if (months.length === 0) return <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center text-gray-500 text-xs">No trades for monthly P&amp;L heatmap.</div>;
-                          return (
+                        const monthReturns: Record<string, number> = {};
+                        for (const m of months) {
+                          const v = byMonth[m]!;
+                          if (v.first > 0) monthReturns[m] = (v.last / v.first - 1) * 100;
+                        }
+                        const validMonths = Object.keys(monthReturns).sort();
+                        if (validMonths.length === 0) return <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center text-gray-500 text-xs">No equity curve for monthly returns heatmap.</div>;
+                        return (
                           <div className="space-y-2">
-                            <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Monthly P&amp;L ($)</div>
+                            <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Monthly Returns (%)</div>
                             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                              {months.map(m => (
-                                <div key={m} className={`p-2.5 rounded-lg border text-center ${(byMonth[m] ?? 0) >= 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
-                                  <div className="text-[10px] text-gray-500">{m}</div>
-                                  <div className="text-sm font-semibold">${(byMonth[m] ?? 0).toFixed(0)}</div>
-                                    </div>
-                                  ))}
-                                </div>
-                                                </div>
-                                              );
+                              {validMonths.map(m => {
+                                const ret = monthReturns[m] ?? 0;
+                                return (
+                                  <div key={m} className={`p-2.5 rounded-lg border text-center ${ret >= 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                                    <div className="text-[10px] text-gray-500">{m}</div>
+                                    <div className="text-sm font-semibold">{ret >= 0 ? '+' : ''}{ret.toFixed(2)}%</div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
                       })()}
                       {activeResultsTab === 'distribution' && (() => {
                         const trades = results.trades || [];

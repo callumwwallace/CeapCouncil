@@ -484,7 +484,7 @@ async def multiobjective_optimize_strategy(
 
 
 @router.post("/optimize/heatmap")
-@limiter.limit("3/minute")
+@limiter.limit("10/minute")
 async def parameter_heatmap(
     request: Request,
     body: HeatmapRequest,

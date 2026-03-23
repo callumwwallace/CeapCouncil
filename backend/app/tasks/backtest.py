@@ -1,8 +1,11 @@
 import ast
+import logging
 import resource
 import signal
 import math
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -270,13 +273,11 @@ def _compute_sortino_ratio(
     """Sortino ratio from daily equity values. MAR = risk_free_rate (default 0)."""
     if len(equity_curve) < 2:
         return None
-    equities = [p["equity"] for p in equity_curve]
+    equities = np.array([p["equity"] for p in equity_curve], dtype=float)
     returns = np.diff(equities) / equities[:-1]
     excess = returns - risk_free_rate / 252
-    downside = excess[excess < 0]
-    if len(downside) == 0:
-        return None  # no downside => undefined
-    downside_std = float(np.sqrt(np.mean(downside ** 2)))
+    # Downside dev: zero out wins, same as proper Sortino formula
+    downside_std = float(np.sqrt(np.mean(np.minimum(excess, 0) ** 2)))
     if downside_std == 0:
         return None
     sortino = float(np.mean(excess)) / downside_std
@@ -340,7 +341,7 @@ def _compute_calmar_ratio(
 
 
 def _compute_exposure_pct(trades: list[dict], total_bars: int) -> float | None:
-    """Percentage of trading days with an open position."""
+    """Calendar days in market / total. No weekday filter — works for equities, crypto, FX."""
     if not trades or total_bars <= 0:
         return None
     held_dates: set[str] = set()
@@ -350,8 +351,7 @@ def _compute_exposure_pct(trades: list[dict], total_bars: int) -> float | None:
             exit_ = datetime.strptime(t["exit_date"], "%Y-%m-%d")
             d = entry
             while d <= exit_:
-                if d.weekday() < 5:
-                    held_dates.add(d.strftime("%Y-%m-%d"))
+                held_dates.add(d.strftime("%Y-%m-%d"))
                 d += timedelta(days=1)
         except (ValueError, KeyError):
             continue
@@ -648,15 +648,7 @@ def run_backtest_task(self, backtest_id: int):
 
         engine.set_strategy(strategy)
 
-        try:
-            result: EngineResult = engine.run()
-        except Exception as run_err:
-            clean_msg = extract_strategy_error(run_err, strategy_code)
-            raise ValueError(f"Strategy runtime error:\n{clean_msg}") from run_err
-
-        results_dict = result.to_results_dict()
-
-        # Compute benchmark return
+        # Load benchmark first so we can compute alpha, beta, IR, R²
         benchmark_symbol = params.get("benchmark_symbol") or backtest.symbol
         benchmark_return = None
         try:
@@ -673,8 +665,12 @@ def run_backtest_task(self, backtest_id: int):
                     bm_data.index = bm_data.index.tz_localize(None)
                 bm_data = filter_to_trading_days(bm_data, benchmark_symbol)
             if not bm_data.empty and len(bm_data) >= 2:
-                first_close = float(bm_data["Close"].iloc[0])
-                last_close = float(bm_data["Close"].iloc[-1])
+                bm_closes = bm_data["Close"].values.astype(float)
+                bm_daily_returns = list((bm_closes[1:] - bm_closes[:-1]) / bm_closes[:-1])
+                bm_daily_returns = [r for r in bm_daily_returns if np.isfinite(r)]
+                engine.set_benchmark_returns(bm_daily_returns)
+                first_close = float(bm_closes[0])
+                last_close = float(bm_closes[-1])
                 if first_close > 0:
                     benchmark_return = round(
                         ((last_close - first_close) / first_close) * 100, 4
@@ -682,6 +678,13 @@ def run_backtest_task(self, backtest_id: int):
         except Exception:
             pass
 
+        try:
+            result: EngineResult = engine.run()
+        except Exception as run_err:
+            clean_msg = extract_strategy_error(run_err, strategy_code)
+            raise ValueError(f"Strategy runtime error:\n{clean_msg}") from run_err
+
+        results_dict = result.to_results_dict()
         results_dict["benchmark_return"] = benchmark_return
 
         # Backtest versioning: tie run to exact code, params, data, config for reproducibility
@@ -799,19 +802,28 @@ def _run_single_backtest(
     Either pass a pre-fetched ``data`` DataFrame **or** ``symbol`` /
     ``start_date`` / ``end_date`` to let this helper download it.
     """
+    # Period params (fast/slow etc) need to be ints — pandas rolling() chokes on 14.78
+    clean_combo = {}
+    for k, v in param_combo.items():
+        try:
+            f = float(v)
+            clean_combo[k] = int(f) if f.is_integer() else f
+        except (TypeError, ValueError):
+            clean_combo[k] = v
+
     try:
-        strategy_cls = _compile_with_timeout(code, params=param_combo)
-        strategy = strategy_cls(params=param_combo)
+        strategy_cls = _compile_with_timeout(code, params=clean_combo)
+        strategy = strategy_cls(params=clean_combo)
     except (ValueError, Exception) as e:
-        return {"params": param_combo, "error": _safe_task_error(e, "Optimization failed")}
+        return {"params": clean_combo, "error": _safe_task_error(e, "Optimization failed")}
 
     # Use pre-fetched data if available, otherwise download
     if data is None:
         if symbol is None:
-            return {"params": param_combo, "error": "No symbol or data provided"}
+            return {"params": clean_combo, "error": "No symbol or data provided"}
         data = _fetch_data(symbol, start_date, end_date, interval)
     if data is None or data.empty:
-        return {"params": param_combo, "error": "No market data for this window"}
+        return {"params": clean_combo, "error": "No market data for this window"}
 
     # Determine primary symbol from data or fallback
     sym = symbol or "SYM"
@@ -832,7 +844,7 @@ def _run_single_backtest(
     try:
         result: EngineResult = engine.run()
     except Exception as e:
-        return {"params": param_combo, "error": _safe_task_error(e, "Optimization failed")}
+        return {"params": clean_combo, "error": _safe_task_error(e, "Optimization failed")}
 
     m = result.metrics
 
@@ -851,7 +863,7 @@ def _run_single_backtest(
         return val
 
     return {
-        "params": param_combo,
+        "params": clean_combo,
         "total_return": _p(round(result.total_return_pct, 4)),
         "sharpe_ratio": _p(m.sharpe_ratio),
         "max_drawdown": _p(round(m.max_drawdown_pct, 4)),
@@ -1365,6 +1377,196 @@ def run_multiobjective_optimization_task(
 # Parameter Heatmap task
 # ---------------------------------------------------------------------------
 
+def _heatmap_build_grid(r: dict) -> list[float]:
+    """Evenly-spaced param values from a range (low, high, steps)."""
+    low = float(r.get("low", 5))
+    high = float(r.get("high", 50))
+    steps = max(2, min(int(r.get("steps", 15)), 25))
+
+    if low >= high:
+        logger.warning("_heatmap_build_grid: low (%s) >= high (%s), swapping.", low, high)
+        low, high = high, low
+
+    use_int = low.is_integer() and high.is_integer()
+
+    values = [
+        round(low + i * (high - low) / (steps - 1), 6)
+        for i in range(steps)
+    ]
+
+    # When low/high are whole numbers, snap grid to ints — avoids rolling(14.78) type errors
+    if use_int:
+        values = [int(round(v)) for v in values]
+        # Dedupe in case we get repeats (small range + lots of steps)
+        seen = set()
+        values = [v for v in values if not (v in seen or seen.add(v))]
+
+    return values
+
+
+def _heatmap_crossover_skip_mode(
+    param_x: str,
+    param_y: str,
+    x_range: dict,
+    y_range: dict,
+) -> str | None:
+    """
+    Figure out if we're doing crossover params — returns 'fast_on_x', 'fast_on_y', or None.
+    Only kicks in when param names suggest crossover AND ranges overlap.
+    """
+    x_lower, y_lower = param_x.lower(), param_y.lower()
+    fast_x = "fast" in x_lower or "short" in x_lower
+    slow_x = "slow" in x_lower or "long" in x_lower
+    fast_y = "fast" in y_lower or "short" in y_lower
+    slow_y = "slow" in y_lower or "long" in y_lower
+
+    is_crossover = (fast_x and slow_y) or (fast_y and slow_x)
+    if not is_crossover:
+        return None
+
+    x_low = float(x_range.get("low", 0))
+    x_high = float(x_range.get("high", 1))
+    y_low = float(y_range.get("low", 0))
+    y_high = float(y_range.get("high", 1))
+    if not (x_low < y_high and y_low < x_high):
+        return None
+
+    return "fast_on_x" if (fast_x and slow_y) else "fast_on_y"
+
+
+def _heatmap_should_skip(mode: str | None, xv: float, yv: float) -> bool:
+    if mode == "fast_on_x":
+        return xv >= yv
+    if mode == "fast_on_y":
+        return yv >= xv
+    return False
+
+
+def _heatmap_extract_metric(
+    result: dict,
+    metric: str,
+    xv: float,
+    yv: float,
+    param_x: str,
+    param_y: str,
+) -> tuple[float | None, str | None]:
+    """Returns (value, error_reason). error_reason is None when it worked."""
+    if "error" in result:
+        return None, f"backtest_error: {result['error']}"
+
+    raw = result.get(metric)
+    if raw is None:
+        return None, f"metric_missing: {metric} not in result for {param_x}={xv}, {param_y}={yv}"
+
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None, f"metric_not_numeric: {metric}={raw!r} for {param_x}={xv}, {param_y}={yv}"
+
+    if math.isnan(val) or math.isinf(val):
+        return None, f"metric_invalid: {metric}={val} for {param_x}={xv}, {param_y}={yv}"
+
+    return val, None
+
+
+def _heatmap_record_diagnostic(
+    diagnostics: list[dict],
+    reason: str,
+    xv: float,
+    yv: float,
+    param_x: str,
+    param_y: str,
+    detail: str = "",
+    max_records: int = 10,
+) -> None:
+    if len(diagnostics) >= max_records:
+        return
+    entry: dict = {"reason": reason, param_x: xv, param_y: yv}
+    if detail:
+        entry["detail"] = detail
+    diagnostics.append(entry)
+
+
+def _heatmap_std(values: list[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    mean = sum(values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
+    return math.sqrt(variance)
+
+
+def _heatmap_build_output(
+    param_x: str,
+    param_y: str,
+    x_values: list,
+    y_values: list,
+    z_values: list,
+    metric: str,
+    total: int,
+    diagnostics: list[dict],
+) -> dict:
+    valid_cells = [v for row in z_values for v in row if v is not None]
+    valid_count = len(valid_cells)
+    failure_rate = 1.0 - valid_count / total if total else 1.0
+
+    out: dict = {
+        "status": "completed",
+        "param_x": param_x,
+        "param_y": param_y,
+        "x_values": x_values,
+        "y_values": y_values,
+        "z_values": z_values,
+        "metric": metric,
+        "valid_count": valid_count,
+        "total_count": total,
+    }
+
+    if valid_cells:
+        sorted_vals = sorted(valid_cells)
+        out["stats"] = {
+            "best": max(valid_cells),
+            "worst": min(valid_cells),
+            "median": sorted_vals[len(sorted_vals) // 2],
+            "mean": sum(valid_cells) / valid_count,
+            "std": _heatmap_std(valid_cells),
+        }
+        best_val = out["stats"]["best"]
+        for yi, row in enumerate(z_values):
+            for xi, v in enumerate(row):
+                if v == best_val:
+                    out["optimal"] = {
+                        "xi": xi,
+                        "yi": yi,
+                        param_x: x_values[xi],
+                        param_y: y_values[yi],
+                        "value": best_val,
+                    }
+                    break
+            else:
+                continue
+            break
+
+    if valid_count == 0:
+        out["status"] = "failed"
+        out["error"] = (
+            diagnostics[0]["reason"] if diagnostics
+            else "All cells returned None. Check your strategy code, metric name, and date range."
+        )
+        if diagnostics:
+            d0 = diagnostics[0]
+            out["first_failing_combo"] = {param_x: d0.get(param_x), param_y: d0.get(param_y)}
+    elif failure_rate > 0.5:
+        out["warning"] = (
+            f"{failure_rate:.0%} of parameter combinations failed. "
+            f"First failure: {diagnostics[0]['reason'] if diagnostics else 'unknown'}"
+        )
+
+    if diagnostics:
+        out["diagnostics"] = diagnostics
+
+    return out
+
+
 @celery_app.task(bind=True, time_limit=600, soft_time_limit=540)
 def run_heatmap_task(
     self,
@@ -1382,64 +1584,94 @@ def run_heatmap_task(
     metric: str = "sharpe_ratio",
     constraints: dict | None = None,
     interval: str = "1d",
-):
-    """Generate a 2D parameter stability heatmap."""
+) -> dict:
+    """
+    Generate a 2D parameter stability heatmap for a trading strategy.
+
+    Returns a grid of metric values across all (param_x, param_y) combinations.
+    Cells are None when the combo is invalid, violates constraints, or errors.
+    """
     data = _fetch_data(symbol, start_date, end_date, interval)
     if data is None or data.empty:
-        return {"status": "failed", "error": "No market data for the selected date range"}
+        return {"status": "failed", "error": "No market data for the selected date range."}
 
-    x_low, x_high = x_range.get("low", 5), x_range.get("high", 50)
-    x_steps = min(x_range.get("steps", 15), 25)
-    y_low, y_high = y_range.get("low", 5), y_range.get("high", 50)
-    y_steps = min(y_range.get("steps", 15), 25)
+    x_values = _heatmap_build_grid(x_range)
+    y_values = _heatmap_build_grid(y_range)
 
-    x_values = [round(x_low + i * (x_high - x_low) / max(x_steps - 1, 1), 4) for i in range(x_steps)]
-    y_values = [round(y_low + i * (y_high - y_low) / max(y_steps - 1, 1), 4) for i in range(y_steps)]
+    if not x_values or not y_values:
+        return {
+            "status": "failed",
+            "error": "Parameter range produced an empty grid. Check low/high/steps.",
+        }
 
-    z_values = []
     total = len(x_values) * len(y_values)
+    skip_mode = _heatmap_crossover_skip_mode(param_x, param_y, x_range, y_range)
+
+    z_values: list[list[float | None]] = []
+    diagnostics: list[dict] = []
     count = 0
 
     for yi, yv in enumerate(y_values):
-        row = []
+        row: list[float | None] = []
         for xi, xv in enumerate(x_values):
-            combo = {param_x: xv, param_y: yv}
-            result = _run_single_backtest(
-                code=code, initial_capital=initial_capital,
-                commission=commission, slippage=slippage,
-                param_combo=combo, data=data.copy(), symbol=symbol,
-            )
-            val = result.get(metric, 0) if "error" not in result else None
+            count += 1
 
-            if constraints and val is not None and "error" not in result:
+            if _heatmap_should_skip(skip_mode, xv, yv):
+                row.append(None)
+                if count % 10 == 0:
+                    self.update_state(state="PROGRESS", meta={"current": count, "total": total})
+                continue
+
+            try:
+                result = _run_single_backtest(
+                    code=code,
+                    initial_capital=initial_capital,
+                    commission=commission,
+                    slippage=slippage,
+                    param_combo={param_x: xv, param_y: yv},
+                    data=data.copy(deep=True),
+                    symbol=symbol,
+                )
+            except Exception as exc:
+                _heatmap_record_diagnostic(
+                    diagnostics, "exception", xv, yv, param_x, param_y, detail=str(exc)
+                )
+                row.append(None)
+                if count % 10 == 0:
+                    self.update_state(state="PROGRESS", meta={"current": count, "total": total})
+                continue
+
+            val, reason = _heatmap_extract_metric(result, metric, xv, yv, param_x, param_y)
+
+            if reason:
+                _heatmap_record_diagnostic(diagnostics, reason, xv, yv, param_x, param_y)
+
+            if val is not None and constraints:
                 violated = _check_constraints(result, constraints)
                 if violated:
-                    val = None
-
-            if val is not None:
-                try:
-                    val = float(val)
-                    if math.isnan(val) or math.isinf(val):
-                        val = None
-                except (TypeError, ValueError):
+                    _heatmap_record_diagnostic(
+                        diagnostics, "constraint_violated", xv, yv, param_x, param_y
+                    )
                     val = None
 
             row.append(val)
-            count += 1
             if count % 10 == 0:
                 self.update_state(state="PROGRESS", meta={"current": count, "total": total})
 
         z_values.append(row)
 
-    return {
-        "status": "completed",
-        "param_x": param_x,
-        "param_y": param_y,
-        "x_values": x_values,
-        "y_values": y_values,
-        "z_values": z_values,
-        "metric": metric,
-    }
+    self.update_state(state="PROGRESS", meta={"current": total, "total": total})
+
+    return _heatmap_build_output(
+        param_x=param_x,
+        param_y=param_y,
+        x_values=x_values,
+        y_values=y_values,
+        z_values=z_values,
+        metric=metric,
+        total=total,
+        diagnostics=diagnostics,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1664,10 +1896,14 @@ def run_monte_carlo_task(
     pnls = [t["pnl"] for t in trades]
     rng = np.random.default_rng(42)
 
+    n_steps = 100  # normalised curve length
+
     final_values = []
-    # Store a few equity curves for visualization
+    # Store a few equity curves for visualisation (10 paths)
     sample_curves: list[list[float]] = []
     sample_indices = set(range(0, n_simulations, max(1, n_simulations // 10)))
+    # Collect all curves downsampled to n_steps for per-step percentiles
+    all_curves: list[list[float]] = []
 
     for i in range(n_simulations):
         shuffled = rng.permutation(pnls)
@@ -1677,12 +1913,17 @@ def run_monte_carlo_task(
             equity += pnl
             curve.append(round(equity, 2))
         final_values.append(equity)
+
+        # Downsample to n_steps for fan chart
+        if len(curve) > n_steps:
+            step = len(curve) / n_steps
+            downsampled = [curve[round(j * step)] for j in range(n_steps)]
+        else:
+            downsampled = curve + [curve[-1]] * (n_steps - len(curve))
+        all_curves.append(downsampled)
+
         if i in sample_indices:
-            # Downsample curve to 100 points
-            if len(curve) > 100:
-                step = len(curve) / 100
-                curve = [curve[round(j * step)] for j in range(100)]
-            sample_curves.append(curve)
+            sample_curves.append(downsampled)
 
         if i % 100 == 0:
             self.update_state(state="PROGRESS", meta={"current": i, "total": n_simulations})
@@ -1696,6 +1937,16 @@ def run_monte_carlo_task(
         "p95": round(float(np.percentile(fv, 95)), 2),
     }
 
+    # Per-step percentile curves for the fan chart (shape: n_steps each)
+    curves_matrix = np.array(all_curves)  # (n_simulations, n_steps)
+    percentile_curves = {
+        "p5":  [round(float(v), 2) for v in np.percentile(curves_matrix, 5, axis=0)],
+        "p25": [round(float(v), 2) for v in np.percentile(curves_matrix, 25, axis=0)],
+        "p50": [round(float(v), 2) for v in np.percentile(curves_matrix, 50, axis=0)],
+        "p75": [round(float(v), 2) for v in np.percentile(curves_matrix, 75, axis=0)],
+        "p95": [round(float(v), 2) for v in np.percentile(curves_matrix, 95, axis=0)],
+    }
+
     return {
         "status": "completed",
         "n_simulations": n_simulations,
@@ -1703,6 +1954,7 @@ def run_monte_carlo_task(
         "mean_final": round(float(np.mean(fv)), 2),
         "std_final": round(float(np.std(fv)), 2),
         "sample_curves": sample_curves,
+        "percentile_curves": percentile_curves,
         "probability_of_loss": round(float(np.mean(fv < initial_capital)) * 100, 2),
     }
 

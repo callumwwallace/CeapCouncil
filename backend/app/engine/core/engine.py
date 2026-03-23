@@ -126,6 +126,7 @@ class EngineResult:
     rolling_sharpe: list[dict] | None = None
     rolling_sortino: list[dict] | None = None
     rolling_beta: list[dict] | None = None
+    rolling_vol: list[dict] | None = None
 
     # Custom strategy charts
     custom_charts: dict = field(default_factory=dict)
@@ -191,9 +192,16 @@ class EngineResult:
             "total_slippage": p(m.total_slippage),
             "total_spread_cost": p(m.total_spread_cost),
             "cost_as_pct_of_pnl": p(m.cost_as_pct_of_pnl),
+            "avg_win": p(m.avg_win),
+            "avg_loss": p(m.avg_loss),
+            "loss_rate": p(m.loss_rate),
+            "cagr": p(m.cagr),
+            "num_days": p(m.num_days),
+            "treynor_ratio": p(m.treynor_ratio),
             "rolling_sharpe": m.rolling_sharpe,
             "rolling_sortino": m.rolling_sortino,
             "rolling_beta": m.rolling_beta,
+            "rolling_vol": m.rolling_vol,
             "var_95": p(m.var_95),
             "cvar_95": p(m.cvar_95),
             "var_99": p(m.var_99),
@@ -279,6 +287,8 @@ class Engine:
         # Wire up callbacks
         self._broker.set_fill_callback(self._on_fill)
         self._broker.set_order_submit_callback(self._on_order_submit)
+        self._broker.set_cancel_callback(self._on_cancel_dispatch)
+        self._broker.set_reject_callback(self._on_reject_dispatch)
 
         def _pre_submit_check(order):
             price = self._portfolio._current_prices.get(order.symbol, 1.0)
@@ -290,6 +300,13 @@ class Engine:
 
         # Event log for audit
         self._event_log: list[dict] = []
+
+        # Benchmark returns for alpha/beta/IR
+        self._benchmark_returns: list[float] | None = None
+
+    def set_benchmark_returns(self, returns: list[float]) -> None:
+        """Provide benchmark daily returns for CAPM metrics (alpha, beta, IR, R²)."""
+        self._benchmark_returns = returns
 
     def add_data(self, symbol: str, df: pd.DataFrame, corporate_actions=None) -> None:
         """Add market data for a symbol."""
@@ -320,6 +337,7 @@ class Engine:
             portfolio=self._portfolio,
             broker=self._broker,
             data_feed=self._data_feed,
+            initial_capital=self.config.initial_capital,
         )
         self._strategy._set_context(ctx)
         self._strategy.on_init()
@@ -428,7 +446,7 @@ class Engine:
             self._strategy._tick_executors(primary_bar, timestamp)
 
             # Check scheduled events
-            self._strategy._check_schedules(bar_index)
+            self._strategy._check_schedules(bar_index, primary_bar)
 
             # Margin checks (before equity recording so the curve is consistent)
             if self._portfolio.margin.enabled:
@@ -497,6 +515,7 @@ class Engine:
             equity_curve=equity_curve,
             trades=trades_list,
             initial_capital=self.config.initial_capital,
+            benchmark_returns=self._benchmark_returns,
         )
 
         # Attach funding rate totals from portfolio
@@ -532,6 +551,7 @@ class Engine:
             rolling_sharpe=metrics.rolling_sharpe,
             rolling_sortino=metrics.rolling_sortino,
             rolling_beta=metrics.rolling_beta,
+            rolling_vol=metrics.rolling_vol,
             custom_charts=custom_charts,
             alerts=alerts,
             event_log=self._event_log,
@@ -548,6 +568,16 @@ class Engine:
             "order_type": order.order_type.value,
             "quantity": order.quantity,
         })
+
+    def _on_cancel_dispatch(self, order: "Order") -> None:
+        """Dispatch cancel events to the strategy."""
+        if self._strategy:
+            self._strategy.on_order_cancel(order)
+
+    def _on_reject_dispatch(self, order: "Order") -> None:
+        """Dispatch reject events to the strategy."""
+        if self._strategy:
+            self._strategy.on_order_reject(order)
 
     def _on_fill(self, fill: FillEvent) -> None:
         """Handle fill events : update portfolio and notify strategy."""

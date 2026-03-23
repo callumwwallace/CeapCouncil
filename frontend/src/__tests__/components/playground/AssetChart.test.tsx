@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import AssetChart from '@/components/playground/AssetChart';
 
 // Mock Recharts to avoid complex SVG rendering issues
@@ -36,55 +36,9 @@ describe('AssetChart', () => {
       expect(screen.getByTestId('asset-chart')).toBeInTheDocument();
     });
 
-    it('renders indicator toggles', () => {
+    it('renders chart controls toolbar', () => {
       render(<AssetChart {...defaultProps} />);
-      expect(screen.getByTestId('indicator-toggles')).toBeInTheDocument();
-      expect(screen.getByTestId('indicator-ma20')).toBeInTheDocument();
-      expect(screen.getByTestId('indicator-ma50')).toBeInTheDocument();
-    });
-  });
-
-  describe('indicator toggles', () => {
-    it('indicators are off by default', () => {
-      render(<AssetChart {...defaultProps} />);
-      const ma20Button = screen.getByTestId('indicator-ma20');
-      const ma50Button = screen.getByTestId('indicator-ma50');
-
-      expect(ma20Button.className).not.toContain('bg-blue-500');
-      expect(ma50Button.className).not.toContain('bg-orange-500');
-    });
-
-    it('toggles MA20 indicator on click', () => {
-      render(<AssetChart {...defaultProps} />);
-      const ma20Button = screen.getByTestId('indicator-ma20');
-
-      fireEvent.click(ma20Button);
-
-      expect(ma20Button.className).toContain('bg-blue-500');
-    });
-
-    it('toggles MA50 indicator on click', () => {
-      render(<AssetChart {...defaultProps} />);
-      const ma50Button = screen.getByTestId('indicator-ma50');
-
-      fireEvent.click(ma50Button);
-
-      expect(ma50Button.className).toContain('bg-orange-500');
-    });
-
-    it('calls onIndicatorsChange when controlled', () => {
-      const onIndicatorsChange = jest.fn();
-      render(
-        <AssetChart
-          {...defaultProps}
-          showIndicators={{ ma20: false, ma50: false }}
-          onIndicatorsChange={onIndicatorsChange}
-        />
-      );
-
-      fireEvent.click(screen.getByTestId('indicator-ma20'));
-
-      expect(onIndicatorsChange).toHaveBeenCalledWith({ ma20: true, ma50: false });
+      expect(screen.getByTestId('chart-controls')).toBeInTheDocument();
     });
   });
 });

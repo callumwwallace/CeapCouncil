@@ -64,6 +64,9 @@ class BrokerSimulator:
         self._on_fill: Callable[[FillEvent], None] | None = None
         # Order submit callback (set by engine for audit logging)
         self._on_order_submit: Callable[[Order, datetime], None] | None = None
+        # Cancel/reject callbacks (set by engine to notify strategy)
+        self._on_cancel: Callable[[Order], None] | None = None
+        self._on_reject: Callable[[Order], None] | None = None
         # Pre-submit check (order) -> (allowed, reason). If returns (False, _), order is rejected.
         self._pre_submit_check: Callable[[Order], tuple[bool, str]] | None = None
 
@@ -72,6 +75,14 @@ class BrokerSimulator:
 
     def set_order_submit_callback(self, callback: Callable[[Order, datetime], None]) -> None:
         self._on_order_submit = callback
+
+    def set_cancel_callback(self, callback: Callable[[Order], None]) -> None:
+        """Set callback invoked whenever an order is cancelled."""
+        self._on_cancel = callback
+
+    def set_reject_callback(self, callback: Callable[[Order], None]) -> None:
+        """Set callback invoked whenever an order is rejected."""
+        self._on_reject = callback
 
     def set_pre_submit_check(self, callback: Callable[[Order], tuple[bool, str]] | None) -> None:
         """Set optional pre-submit validator. If it returns (False, reason), order is rejected."""
@@ -88,6 +99,8 @@ class BrokerSimulator:
                 self._order_map[order.order_id] = order
                 if self._on_order_submit:
                     self._on_order_submit(order, timestamp)
+                if self._on_reject:
+                    self._on_reject(order)
                 return order
         order.submit(timestamp)
         self._pending_orders.append(order)
@@ -103,6 +116,8 @@ class BrokerSimulator:
         if order and order.is_active:
             order.cancel(timestamp)
             self._pending_orders = [o for o in self._pending_orders if o.order_id != order_id]
+            if self._on_cancel:
+                self._on_cancel(order)
             return True
         return False
 
@@ -115,6 +130,8 @@ class BrokerSimulator:
             if symbol is None or order.symbol == symbol:
                 order.cancel(ts)
                 cancelled += 1
+                if self._on_cancel:
+                    self._on_cancel(order)
             else:
                 remaining.append(order)
         self._pending_orders = remaining
@@ -202,6 +219,8 @@ class BrokerSimulator:
             if order.time_in_force == TimeInForce.DAY and order.is_active:
                 order.cancel(timestamp)
                 cancelled += 1
+                if self._on_cancel:
+                    self._on_cancel(order)
             else:
                 remaining.append(order)
         self._pending_orders = remaining

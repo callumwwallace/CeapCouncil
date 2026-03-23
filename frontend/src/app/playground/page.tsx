@@ -60,7 +60,8 @@ import StatusBar from '@/components/playground/StatusBar';
 import AssetSelector from '@/components/playground/AssetSelector';
 import ConfigSelect from '@/components/playground/ConfigSelect';
 import ChartHeader from '@/components/playground/ChartHeader';
-import ResultsBar from '@/components/playground/ResultsBar';
+import ResultsSidebar from '@/components/playground/ResultsSidebar';
+import KpiStrip from '@/components/playground/KpiStrip';
 import SignInPrompt from '@/components/auth/SignInPrompt';
 import api from '@/lib/api';
 import type { BacktestTrade, EquityCurvePoint, DrawdownPoint, Strategy } from '@/types';
@@ -453,6 +454,12 @@ export default function PlaygroundPage() {
             max_consecutive_losses: result.max_consecutive_losses ?? r?.max_consecutive_losses ?? undefined,
             calmar_ratio: result.calmar_ratio ?? r?.calmar_ratio ?? undefined,
             exposure_pct: result.exposure_pct ?? r?.exposure_pct ?? undefined,
+            avg_win: r?.avg_win,
+            avg_loss: r?.avg_loss,
+            loss_rate: r?.loss_rate,
+            cagr: r?.cagr,
+            num_days: r?.num_days,
+            treynor_ratio: r?.treynor_ratio,
             benchmark_return: benchmarkReturn,
             orders: r?.orders ?? undefined,
             expectancy: r?.expectancy ?? undefined,
@@ -469,6 +476,8 @@ export default function PlaygroundPage() {
             net_funding: r?.net_funding ?? undefined,
             rolling_sharpe: r?.rolling_sharpe ?? undefined,
             rolling_sortino: r?.rolling_sortino ?? undefined,
+            rolling_beta: r?.rolling_beta ?? undefined,
+            rolling_vol: r?.rolling_vol ?? undefined,
             var_95: r?.var_95 ?? undefined,
             cvar_95: r?.cvar_95 ?? undefined,
             var_99: r?.var_99 ?? undefined,
@@ -973,6 +982,9 @@ export default function PlaygroundPage() {
         </div>
       )}
 
+      {/* KPI Strip - appears after backtest runs, slim metric bar above chart */}
+      {results && <KpiStrip results={results} />}
+
       {/* Main Content Area - chart uses full width, icon bar overlays */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* Icon toolbar - absolute overlay on left edge, no layout space */}
@@ -1014,42 +1026,42 @@ export default function PlaygroundPage() {
             })}
         </div>
 
-        {/* Main Content - Chart + Results Bar - ml-12 reserves space for icon bar overlay */}
-        <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden ml-12">
-          <div ref={chartAreaRef} className={`flex-1 min-h-[300px] relative flex flex-col overflow-hidden ${effectiveChartTheme === 'light' ? 'bg-gray-50' : 'bg-gray-950'}`}>
-            <ErrorBoundary label="Chart">
-                <AssetChart 
-                  symbol={config.symbol} 
-                  startDate={config.startDate} 
+        {/* Main Content - Chart + Right Sidebar - ml-12 reserves space for icon bar overlay */}
+        <div className="flex-1 flex flex-row min-w-0 min-h-0 overflow-hidden ml-12">
+          {/* Chart column */}
+          <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+            <div ref={chartAreaRef} className={`flex-1 min-h-[300px] relative flex flex-col overflow-hidden ${effectiveChartTheme === 'light' ? 'bg-gray-50' : 'bg-gray-950'}`}>
+              <ErrorBoundary label="Chart">
+                <AssetChart
+                  symbol={config.symbol}
+                  startDate={config.startDate}
                   endDate={config.endDate}
                   interval={config.interval}
                   trades={tradeMarkers}
-                equityCurve={results?.equity_curve}
-                drawdownSeries={results?.drawdown_series}
-                benchmarkReturn={results?.benchmark_return ?? undefined}
-                chartTheme={effectiveChartTheme}
-              />
-            </ErrorBoundary>
-        </div>
+                  equityCurve={results?.equity_curve}
+                  drawdownSeries={results?.drawdown_series}
+                  benchmarkReturn={results?.benchmark_return ?? undefined}
+                  chartTheme={effectiveChartTheme}
+                />
+              </ErrorBoundary>
+            </div>
+          </div>
 
-          {/* Results Bar - under chart */}
-                {results && (
-            <ResultsBar
+          {/* Right Results Sidebar - slides in when results exist */}
+          {results && (
+            <ResultsSidebar
               results={results}
-              expanded={resultsBarExpanded}
-              onToggle={() => setResultsBarExpanded((v) => !v)}
+              collapsed={rightSidebarCollapsed}
+              onCollapse={setRightSidebarCollapsed}
+              width={resultsPanelWidth}
+              onResizeStart={handleResultsResizeStart}
               onExport={handleExportResults}
               backtestShareToken={lastBacktestShareToken}
               symbol={config.symbol}
-              renderContent={() => (
-                <ResultsTabContent
-                  results={results}
-                  activeTab={activeResultsTab}
-                  onTabChange={setActiveResultsTab}
-                  analytics={analytics}
-                  paramDefs={paramDefs}
-                />
-              )}
+              activeTab={activeResultsTab}
+              onTabChange={setActiveResultsTab}
+              analytics={analytics}
+              paramDefs={paramDefs}
             />
           )}
         </div>

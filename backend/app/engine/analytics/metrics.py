@@ -30,6 +30,14 @@ class MetricsResult:
     max_consecutive_losses: int = 0
     exposure_pct: float | None = None
     expectancy: float | None = None
+    avg_win: float | None = None
+    avg_loss: float | None = None
+    loss_rate: float | None = None
+
+    # Performance (extended)
+    cagr: float | None = None
+    num_days: int | None = None
+    treynor_ratio: float | None = None
 
     # Risk
     volatility_annual: float | None = None
@@ -72,6 +80,7 @@ class MetricsResult:
     rolling_sortino: list[dict] | None = None
     rolling_beta: list[dict] | None = None
     rolling_alpha: list[dict] | None = None
+    rolling_vol: list[dict] | None = None
 
     def to_dict(self) -> dict:
         d = {}
@@ -106,8 +115,11 @@ def compute_metrics(
             trade_dicts.append(t)
 
     equities = np.array([p["equity"] for p in equity_curve], dtype=float)
-    returns = np.diff(equities) / equities[:-1]
-    returns = returns[np.isfinite(returns)]
+    raw_returns = np.diff(equities) / equities[:-1]
+    finite_mask = np.isfinite(raw_returns)
+    returns = raw_returns[finite_mask]
+    # Map each return to its date so rolling metrics line up
+    return_dates = [equity_curve[j + 1]["date"] for j in range(len(raw_returns)) if finite_mask[j]]
 
     if len(returns) == 0:
         return result
@@ -116,25 +128,24 @@ def compute_metrics(
     final = equities[-1]
     result.total_return_pct = round((final - initial_capital) / initial_capital * 100, 4)
 
-    # Sharpe Ratio
+    # Sharpe Ratio (sample std, ddof=1)
     daily_rf = risk_free_rate / 252
     excess = returns - daily_rf
-    if np.std(excess) > 0:
-        result.sharpe_ratio = round(float(np.mean(excess) / np.std(excess) * math.sqrt(252)), 4)
+    if np.std(excess, ddof=1) > 0:
+        result.sharpe_ratio = round(float(np.mean(excess) / np.std(excess, ddof=1) * math.sqrt(252)), 4)
 
-    # Sortino Ratio
-    downside = excess[excess < 0]
-    if len(downside) > 0:
-        downside_std = float(np.sqrt(np.mean(downside ** 2)))
-        if downside_std > 0:
-            result.sortino_ratio = round(float(np.mean(excess) / downside_std * math.sqrt(252)), 4)
+    # Sortino: downside dev over all returns (zero out wins). np.minimum(excess, 0)
+    # gives proper formula — divides by N_total, not just losing days.
+    downside_returns = np.minimum(excess, 0)
+    downside_std = float(np.sqrt(np.mean(downside_returns ** 2)))
+    if downside_std > 0:
+        result.sortino_ratio = round(float(np.mean(excess) / downside_std * math.sqrt(252)), 4)
 
-    # Volatility
-    result.volatility_annual = round(float(np.std(returns) * math.sqrt(252)) * 100, 4)
+    # Volatility (annualised)
+    result.volatility_annual = round(float(np.std(returns, ddof=1) * math.sqrt(252)) * 100, 4)
 
-    # Downside deviation
-    if len(downside) > 0:
-        result.downside_deviation = round(float(np.std(downside) * math.sqrt(252)) * 100, 4)
+    # Downside dev: same as Sortino denominator
+    result.downside_deviation = round(downside_std * math.sqrt(252) * 100, 4)
 
     # VaR / CVaR (historical simulation method)
     if len(returns) >= 10:
@@ -159,12 +170,21 @@ def compute_metrics(
     drawdowns = (peak - equities) / peak * 100
     result.max_drawdown_pct = round(float(np.max(drawdowns)), 4)
 
-    # Calmar Ratio
+    # CAGR & Calmar: use calendar days between first/last bar
     num_days = len(equity_curve)
-    if result.max_drawdown_pct > 0 and num_days > 0:
-        years = num_days / 252
-        if years > 0:
-            ann_return = ((final / initial_capital) ** (1 / years) - 1) * 100
+    result.num_days = num_days
+    years = 0.0
+    try:
+        start_dt = datetime.strptime(equity_curve[0]["date"][:10], "%Y-%m-%d")
+        end_dt = datetime.strptime(equity_curve[-1]["date"][:10], "%Y-%m-%d")
+        calendar_days = (end_dt - start_dt).days
+        years = calendar_days / 365.25 if calendar_days > 0 else 0.0
+    except (ValueError, IndexError):
+        years = num_days / 252  # fallback if dates are wonky
+    if years > 0:
+        ann_return = ((final / initial_capital) ** (1 / years) - 1) * 100
+        result.cagr = round(ann_return, 4)
+        if result.max_drawdown_pct > 0:
             result.calmar_ratio = round(ann_return / result.max_drawdown_pct, 4)
 
     # Max drawdown duration
@@ -191,12 +211,15 @@ def compute_metrics(
         if gross_loss > 0:
             result.profit_factor = round(gross_profit / gross_loss, 4)
 
-        # Expectancy
+        # Expectancy and win/loss stats
         avg_win = gross_profit / len(winners) if winners else 0
         avg_loss = gross_loss / len(losers) if losers else 0
         win_pct = len(winners) / len(trade_dicts)
         loss_pct = 1 - win_pct
         result.expectancy = round(avg_win * win_pct - avg_loss * loss_pct, 2)
+        result.avg_win = round(avg_win, 2) if winners else None
+        result.avg_loss = round(avg_loss, 2) if losers else None
+        result.loss_rate = round(loss_pct * 100, 2)
 
         # Avg trade duration
         durations = []
@@ -230,7 +253,8 @@ def compute_metrics(
         if abs(total_pnl) > 0:
             result.cost_as_pct_of_pnl = round(total_cost / abs(total_pnl) * 100, 2)
 
-    # Exposure %
+    # Exposure % — all calendar days held, divided by total calendar days of the backtest.
+    # No weekday filter: correct for equities, crypto, and FX alike.
     if trade_dicts and num_days > 0:
         held_days: set[str] = set()
         for t in trade_dicts:
@@ -239,12 +263,18 @@ def compute_metrics(
                 exit_ = datetime.strptime(t["exit_date"][:10], "%Y-%m-%d")
                 d = entry
                 while d <= exit_:
-                    if d.weekday() < 5:
-                        held_days.add(d.strftime("%Y-%m-%d"))
+                    held_days.add(d.strftime("%Y-%m-%d"))
                     d += timedelta(days=1)
             except (ValueError, KeyError):
                 pass
-        result.exposure_pct = round(len(held_days) / num_days * 100, 2)
+        try:
+            start_dt = datetime.strptime(equity_curve[0]["date"][:10], "%Y-%m-%d")
+            end_dt = datetime.strptime(equity_curve[-1]["date"][:10], "%Y-%m-%d")
+            total_calendar_days = (end_dt - start_dt).days + 1
+        except (ValueError, IndexError):
+            total_calendar_days = num_days
+        if total_calendar_days > 0:
+            result.exposure_pct = round(len(held_days) / total_calendar_days * 100, 2)
 
     # -- CAPM Decomposition --
     if benchmark_returns is not None and len(benchmark_returns) >= len(returns):
@@ -259,33 +289,40 @@ def compute_metrics(
                 result.alpha = round(
                     float((np.mean(ret_valid) - daily_rf - result.beta * (np.mean(bm_valid) - daily_rf)) * 252) * 100, 4
                 )
-                # R-squared
-                ss_res = np.sum((ret_valid - (result.alpha / 252 / 100 + result.beta * bm_valid)) ** 2)
+                # R²: predicted = alpha_daily + beta*(bm - rf)
+                alpha_daily = result.alpha / 252 / 100
+                predicted = daily_rf + alpha_daily + result.beta * (bm_valid - daily_rf)
+                ss_res = np.sum((ret_valid - predicted) ** 2)
                 ss_tot = np.sum((ret_valid - np.mean(ret_valid)) ** 2)
                 if ss_tot > 0:
                     result.r_squared = round(1 - float(ss_res / ss_tot), 4)
 
-            # Information Ratio
+            # Information ratio
             tracking = ret_valid - bm_valid
-            if np.std(tracking) > 0:
+            if np.std(tracking, ddof=1) > 0:
                 result.information_ratio = round(
-                    float(np.mean(tracking) / np.std(tracking) * math.sqrt(252)), 4
+                    float(np.mean(tracking) / np.std(tracking, ddof=1) * math.sqrt(252)), 4
                 )
+
+    # Treynor Ratio: (CAGR - Rf) / Beta
+    if result.beta and result.beta != 0 and result.cagr is not None:
+        result.treynor_ratio = round((result.cagr - risk_free_rate * 100) / result.beta, 4)
 
     # -- Rolling Metrics --
     window = min(63, len(returns) // 2)  # ~3 months or half the data
     if window >= 20:
         result.rolling_sharpe = _compute_rolling_metric(
-            returns, equity_curve, window, "sharpe", daily_rf
+            returns, return_dates, window, "sharpe", daily_rf
         )
         result.rolling_sortino = _compute_rolling_metric(
-            returns, equity_curve, window, "sortino", daily_rf
+            returns, return_dates, window, "sortino", daily_rf
         )
         if benchmark_returns and len(benchmark_returns) >= len(returns):
             result.rolling_beta = _compute_rolling_beta(
                 returns, np.array(benchmark_returns[:len(returns)]),
-                equity_curve, window
+                return_dates, window
             )
+        result.rolling_vol = _compute_rolling_vol(returns, return_dates, 21)
 
     # -- Overfitting Detection --
     if result.sharpe_ratio is not None and num_backtests_tried > 1:
@@ -298,22 +335,21 @@ def compute_metrics(
 
 
 def _compute_rolling_metric(
-    returns: np.ndarray, equity_curve: list[dict], window: int,
+    returns: np.ndarray, return_dates: list[str], window: int,
     metric: str, daily_rf: float
 ) -> list[dict]:
-    """Compute a rolling metric over the equity curve."""
+    """Rolling metric over returns. return_dates[i] matches returns[i] (NaNs filtered out earlier)."""
     results = []
     for i in range(window, len(returns)):
         r = returns[i - window:i]
         excess = r - daily_rf
-        date = equity_curve[i + 1]["date"] if i + 1 < len(equity_curve) else equity_curve[-1]["date"]
+        date = return_dates[i] if i < len(return_dates) else return_dates[-1]
 
         if metric == "sharpe":
-            std = float(np.std(excess))
+            std = float(np.std(excess, ddof=1))
             val = float(np.mean(excess) / std * math.sqrt(252)) if std > 0 else 0
         elif metric == "sortino":
-            downside = excess[excess < 0]
-            ds = float(np.sqrt(np.mean(downside ** 2))) if len(downside) > 0 else 0
+            ds = float(np.sqrt(np.mean(np.minimum(excess, 0) ** 2)))
             val = float(np.mean(excess) / ds * math.sqrt(252)) if ds > 0 else 0
         else:
             val = 0
@@ -324,7 +360,7 @@ def _compute_rolling_metric(
 
 def _compute_rolling_beta(
     returns: np.ndarray, benchmark: np.ndarray,
-    equity_curve: list[dict], window: int
+    return_dates: list[str], window: int
 ) -> list[dict]:
     results = []
     for i in range(window, len(returns)):
@@ -339,8 +375,21 @@ def _compute_rolling_beta(
                 beta = 0
         else:
             beta = 0
-        date = equity_curve[i + 1]["date"] if i + 1 < len(equity_curve) else equity_curve[-1]["date"]
+        date = return_dates[i] if i < len(return_dates) else return_dates[-1]
         results.append({"date": date, "value": round(beta, 4)})
+    return results
+
+
+def _compute_rolling_vol(
+    returns: np.ndarray, return_dates: list[str], window: int
+) -> list[dict]:
+    """Rolling annualised vol: std of returns × √252 × 100."""
+    results = []
+    for i in range(window, len(returns)):
+        r = returns[i - window:i]
+        vol = float(np.std(r, ddof=1) * math.sqrt(252) * 100)
+        date = return_dates[i] if i < len(return_dates) else return_dates[-1]
+        results.append({"date": date, "value": round(vol, 4)})
     return results
 
 

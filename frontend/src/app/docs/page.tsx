@@ -180,20 +180,19 @@ const PLAYGROUND_EXAMPLES: Record<string, { title: string; code: string; descrip
         self.schedule('rebalance', every_n_bars=20,
             callback=self.rebalance)
 
-    def rebalance(self):
+    def rebalance(self, bar):
         lookback = self.params['lookback']
-        hist = self.history(length=lookback + 1)
+        hist = self.history(bar.symbol, lookback + 1)
         if len(hist) < lookback + 1:
             return
         roc = (hist[-1].close - hist[0].close) / hist[0].close
 
-        symbol = hist[-1].symbol
-        if roc > 0.02 and self.is_flat(symbol):
-            qty = max(1, int(self.portfolio.cash * 0.95 / hist[-1].close))
-            self.market_order(symbol, qty)
+        if roc > 0.02 and self.is_flat(bar.symbol):
+            qty = max(1, int(self.cash * 0.95 / bar.close))
+            self.market_order(bar.symbol, qty)
             self.notify(f"Entered long: ROC={roc:.2%}", level="info")
-        elif roc < -0.02 and self.is_long(symbol):
-            self.close_position(symbol)
+        elif roc < -0.02 and self.is_long(bar.symbol):
+            self.close_position(bar.symbol)
             self.notify(f"Exited: ROC={roc:.2%}", level="warning")
 
     def on_data(self, bar):
@@ -405,18 +404,20 @@ export default function DocsPage() {
                   Overview
                 </h2>
                 <p className="text-gray-700 leading-relaxed mb-4">
-                  Write trading strategies in Python, backtest them against historical data, optimize parameters, and compete
+                  Write trading strategies in Python, backtest them against real historical data, tune parameters, and compete
                   on the leaderboard — all from the <Link href="/playground" className="text-emerald-600 hover:underline font-medium">Playground</Link>.
+                  No setup, no installs. Just code and run.
                 </p>
                 <p className="text-gray-700 leading-relaxed mb-4">
-                  Strategies inherit from <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">StrategyBase</code> and
-                  implement lifecycle methods. The engine feeds your strategy one bar at a time, and you respond
-                  by placing orders, managing positions, and plotting custom indicators.
+                  Strategies subclass <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">StrategyBase</code> and
+                  override a few lifecycle methods. The engine calls <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">on_data</code> once per bar,
+                  passing you the latest OHLCV data. From there you decide what to trade — the engine handles fills,
+                  slippage, commissions, and position tracking.
                 </p>
 
                 <Callout type="info">
                   Your class <strong>must</strong> be named <code className="bg-blue-100 px-1 rounded">MyStrategy</code> and
-                  inherit from <code className="bg-blue-100 px-1 rounded">StrategyBase</code>. The engine validates your code before running.
+                  inherit from <code className="bg-blue-100 px-1 rounded">StrategyBase</code>. The engine checks this before running.
                 </Callout>
 
                 <div className="mt-6 grid sm:grid-cols-3 gap-4">
@@ -490,6 +491,14 @@ export default function DocsPage() {
         # Optional: react to fills
         pass
 
+    def on_order_cancel(self, order):
+        # Optional: called when one of your orders is cancelled
+        pass
+
+    def on_order_reject(self, order):
+        # Optional: called when an order is rejected (e.g. insufficient funds)
+        pass
+
     def on_end(self):
         # Optional: cleanup after backtest
         pass`} />
@@ -523,6 +532,14 @@ export default function DocsPage() {
                     description="Called whenever an order fills. Use this for fill-based logic like adjusting trailing stops, logging trades, or placing follow-up orders."
                   />
                   <MethodCard
+                    signature="on_order_cancel(self, order: Order) → None"
+                    description="Called when one of your orders is cancelled — whether by the broker, by you calling cancel_all_orders(), or by a day-order expiry at session close."
+                  />
+                  <MethodCard
+                    signature="on_order_reject(self, order: Order) → None"
+                    description="Called when an order is rejected before it reaches the market, for example if there is insufficient buying power. Useful for logging or adjusting your position sizing logic."
+                  />
+                  <MethodCard
                     signature="on_end(self) → None"
                     description="Called when the backtest finishes. Use for cleanup, final calculations, or logging summary statistics."
                   />
@@ -554,7 +571,7 @@ export default function DocsPage() {
                 <h3 className="font-semibold text-gray-900 mt-8 mb-3">Fetching history</h3>
                 <MethodCard
                   signature="self.history(symbol=None, length=1) → list[BarData]"
-                  description="Returns the most recent bars for a symbol. If symbol is omitted, uses the primary symbol. History buffer holds up to 500 bars per symbol."
+                  description="Returns the most recent bars for a symbol. If symbol is omitted, uses the primary symbol. The default history buffer holds 500 bars per symbol — call self.set_history_length() in on_init if you need more."
                   returns="list[BarData]"
                 />
 
@@ -570,10 +587,13 @@ if len(hist) < 50:
                 <h3 className="font-semibold text-gray-900 mt-8 mb-3">Strategy properties</h3>
                 <ApiTable rows={[
                   { method: 'self.portfolio', description: 'Portfolio object — access cash, equity, positions, P&L' },
+                  { method: 'self.cash', description: 'Shortcut for self.portfolio.cash — available cash balance' },
+                  { method: 'self.equity', description: 'Shortcut for self.portfolio.equity — total portfolio value' },
+                  { method: 'self.initial_capital', description: 'Starting capital for this backtest run' },
+                  { method: 'self.symbols', description: 'List of symbols in the data feed' },
                   { method: 'self.time', description: 'Current simulation datetime' },
                   { method: 'self.bar_index', description: 'Current bar index (0-based)' },
                   { method: 'self.params', description: 'Strategy parameters dict (set in on_init)' },
-                  { method: 'self.store', description: 'Persistent key-value store that persists between bars' },
                   { method: 'self.is_warming_up', description: 'True if still in warm-up period' },
                 ]} />
               </section>
@@ -732,6 +752,8 @@ sma_series = SMA(period=20).series(closes)   # → numpy array`} />
                   { method: 'self.is_long(symbol)', description: 'True if long position (quantity > 0)' },
                   { method: 'self.is_short(symbol)', description: 'True if short position (quantity < 0)' },
                   { method: 'self.position_size(symbol)', description: 'Current quantity — positive = long, negative = short, 0 = flat' },
+                  { method: 'self.unrealized_pnl(symbol)', description: 'Unrealized P&L for a symbol at the current market price' },
+                  { method: 'self.avg_cost(symbol)', description: 'Average cost basis for your current position in a symbol' },
                   { method: 'self.close_position(symbol)', description: 'Close entire position with a market order' },
                   { method: 'self.cancel_all_orders(symbol=None)', description: 'Cancel all pending orders. Optionally filter by symbol. Returns count cancelled.' },
                 ]} />
@@ -746,8 +768,8 @@ sma_series = SMA(period=20).series(closes)   # → numpy array`} />
 
                 <div className="space-y-4">
                   <MethodCard
-                    signature='self.bracket_order(symbol, quantity, take_profit_price, stop_loss_price, entry_price=None) → {"entry", "take_profit", "stop_loss"}'
-                    description="Submit a bracket (OCO) order. Places an entry order with automatic take-profit and stop-loss. When one side fills, the other is automatically cancelled. If entry_price is None, the entry is a market order; otherwise a limit order."
+                    signature='self.bracket_order(symbol, quantity, take_profit_price, stop_loss_price, entry_price=None) → {"entry"}'
+                    description="Submit a bracket (OCO) order. Places an entry order with automatic take-profit and stop-loss attached. When one side fills, the other is cancelled. Returns a dict with the entry Order object. If entry_price is None, the entry is a market order; otherwise a limit order."
                   />
                   <MethodCard
                     signature='self.oco_order(symbol, order_a, order_b) → {"order_a", "order_b"}'
@@ -960,15 +982,15 @@ qty = self.portfolio.get_position_quantity(bar.symbol)`} />
                 <div className="space-y-4">
                   <MethodCard
                     signature="self.set_warmup(bars=0) → None"
-                    description="Set warm-up period. on_data() won't be called until the specified number of bars have passed. Use this for indicators that need historical data to stabilize."
+                    description="Set warm-up period. on_data() won't be called until the specified number of bars have passed. Also automatically expands the history buffer if needed, so you don't have to call set_history_length() separately."
+                  />
+                  <MethodCard
+                    signature="self.set_history_length(length) → None"
+                    description="Expand the per-symbol history buffer beyond the default 500 bars. Call this in on_init if your indicators need a longer lookback. The engine will keep up to length bars in memory."
                   />
                   <MethodCard
                     signature="self.schedule(name, every_n_bars, callback) → None"
-                    description="Schedule a callback to run every N bars. The callback receives no arguments — use self.history() inside it to access data."
-                  />
-                  <MethodCard
-                    signature="self.store"
-                    description="A persistent dict that survives between bars. Use it to store custom state like running totals, counters, or cross-bar signal data."
+                    description="Schedule a callback to run every N bars. The callback is called with the current bar as its argument, so you can use bar.symbol and bar.close directly inside it."
                   />
                 </div>
 
@@ -1051,8 +1073,9 @@ def on_data(self, bar):
 
                 <div className="mt-4 space-y-2">
                   <Callout type="warning">
-                    The history buffer holds a maximum of <strong>500 bars</strong> per symbol. If your strategy
-                    needs more lookback, consider computing running averages incrementally using <code className="bg-amber-100 px-1 rounded">self.store</code>.
+                    The history buffer holds <strong>500 bars</strong> per symbol by default. If your strategy needs a longer lookback,
+                    call <code className="bg-amber-100 px-1 rounded">self.set_history_length(n)</code> in <code className="bg-amber-100 px-1 rounded">on_init</code> to raise the limit.
+                    Note that larger buffers use more memory, so set only what you actually need.
                   </Callout>
                 </div>
               </section>

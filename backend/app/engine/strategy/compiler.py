@@ -6,7 +6,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.engine.strategy.base import StrategyBase
-from app.engine.broker.order import Order, OrderSide, OrderType, TimeInForce
+from app.engine.broker.order import Order, OrderSide, OrderType
 from app.engine.data.feed import BarData
 
 from app.engine.indicators.overlays import (
@@ -111,7 +111,6 @@ def compile_strategy(code: str, params: dict[str, Any] | None = None) -> type[St
         "Order": Order,
         "OrderSide": OrderSide,
         "OrderType": OrderType,
-        "TimeInForce": TimeInForce,
         "np": np,
         "math": math,
         "SMA": SMA,
