@@ -59,8 +59,8 @@ class ApiClient {
     });
 
     this.client.interceptors.request.use((config) => {
-      if (typeof window !== 'undefined') {
-        config.baseURL = '/api/v1';
+      if (typeof window !== 'undefined' && window.location?.protocol === 'https:') {
+        config.baseURL = `${window.location.origin}/api/v1`;
       }
       if (this.accessToken) {
         config.headers.Authorization = `Bearer ${this.accessToken}`;
