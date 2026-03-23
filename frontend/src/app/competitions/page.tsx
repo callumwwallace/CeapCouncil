@@ -15,7 +15,6 @@ import {
   ArrowRight,
   ThumbsUp,
   TrendingUp,
-  Zap,
 } from 'lucide-react';
 import SignInPrompt from '@/components/auth/SignInPrompt';
 import { useAuthStore } from '@/stores/authStore';
@@ -131,7 +130,6 @@ function CompetitionCard({
           {isActive ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Live
             </span>
           ) : effectiveCompleted ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
@@ -382,10 +380,6 @@ export default function CompetitionsPage() {
               <p className="mt-1.5 text-gray-500 ml-1">
                 Submit strategies, compete for rankings, and earn badges.
               </p>
-            </div>
-            <div className="hidden sm:flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-full font-medium shrink-0">
-              <Zap className="h-3 w-3" />
-              New every Monday
             </div>
           </div>
 

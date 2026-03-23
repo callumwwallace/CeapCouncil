@@ -277,8 +277,7 @@ export default function CompetitionDetailPage() {
 
             {/* Countdown (active only) */}
             {isActive && (
-              <div className="flex items-center gap-2 mb-5">
-                <span className="text-xs text-gray-400 font-medium">Ends in</span>
+              <div className="mb-5">
                 <CountdownBlock endDate={competition.end_date} />
               </div>
             )}
