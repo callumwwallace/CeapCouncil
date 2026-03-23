@@ -20,6 +20,7 @@ from app.engine.core.engine import Engine, EngineConfig, EngineResult
 from app.engine.broker.slippage import auto_detect_tier
 from app.engine.data.calendar import filter_to_trading_days
 from app.engine.strategy.compiler import compile_strategy, extract_user_error as extract_strategy_error
+from app.services.strategy_encryption import decrypt_strategy_field
 
 sync_engine = create_engine(settings.DATABASE_URL.replace("+asyncpg", ""))
 SessionLocal = sessionmaker(bind=sync_engine)
@@ -520,15 +521,14 @@ def run_backtest_task(self, backtest_id: int):
         db.commit()
 
         _set_resource_limits()
-
-        # Get strategy code: inline or from saved strategy
+        
         if backtest.code and backtest.code.strip():
-            strategy_code = backtest.code
+            strategy_code = decrypt_strategy_field(backtest.code) or backtest.code
         elif backtest.strategy_id:
             strategy = db.query(Strategy).filter(Strategy.id == backtest.strategy_id).first()
             if not strategy:
                 raise ValueError("Strategy not found")
-            strategy_code = strategy.code
+            strategy_code = decrypt_strategy_field(strategy.code) or strategy.code
         else:
             raise ValueError("Backtest has no code and no strategy_id")
 
