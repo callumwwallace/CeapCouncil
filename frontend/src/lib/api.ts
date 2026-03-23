@@ -59,9 +59,7 @@ class ApiClient {
     });
 
     this.client.interceptors.request.use((config) => {
-      if (typeof window !== 'undefined' && window.location?.hostname !== 'localhost') {
-        config.baseURL = `${window.location.origin}/api/v1`;
-      }
+      // Remove the baseURL override block completely
       if (this.accessToken) {
         config.headers.Authorization = `Bearer ${this.accessToken}`;
       }
