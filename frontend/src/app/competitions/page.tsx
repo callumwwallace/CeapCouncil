@@ -132,12 +132,12 @@ function CompetitionCard({
               <CheckCircle2 className="h-3 w-3" />
               Completed
             </span>
-          ) : (
+          ) : isDraft ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full">
               <Timer className="h-3 w-3" />
               Upcoming
             </span>
-          )}
+          ) : <div />}
           {isActive && (
             <span className="text-[11px] font-semibold text-gray-500 flex items-center gap-1">
               <Clock className="h-3 w-3 text-gray-400" />
