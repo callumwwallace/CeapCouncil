@@ -56,18 +56,20 @@ def decrypt_strategy_field(stored: str | None) -> str | None:
     if stored is None or stored == "":
         return stored
     if not stored.startswith(_PREFIX):
-        return stored  # legacy plaintext
+        return stored  # legacy plaintext - pass through unchanged
     f = _get_fernet()
     if not f:
         return stored
     try:
         return f.decrypt(stored[len(_PREFIX) :].encode()).decode()
     except InvalidToken:
-        logger.warning("Strategy decryption failed (invalid token)")
-        return stored
+        logger.warning("Strategy decryption failed (invalid token) - key mismatch or corrupted data?")
+        raise ValueError(
+            "Could not decrypt strategy code. Ensure STRATEGY_ENCRYPTION_KEY matches between API and Celery worker."
+        ) from None
     except Exception as e:
         logger.warning("Strategy decryption failed: %s", e)
-        return stored
+        raise ValueError(f"Strategy decryption failed: {e}") from e
 
 
 def is_encryption_enabled() -> bool:

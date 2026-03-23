@@ -74,7 +74,7 @@ class TestDefaultGroup:
         """Create strategy with group_id null should use default group."""
         user_id, default_group_id = user_and_default_group
         response = await client.post(
-            "/api/v1/strategies/",
+            "/api/v1/strategies",
             headers=auth_headers,
             json={
                 "title": "Test Strategy",
