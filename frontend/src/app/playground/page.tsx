@@ -356,13 +356,6 @@ export default function PlaygroundPage() {
     }
   }, [config, code, isRunning]); // eslint-disable-line react-hooks/exhaustive-deps -- error intentionally excluded to avoid loops
 
-  // Open code editor when we can point to a line number in the error
-  useEffect(() => {
-    if (error && parseErrorLines(error).length > 0) {
-      setShowCodeEditor(true);
-    }
-  }, [error]);
-
   const handleRunBacktest = useCallback(async () => {
     if (!isAuthenticated) {
       setShowSignInPrompt(true);
@@ -962,9 +955,16 @@ export default function PlaygroundPage() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {!isRunning && (
-              <button onClick={handleRetryBacktest} className="px-2.5 py-1 text-xs font-medium text-red-200 hover:text-white bg-red-800/50 hover:bg-red-800 rounded transition">
-                Retry
-              </button>
+              <>
+                <button onClick={handleRetryBacktest} className="px-2.5 py-1 text-xs font-medium text-red-200 hover:text-white bg-red-800/50 hover:bg-red-800 rounded transition">
+                  Retry
+                </button>
+                {parseErrorLines(error).length > 0 && (
+                  <button onClick={() => setShowCodeEditor(true)} className="px-2.5 py-1 text-xs font-medium text-red-200 hover:text-white bg-red-800/50 hover:bg-red-800 rounded transition">
+                    Fix in editor
+                  </button>
+                )}
+              </>
             )}
             <button onClick={() => setError(null)} className="p-1 text-red-400 hover:text-white rounded transition" title="Dismiss">
               <X className="h-4 w-4" />
