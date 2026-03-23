@@ -458,15 +458,28 @@ export default function ProfileViewPage() {
                         </p>
                       </div>
                       <div className="flex-shrink-0 text-right">
-                        {entry.rank != null && (
-                          <span className="text-sm font-semibold text-emerald-600">Rank #{entry.rank}</span>
-                        )}
-                        {entry.score != null && entry.rank == null && (
-                          <span className="text-sm text-gray-600">Score {entry.score.toFixed(2)}</span>
+                        {entry.competition_status === 'active' ? (
+                          <div>
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                              In Progress
+                            </span>
+                            {entry.rank != null && (
+                              <p className="text-xs text-gray-400 mt-1">Currently #{entry.rank}</p>
+                            )}
+                          </div>
+                        ) : (
+                          <>
+                            {entry.rank != null && (
+                              <span className="text-sm font-semibold text-emerald-600">Rank #{entry.rank}</span>
+                            )}
+                            {entry.score != null && entry.rank == null && (
+                              <span className="text-sm text-gray-600">Score {entry.score.toFixed(2)}</span>
+                            )}
+                          </>
                         )}
                         {entry.total_return != null && (
-                          <p className={`text-xs font-medium ${entry.total_return >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                            {entry.total_return >= 0 ? '+' : ''}{(entry.total_return * 100).toFixed(1)}%
+                          <p className={`text-xs font-medium mt-0.5 ${entry.total_return >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                            {entry.total_return >= 0 ? '+' : ''}{entry.total_return.toFixed(1)}%
                           </p>
                         )}
                       </div>

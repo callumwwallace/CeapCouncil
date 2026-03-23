@@ -10,11 +10,13 @@ import {
   Calendar,
   DollarSign,
   BarChart3,
-  Loader2,
   CheckCircle2,
   Timer,
   ArrowRight,
   ThumbsUp,
+  Flame,
+  TrendingUp,
+  Zap,
 } from 'lucide-react';
 import SignInPrompt from '@/components/auth/SignInPrompt';
 import { useAuthStore } from '@/stores/authStore';
@@ -29,6 +31,10 @@ const METRIC_LABELS: Record<string, string> = {
   win_rate: 'Win Rate',
   max_drawdown: 'Min DD',
 };
+
+function fmtDateShort(s: string): string {
+  return new Date(s).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+}
 
 // ─── Live countdown ──────────────────────────────────────────────────
 function useCountdown(endDate: string) {
@@ -69,7 +75,7 @@ function CountdownTimer({ endDate }: { endDate: string }) {
       {units.map((u, i) => (
         <span key={u.label}>
           <span className="font-mono font-bold text-gray-900 tabular-nums">{String(u.val).padStart(2, '0')}</span>
-          <span className="text-[10px] text-gray-400">{u.label}</span>
+          <span className="text-[10px] text-gray-500">{u.label}</span>
           {i < 3 && <span className="text-gray-300 mx-0.5">:</span>}
         </span>
       ))}
@@ -81,7 +87,7 @@ function isEnded(endDate: string): boolean {
   return new Date(endDate).getTime() <= Date.now();
 }
 
-function getAccentColor(endDate: string): string {
+function urgencyAccent(endDate: string): string {
   const diff = new Date(endDate).getTime() - Date.now();
   if (diff <= 0) return 'from-gray-200 to-gray-300';
   if (diff < 86400000) return 'from-red-400 to-red-500';
@@ -89,8 +95,14 @@ function getAccentColor(endDate: string): string {
   return 'from-emerald-400 to-teal-400';
 }
 
-// ─── Competition card (shared between both tabs) ─────────────────────
-function CompetitionCard({ c, getRankingLabel }: { c: CompetitionSummary; getRankingLabel: (c: CompetitionSummary) => string }) {
+// ─── Competition card ─────────────────────────────────────────────────
+function CompetitionCard({
+  c,
+  getRankingLabel,
+}: {
+  c: CompetitionSummary;
+  getRankingLabel: (c: CompetitionSummary) => string;
+}) {
   const ended = isEnded(c.end_date);
   const effectiveCompleted = c.status === 'completed' || (c.status === 'active' && ended);
   const isActive = c.status === 'active' && !ended;
@@ -99,25 +111,26 @@ function CompetitionCard({ c, getRankingLabel }: { c: CompetitionSummary; getRan
   return (
     <Link
       href={`/competitions/${c.id}`}
-      className={`group rounded-xl border bg-white overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5 ${
+      className={`group flex flex-col rounded-2xl border bg-white overflow-hidden transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5 ${
         isActive
-          ? 'border-emerald-200 hover:border-emerald-300 hover:shadow-emerald-100/50'
+          ? 'border-emerald-200 hover:border-emerald-300 hover:shadow-emerald-100/60'
           : isDraft
-            ? 'border-blue-200 hover:border-blue-300 hover:shadow-blue-100/50'
+            ? 'border-blue-200 hover:border-blue-300 hover:shadow-blue-100/60'
             : 'border-gray-200 hover:border-gray-300'
       }`}
     >
+      {/* Top accent stripe */}
       <div className={`h-1 bg-gradient-to-r ${
-        isActive ? getAccentColor(c.end_date) :
+        isActive ? urgencyAccent(c.end_date) :
         isDraft ? 'from-blue-300 to-blue-400' :
         'from-gray-200 to-gray-300'
       }`} />
 
-      <div className="p-5">
-        {/* Status + timer */}
+      <div className="flex flex-col flex-1 p-5">
+        {/* Status row */}
         <div className="flex items-center justify-between mb-3">
           {isActive ? (
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               Live
             </span>
@@ -132,9 +145,8 @@ function CompetitionCard({ c, getRankingLabel }: { c: CompetitionSummary; getRan
               Upcoming
             </span>
           )}
-
           {isActive && (
-            <span className="text-[11px] font-semibold text-gray-600 flex items-center gap-1">
+            <span className="text-[11px] font-semibold text-gray-500 flex items-center gap-1">
               <Clock className="h-3 w-3 text-gray-400" />
               <CompactCountdown endDate={c.end_date} />
             </span>
@@ -146,36 +158,39 @@ function CompetitionCard({ c, getRankingLabel }: { c: CompetitionSummary; getRan
           )}
         </div>
 
-        <h3 className="text-base font-bold text-gray-900 group-hover:text-emerald-700 transition line-clamp-1 mb-1">
+        {/* Title */}
+        <h3 className="text-[15px] font-bold text-gray-900 group-hover:text-emerald-700 transition line-clamp-1 mb-1">
           {c.title}
         </h3>
         {c.description && (
-          <p className="text-xs text-gray-500 line-clamp-2 mb-4 leading-relaxed">{c.description}</p>
+          <p className="text-xs text-gray-500 line-clamp-2 mb-3 leading-relaxed flex-1">{c.description}</p>
         )}
 
-        <div className="flex items-center gap-3 mb-3 flex-wrap">
+        {/* Chips */}
+        <div className="flex items-center gap-2 flex-wrap mt-auto mb-3">
           {(c.symbols && c.symbols.length > 1 ? c.symbols : [c.symbol]).map((sym) => (
-            <div key={sym} className="flex items-center gap-1 text-xs font-medium text-gray-700 bg-gray-100 px-2 py-1 rounded-md">
-              <Target className="h-3 w-3 text-gray-400" />
+            <span key={sym} className="inline-flex items-center gap-1 text-xs font-semibold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-md">
+              <Target className="h-2.5 w-2.5 text-gray-400" />
               {sym}
-            </div>
+            </span>
           ))}
-          <div className="flex items-center gap-1 text-xs text-gray-500">
+          <span className="inline-flex items-center gap-1 text-xs text-gray-500">
             <Users className="h-3 w-3" />
             {c.entry_count}
-          </div>
-          <div className="flex items-center gap-1 text-xs text-gray-500">
+          </span>
+          <span className="inline-flex items-center gap-1 text-xs text-gray-500">
             <DollarSign className="h-3 w-3" />
             {c.initial_capital >= 1000 ? `${(c.initial_capital / 1000).toFixed(0)}k` : c.initial_capital}
-          </div>
+          </span>
         </div>
 
+        {/* Footer */}
         <div className="flex items-center justify-between text-[11px] text-gray-400 pt-3 border-t border-gray-100">
           <span className="flex items-center gap-1">
             <Calendar className="h-3 w-3" />
-            {c.backtest_start.slice(2, 10)} → {c.backtest_end.slice(2, 10)}
+            {fmtDateShort(c.backtest_start)} → {fmtDateShort(c.backtest_end)}
           </span>
-          <span className="flex items-center gap-1">
+          <span className="flex items-center gap-1 font-medium text-gray-500">
             <BarChart3 className="h-3 w-3" />
             {getRankingLabel(c)}
           </span>
@@ -185,7 +200,7 @@ function CompetitionCard({ c, getRankingLabel }: { c: CompetitionSummary; getRan
   );
 }
 
-// ─── Upcoming proposal card (live top 5, links to forum) ─────────────────
+// ─── Upcoming proposal card ─────────────────────────────────────────
 function UpcomingProposalCard({
   p,
   getRankingLabel,
@@ -196,51 +211,54 @@ function UpcomingProposalCard({
   rank: number;
 }) {
   const isPlaceholder = p.is_placeholder || p.thread_id == null;
+
   const cardContent = (
     <>
-      <div className={`h-1 bg-gradient-to-r ${isPlaceholder ? 'from-gray-300 to-gray-400' : 'from-blue-300 to-blue-400'}`} />
+      <div className={`h-1 bg-gradient-to-r ${isPlaceholder ? 'from-gray-200 to-gray-300' : 'from-blue-300 to-blue-400'}`} />
       <div className="p-5">
         <div className="flex items-center justify-between mb-3">
-          <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full ${
-            isPlaceholder ? 'text-gray-600 bg-gray-100' : 'text-blue-600 bg-blue-50'
+          <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full ${
+            rank === 1
+              ? 'text-amber-700 bg-amber-50 border border-amber-200'
+              : isPlaceholder
+                ? 'text-gray-500 bg-gray-100'
+                : 'text-blue-600 bg-blue-50'
           }`}>
             #{rank}
           </span>
-          {isPlaceholder ? (
-            <span className="text-[11px] text-gray-500">Generated fill</span>
-          ) : (
+          {!isPlaceholder && (
             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-600">
-              <ThumbsUp className="h-3 w-3 text-blue-500" />
+              <ThumbsUp className="h-3 w-3 text-blue-400" />
               {p.vote_score}
             </span>
           )}
         </div>
-        <h3 className={`text-base font-bold line-clamp-1 mb-1 transition ${
-          isPlaceholder ? 'text-gray-700' : 'text-gray-900 group-hover:text-blue-700'
+        <h3 className={`text-[15px] font-bold line-clamp-1 mb-1 transition ${
+          isPlaceholder ? 'text-gray-500' : 'text-gray-900 group-hover:text-blue-700'
         }`}>
           {p.title}
         </h3>
         {!isPlaceholder && p.author_username && (
           <p className="text-xs text-gray-500 mb-3">by {p.author_username}</p>
         )}
-        <div className="flex items-center gap-3 mb-3 flex-wrap">
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
           {(p.symbols && p.symbols.length > 1 ? p.symbols : [p.symbol]).map((sym) => (
-            <div key={sym} className="flex items-center gap-1 text-xs font-medium text-gray-700 bg-gray-100 px-2 py-1 rounded-md">
-              <Target className="h-3 w-3 text-gray-400" />
+            <span key={sym} className="inline-flex items-center gap-1 text-xs font-semibold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-md">
+              <Target className="h-2.5 w-2.5 text-gray-400" />
               {sym}
-            </div>
+            </span>
           ))}
-          <div className="flex items-center gap-1 text-xs text-gray-500">
+          <span className="inline-flex items-center gap-1 text-xs text-gray-500">
             <DollarSign className="h-3 w-3" />
             {p.initial_capital >= 1000 ? `${(p.initial_capital / 1000).toFixed(0)}k` : p.initial_capital}
-          </div>
+          </span>
         </div>
         <div className="flex items-center justify-between text-[11px] text-gray-400 pt-3 border-t border-gray-100">
           <span className="flex items-center gap-1">
             <Calendar className="h-3 w-3" />
-            {p.backtest_start.slice(0, 10)} → {p.backtest_end.slice(0, 10)}
+            {fmtDateShort(p.backtest_start)} → {fmtDateShort(p.backtest_end)}
           </span>
-          <span className="flex items-center gap-1">
+          <span className="flex items-center gap-1 font-medium text-gray-500">
             <BarChart3 className="h-3 w-3" />
             {getRankingLabel(p)}
           </span>
@@ -251,7 +269,7 @@ function UpcomingProposalCard({
 
   if (isPlaceholder) {
     return (
-      <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+      <div className="rounded-2xl border border-dashed border-gray-200 bg-white/60 overflow-hidden opacity-60">
         {cardContent}
       </div>
     );
@@ -260,10 +278,37 @@ function UpcomingProposalCard({
   return (
     <Link
       href={`/community/competition-ideas/${p.thread_id}`}
-      className="group block rounded-xl border border-blue-200 bg-white overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-blue-100/50"
+      className="group block rounded-2xl border border-blue-200 bg-white overflow-hidden transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-blue-100/60"
     >
       {cardContent}
     </Link>
+  );
+}
+
+// ─── Skeleton card ────────────────────────────────────────────────────
+function SkeletonCard() {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden animate-pulse">
+      <div className="h-1 bg-gray-200" />
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div className="h-5 w-12 bg-gray-200 rounded-full" />
+          <div className="h-4 w-16 bg-gray-100 rounded" />
+        </div>
+        <div className="h-5 bg-gray-200 rounded w-3/4 mb-2" />
+        <div className="h-4 bg-gray-100 rounded w-full mb-1" />
+        <div className="h-4 bg-gray-100 rounded w-2/3 mb-4" />
+        <div className="flex gap-2 mb-4">
+          <div className="h-5 w-12 bg-gray-100 rounded-md" />
+          <div className="h-5 w-8 bg-gray-100 rounded" />
+          <div className="h-5 w-10 bg-gray-100 rounded" />
+        </div>
+        <div className="border-t border-gray-100 pt-3 flex justify-between">
+          <div className="h-3 w-28 bg-gray-100 rounded" />
+          <div className="h-3 w-14 bg-gray-100 rounded" />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -294,8 +339,8 @@ export default function CompetitionsPage() {
   useEffect(() => {
     if (tab === 'upcoming') {
       fetchUpcoming();
-      const interval = setInterval(fetchUpcoming, 30000);
-      return () => clearInterval(interval);
+      const id = setInterval(fetchUpcoming, 30000);
+      return () => clearInterval(id);
     }
   }, [tab, fetchUpcoming]);
 
@@ -303,10 +348,12 @@ export default function CompetitionsPage() {
     competitions.filter((c) => c.status === 'active' && !isEnded(c.end_date)),
   [competitions]);
 
+  const totalEntries = useMemo(() =>
+    activeComps.reduce((sum, c) => sum + c.entry_count, 0),
+  [activeComps]);
+
   const allDisplayed = tab === 'active' ? activeComps : upcomingPreview;
-  const displayedComps = tab === 'active'
-    ? allDisplayed.slice(0, visibleCount)
-    : allDisplayed;
+  const displayedComps = tab === 'active' ? allDisplayed.slice(0, visibleCount) : allDisplayed;
   const hasMore = tab === 'active' && allDisplayed.length > visibleCount;
 
   const featuredComp = useMemo(() => {
@@ -320,84 +367,136 @@ export default function CompetitionsPage() {
       : METRIC_LABELS[c.ranking_metric] || c.ranking_metric;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50/80">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-10">
 
         {/* ═══ Page header ═══ */}
-        <div className="mb-10">
-          <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-            <Trophy className="h-8 w-8 text-emerald-600" />
-            Competitions
-          </h1>
-          <p className="mt-2 text-gray-600">
-            Submit strategies, compete for rankings, and earn badges. New competitions go live every Monday.
-          </p>
+        <div className="mb-8">
+          <div className="flex items-start justify-between gap-4 mb-5">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
+                <div className="p-2 bg-emerald-100 rounded-xl">
+                  <Trophy className="h-6 w-6 text-emerald-600" />
+                </div>
+                Competitions
+              </h1>
+              <p className="mt-1.5 text-gray-500 ml-1">
+                Submit strategies, compete for rankings, and earn badges.
+              </p>
+            </div>
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-full font-medium shrink-0">
+              <Zap className="h-3 w-3" />
+              New every Monday
+            </div>
+          </div>
+
+          {/* Stats strip */}
+          {!loading && activeComps.length > 0 && (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Active Now</p>
+                <p className="text-2xl font-bold text-gray-900">{activeComps.length}</p>
+                <p className="text-xs text-gray-400">competitions</p>
+              </div>
+              <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Total Entries</p>
+                <p className="text-2xl font-bold text-gray-900">{totalEntries}</p>
+                <p className="text-xs text-gray-400">this week</p>
+              </div>
+              <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Most Active</p>
+                <p className="text-sm font-bold text-gray-900 line-clamp-1">{featuredComp?.title.split('—')[0].trim() ?? '—'}</p>
+                <p className="text-xs text-gray-400">{featuredComp?.entry_count ?? 0} entries</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ═══ Featured live competition ═══ */}
         {featuredComp && (
           <Link
             href={`/competitions/${featuredComp.id}`}
-            className="group block rounded-xl border border-emerald-200 bg-white overflow-hidden hover:shadow-lg hover:shadow-emerald-100/50 transition-all mb-8"
+            className="group block rounded-2xl border border-emerald-200 bg-white overflow-hidden hover:shadow-xl hover:shadow-emerald-100/60 hover:-translate-y-0.5 transition-all duration-200 mb-8"
           >
-            <div className="h-1 bg-gradient-to-r from-emerald-400 to-teal-400" />
-            <div className="p-6">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  Live
-                </span>
-                <span className="text-xs text-gray-500">Ends in</span>
-                <CountdownTimer endDate={featuredComp.end_date} />
+            <div className="h-1.5 bg-gradient-to-r from-emerald-400 via-teal-400 to-emerald-400" />
+            <div className="grid lg:grid-cols-[1fr_200px]">
+              {/* Left: Info */}
+              <div className="p-6 sm:p-7">
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Live
+                  </span>
+                  <span className="text-xs text-gray-400">Ends in</span>
+                  <CountdownTimer endDate={featuredComp.end_date} />
+                </div>
+
+                <h2 className="text-xl font-bold text-gray-900 group-hover:text-emerald-700 transition mb-1.5">
+                  {featuredComp.title}
+                </h2>
+                {featuredComp.description && (
+                  <p className="text-sm text-gray-500 line-clamp-2 mb-4 max-w-xl">{featuredComp.description}</p>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-800 bg-gray-100 px-2.5 py-1 rounded-md">
+                    <Target className="h-3 w-3 text-gray-400" />
+                    {(featuredComp.symbols && featuredComp.symbols.length > 1
+                      ? featuredComp.symbols
+                      : [featuredComp.symbol]
+                    ).join(', ')}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-xs text-gray-600 bg-gray-50 border border-gray-200 px-2 py-1 rounded-md">
+                    <DollarSign className="h-3 w-3" />${featuredComp.initial_capital.toLocaleString()} capital
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-xs text-gray-600 bg-gray-50 border border-gray-200 px-2 py-1 rounded-md">
+                    <BarChart3 className="h-3 w-3" />{getRankingLabel(featuredComp)}
+                  </span>
+                </div>
               </div>
 
-              <h2 className="text-xl font-bold text-gray-900 group-hover:text-emerald-700 transition mb-1.5">
-                {featuredComp.title}
-              </h2>
-              {featuredComp.description && (
-                <p className="text-sm text-gray-500 line-clamp-2 mb-4">{featuredComp.description}</p>
-              )}
-
-              <div className="flex flex-wrap items-center gap-2 mb-4">
-                <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-800 bg-gray-100 px-2.5 py-1 rounded-md">
-                  <Target className="h-3 w-3 text-gray-400" />{(featuredComp.symbols && featuredComp.symbols.length > 1 ? featuredComp.symbols : [featuredComp.symbol]).join(', ')}
-                </span>
-                <span className="inline-flex items-center gap-1 text-xs text-gray-500 bg-gray-50 px-2 py-1 rounded-md">
-                  <Users className="h-3 w-3" />{featuredComp.entry_count} entries
-                </span>
-                <span className="inline-flex items-center gap-1 text-xs text-gray-500 bg-gray-50 px-2 py-1 rounded-md">
-                  <DollarSign className="h-3 w-3" />${featuredComp.initial_capital.toLocaleString()}
-                </span>
-                <span className="inline-flex items-center gap-1 text-xs text-gray-500 bg-gray-50 px-2 py-1 rounded-md">
-                  <BarChart3 className="h-3 w-3" />{getRankingLabel(featuredComp)}
-                </span>
+              {/* Right: CTA panel */}
+              <div className="lg:border-l border-t lg:border-t-0 border-gray-100 bg-gray-50/80 p-6 flex flex-col items-center justify-center gap-4">
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-gray-900">{featuredComp.entry_count}</div>
+                  <div className="text-xs text-gray-500 flex items-center gap-1 justify-center mt-0.5">
+                    <Users className="h-3 w-3" />
+                    {featuredComp.entry_count === 1 ? 'entry' : 'entries'}
+                  </div>
+                </div>
+                <div className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 group-hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl transition shadow-sm shadow-emerald-600/20">
+                  <Flame className="h-4 w-4" />
+                  Enter
+                  <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
+                </div>
               </div>
-
-              <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-600 group-hover:gap-2.5 transition-all">
-                Enter Competition <ArrowRight className="h-3.5 w-3.5" />
-              </span>
             </div>
           </Link>
         )}
 
         {/* ═══ Tabs + Grid ═══ */}
         <div>
-          <div className="flex items-center justify-between mb-5">
-            <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="flex items-center gap-0.5 p-1 bg-gray-100 rounded-xl">
               {[
-                { key: 'active' as const, label: 'Active', count: activeComps.length },
-                { key: 'upcoming' as const, label: 'Upcoming', count: upcomingPreview.length },
+                { key: 'active' as const, label: 'Active', count: activeComps.length, icon: TrendingUp },
+                { key: 'upcoming' as const, label: 'Upcoming', count: null, icon: Timer },
               ].map((t) => (
                 <button
                   key={t.key}
                   onClick={() => { setTab(t.key); setVisibleCount(9); }}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    tab === t.key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    tab === t.key
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
+                  <t.icon className="h-3.5 w-3.5" />
                   {t.label}
-                  {t.count > 0 && (
-                    <span className="ml-1.5 text-xs text-gray-400">
+                  {t.count != null && t.count > 0 && (
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${
+                      tab === t.key ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-500'
+                    }`}>
                       {t.count}
                     </span>
                   )}
@@ -406,46 +505,44 @@ export default function CompetitionsPage() {
             </div>
           </div>
 
-          {/* Cards */}
+          {/* Loading skeletons */}
           {(loading || (tab === 'upcoming' && upcomingLoading && upcomingPreview.length === 0)) ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
-                  <div className="h-5 bg-gray-200 rounded w-2/3 mb-3" />
-                  <div className="h-4 bg-gray-100 rounded w-1/2 mb-4" />
-                  <div className="flex gap-3">
-                    <div className="h-4 bg-gray-100 rounded w-16" />
-                    <div className="h-4 bg-gray-100 rounded w-20" />
-                    <div className="h-4 bg-gray-100 rounded w-16" />
-                  </div>
-                </div>
-              ))}
+              {[1, 2, 3, 4, 5, 6].map((i) => <SkeletonCard key={i} />)}
             </div>
+
           ) : displayedComps.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-gray-300 bg-white p-16 text-center">
-              <Trophy className="h-10 w-10 mx-auto mb-3 text-gray-300" />
-              <p className="text-gray-500 font-medium">
+            <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-16 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-4">
+                <Trophy className="h-7 w-7 text-gray-300" />
+              </div>
+              <p className="text-gray-700 font-semibold">
                 {tab === 'active' ? 'No active competitions right now' : 'No proposals yet this week'}
               </p>
-              <p className="text-sm text-gray-400 mt-1">
+              <p className="text-sm text-gray-400 mt-1.5">
                 {tab === 'active'
-                  ? 'Check the Upcoming tab to see the current top 5 proposals'
-                  : 'Top 5 proposals become competitions each Monday. Propose and vote in Community!'}
+                  ? 'Check the Upcoming tab to see what\'s coming next Monday'
+                  : 'Top 5 proposals go live each Monday — propose and vote in Community.'}
               </p>
               {tab === 'upcoming' && (
                 <Link
                   href="/community/competition-ideas"
-                  className="mt-4 inline-flex items-center gap-2 text-emerald-600 hover:text-emerald-700 font-medium"
+                  className="mt-4 inline-flex items-center gap-2 text-sm text-emerald-600 hover:text-emerald-700 font-medium"
                 >
                   Go to Competition Proposals <ArrowRight className="h-4 w-4" />
                 </Link>
               )}
             </div>
+
           ) : tab === 'active' ? (
             <>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {(displayedComps as CompetitionSummary[]).map((c) => (
-                  <CompetitionCard key={c.id} c={c} getRankingLabel={getRankingLabel as (c: CompetitionSummary) => string} />
+                  <CompetitionCard
+                    key={c.id}
+                    c={c}
+                    getRankingLabel={getRankingLabel as (c: CompetitionSummary) => string}
+                  />
                 ))}
               </div>
 
@@ -453,11 +550,11 @@ export default function CompetitionsPage() {
                 <div className="mt-6 text-center">
                   <button
                     onClick={() => setVisibleCount((prev) => prev + 9)}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition"
+                    className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition"
                   >
                     Show more
-                    <span className="text-xs text-gray-400">
-                      {allDisplayed.length - visibleCount} remaining
+                    <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">
+                      {allDisplayed.length - visibleCount}
                     </span>
                   </button>
                 </div>
@@ -473,10 +570,12 @@ export default function CompetitionsPage() {
                 </div>
               )}
             </>
+
           ) : (
             <>
-              <p className="text-sm text-gray-500 mb-4">
-                Live top 5 by votes. Updates every 30s. Vote in Community to influence next week&apos;s competitions.
+              <p className="text-sm text-gray-500 mb-4 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block" />
+                Top 5 proposals by votes. Updates every 30s.
               </p>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {(displayedComps as UpcomingPreviewItem[]).map((p, i) => (
