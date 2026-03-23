@@ -765,7 +765,7 @@ class ApiClient {
   }
 
   async getMyBacktests(): Promise<Backtest[]> {
-    const response = await this.client.get<Backtest[]>('/backtests/me');
+    const response = await this.client.get<Backtest[]>('/backtests');
     return response.data;
   }
 
@@ -802,7 +802,7 @@ class ApiClient {
 
   // Blog
   async listBlogPosts(limit?: number, offset?: number): Promise<BlogPostSummary[]> {
-    const response = await this.client.get<BlogPostSummary[]>('/blog/', {
+    const response = await this.client.get<BlogPostSummary[]>('/blog', {
       params: { limit: limit ?? 20, offset: offset ?? 0 },
     });
     return response.data;
@@ -831,7 +831,7 @@ class ApiClient {
   }
 
   async createBlogPost(data: { title: string; slug: string; excerpt?: string; content: string; published?: boolean }): Promise<BlogPostDetail> {
-    const response = await this.client.post<BlogPostDetail>('/blog/', data);
+    const response = await this.client.post<BlogPostDetail>('/blog', data);
     return response.data;
   }
 

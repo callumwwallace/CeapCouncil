@@ -7,7 +7,7 @@ export async function generateMetadata(
 ): Promise<Metadata> {
   const { topicId, threadId } = await params;
   try {
-    const res = await fetch(`${API}/forum/topics/${topicId}/threads/${threadId}`, { next: { revalidate: 3600 } });
+    const res = await fetch(`${API}/forum/threads/${threadId}`, { next: { revalidate: 3600 } });
     if (res.ok) {
       const thread = await res.json();
       const title = thread.title ?? 'Community Thread';
