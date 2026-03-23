@@ -143,7 +143,7 @@ async def fork_group(
     )
 
 
-@router.get("/", response_model=list[StrategyGroupResponse])
+@router.get("", response_model=list[StrategyGroupResponse])
 @limiter.limit("60/minute")
 async def list_strategy_groups(
     request: Request,
@@ -164,7 +164,7 @@ async def list_strategy_groups(
     return groups
 
 
-@router.post("/", response_model=StrategyGroupResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=StrategyGroupResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("20/minute")
 async def create_strategy_group(
     request: Request,

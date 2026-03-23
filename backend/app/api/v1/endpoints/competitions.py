@@ -62,7 +62,7 @@ class CompetitionEntryCreate(BaseModel):
 
 # ─── Competition CRUD ───────────────────────────────────────────────
 
-@router.get("/")
+@router.get("")
 @limiter.limit("60/minute")
 async def list_competitions(
     request: Request,
@@ -234,7 +234,7 @@ async def get_upcoming_preview(
     return out
 
 
-@router.post("/")
+@router.post("")
 @limiter.limit("10/minute")
 async def create_competition(
     request: Request,

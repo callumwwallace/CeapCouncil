@@ -36,6 +36,7 @@ app = FastAPI(
     docs_url=f"{settings.API_V1_PREFIX}/docs" if settings.DEBUG else None,
     redoc_url=f"{settings.API_V1_PREFIX}/redoc" if settings.DEBUG else None,
     lifespan=lifespan,
+    redirect_slashes=False,
 )
 
 # Rate limiter state

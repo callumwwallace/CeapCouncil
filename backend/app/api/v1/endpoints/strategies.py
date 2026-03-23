@@ -162,7 +162,7 @@ async def validate_strategy(request: Request, body: ValidateRequest):
     )
 
 
-@router.post("/", response_model=StrategyResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=StrategyResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("10/minute")
 async def create_strategy(
     request: Request,
@@ -191,7 +191,7 @@ async def create_strategy(
     return strategy
 
 
-@router.get("/", response_model=list[StrategyResponse])
+@router.get("", response_model=list[StrategyResponse])
 async def list_strategies(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),

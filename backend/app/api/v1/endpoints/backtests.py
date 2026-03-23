@@ -166,7 +166,7 @@ async def create_backtest_with_code(
     return await _create_backtest_impl(db, current_user, data, strategy_id=None, code=backtest_in.code)
 
 
-@router.post("/", response_model=BacktestResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=BacktestResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("10/minute")
 async def create_backtest(
     request: Request,
@@ -246,7 +246,7 @@ async def _create_backtest_impl(
     return backtest
 
 
-@router.get("/", response_model=list[BacktestResponse])
+@router.get("", response_model=list[BacktestResponse])
 @limiter.limit("60/minute")
 async def list_my_backtests(
     request: Request,
