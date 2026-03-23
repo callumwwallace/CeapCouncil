@@ -127,11 +127,7 @@ function CompetitionCard({
       <div className="flex flex-col flex-1 p-5">
         {/* Status row */}
         <div className="flex items-center justify-between mb-3">
-          {isActive ? (
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            </span>
-          ) : effectiveCompleted ? (
+          {effectiveCompleted ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
               <CheckCircle2 className="h-3 w-3" />
               Completed
