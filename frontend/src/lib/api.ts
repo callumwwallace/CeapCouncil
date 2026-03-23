@@ -41,11 +41,10 @@ import {
 } from '@/types';
 
 function getApiBaseUrl(): string {
-  const envUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && envUrl.startsWith('http://')) {
-    return envUrl.replace('http://', 'https://');
+  if (typeof window !== 'undefined') {
+    return '/api/v1';
   }
-  return envUrl;
+  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 }
 const API_BASE_URL = getApiBaseUrl();
 
