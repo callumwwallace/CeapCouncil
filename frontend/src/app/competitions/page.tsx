@@ -14,7 +14,6 @@ import {
   Timer,
   ArrowRight,
   ThumbsUp,
-  Flame,
   TrendingUp,
   Zap,
 } from 'lucide-react';
@@ -423,10 +422,6 @@ export default function CompetitionsPage() {
               {/* Left: Info */}
               <div className="p-6 sm:p-7">
                 <div className="flex items-center gap-3 mb-3">
-                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    Live
-                  </span>
                   <span className="text-xs text-gray-400">Ends in</span>
                   <CountdownTimer endDate={featuredComp.end_date} />
                 </div>
@@ -465,7 +460,6 @@ export default function CompetitionsPage() {
                   </div>
                 </div>
                 <div className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 group-hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl transition shadow-sm shadow-emerald-600/20">
-                  <Flame className="h-4 w-4" />
                   Enter
                   <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
                 </div>

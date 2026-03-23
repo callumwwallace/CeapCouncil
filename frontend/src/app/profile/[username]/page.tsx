@@ -440,51 +440,58 @@ export default function ProfileViewPage() {
                   </Link>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {competitionHistory.map((entry) => (
-                    <Link
-                      key={entry.id}
-                      href={`/competitions/${entry.competition_id}`}
-                      className="flex items-center justify-between gap-4 p-4 rounded-lg border border-gray-100 hover:border-emerald-200 hover:bg-emerald-50/30 transition"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-gray-900 truncate">{entry.competition_title}</p>
-                        <p className="text-sm text-gray-500 truncate">{entry.strategy_title}</p>
-                        <p className="text-xs text-gray-400 mt-1">
-                          Submitted {entry.submitted_at ? formatDate(entry.submitted_at) : '—'}
-                          {entry.competition_status && (
-                            <span className="ml-2 capitalize">· {entry.competition_status}</span>
-                          )}
-                        </p>
-                      </div>
-                      <div className="flex-shrink-0 text-right">
-                        {entry.competition_status === 'active' ? (
-                          <div>
-                            <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                <div className="divide-y divide-gray-50">
+                  {competitionHistory.map((entry) => {
+                    const isActive = entry.competition_status === 'active';
+                    const returnPositive = entry.total_return != null && entry.total_return >= 0;
+                    return (
+                      <Link
+                        key={entry.id}
+                        href={`/competitions/${entry.competition_id}`}
+                        className="flex items-center justify-between gap-4 px-2 py-4 rounded-lg hover:bg-gray-50 transition group"
+                      >
+                        {/* Left */}
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-gray-900 truncate group-hover:text-emerald-700 transition text-sm">
+                            {entry.competition_title}
+                          </p>
+                          <p className="text-xs text-gray-500 truncate mt-0.5">{entry.strategy_title}</p>
+                          <p className="text-xs text-gray-400 mt-1">
+                            {entry.submitted_at ? formatDate(entry.submitted_at) : '—'}
+                          </p>
+                        </div>
+
+                        {/* Right */}
+                        <div className="flex-shrink-0 flex flex-col items-end gap-1.5">
+                          {isActive ? (
+                            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
                               In Progress
                             </span>
-                            {entry.rank != null && (
-                              <p className="text-xs text-gray-400 mt-1">Currently #{entry.rank}</p>
+                          ) : entry.rank != null ? (
+                            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${
+                              entry.rank === 1
+                                ? 'text-amber-700 bg-amber-50 border border-amber-200'
+                                : 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                            }`}>
+                              #{entry.rank} place
+                            </span>
+                          ) : null}
+
+                          <div className="flex items-center gap-2">
+                            {isActive && entry.rank != null && (
+                              <span className="text-[11px] text-gray-400">#{entry.rank} now</span>
+                            )}
+                            {entry.total_return != null && (
+                              <span className={`text-xs font-semibold tabular-nums ${returnPositive ? 'text-emerald-600' : 'text-red-500'}`}>
+                                {returnPositive ? '+' : ''}{entry.total_return.toFixed(1)}%
+                              </span>
                             )}
                           </div>
-                        ) : (
-                          <>
-                            {entry.rank != null && (
-                              <span className="text-sm font-semibold text-emerald-600">Rank #{entry.rank}</span>
-                            )}
-                            {entry.score != null && entry.rank == null && (
-                              <span className="text-sm text-gray-600">Score {entry.score.toFixed(2)}</span>
-                            )}
-                          </>
-                        )}
-                        {entry.total_return != null && (
-                          <p className={`text-xs font-medium mt-0.5 ${entry.total_return >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                            {entry.total_return >= 0 ? '+' : ''}{entry.total_return.toFixed(1)}%
-                          </p>
-                        )}
-                      </div>
-                    </Link>
-                  ))}
+                        </div>
+                      </Link>
+                    );
+                  })}
                 </div>
               )}
             </div>

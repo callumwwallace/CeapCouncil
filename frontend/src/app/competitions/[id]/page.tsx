@@ -237,120 +237,116 @@ export default function CompetitionDetailPage() {
 
         {/* ═══ Hero Card ═══ */}
         <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden mb-6 shadow-sm">
-          <div className={`h-1.5 ${
+          <div className={`h-1 ${
             isActive ? 'bg-gradient-to-r from-emerald-400 via-teal-400 to-emerald-400' :
             isCompleted ? 'bg-gradient-to-r from-gray-300 to-gray-400' :
             'bg-gradient-to-r from-blue-300 to-blue-400'
           }`} />
 
           <div className="p-6 sm:p-8">
-            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
-              <div className="flex-1 min-w-0">
-                {/* Status */}
-                <div className="flex items-center gap-3 mb-4 flex-wrap">
-                  <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full border ${
-                    isActive ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
-                    isCompleted ? 'bg-gray-50 border-gray-200 text-gray-600' :
-                    'bg-blue-50 border-blue-200 text-blue-600'
-                  }`}>
-                    {isActive
-                      ? <><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Live</>
-                      : isCompleted
-                        ? <><CheckCircle2 className="h-3 w-3" /> Completed</>
-                        : <><Timer className="h-3 w-3" /> Draft</>}
+            {/* Title row */}
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-2">
+              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 leading-tight">
+                {competition.title}
+              </h1>
+              <div className="flex items-center gap-2 shrink-0">
+                {isCompleted && (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 bg-gray-100 border border-gray-200 px-2.5 py-1 rounded-full">
+                    <CheckCircle2 className="h-3 w-3" /> Completed
                   </span>
-                  {isActive && <CountdownBlock endDate={competition.end_date} />}
-                </div>
-
-                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">{competition.title}</h1>
-                {competition.description && (
-                  <p className="text-gray-500 mb-5 max-w-2xl leading-relaxed">{competition.description}</p>
                 )}
-
-                {/* Stats row */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  <div className="bg-gray-50 rounded-xl p-3.5 border border-gray-100">
-                    <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-1.5">
-                      <Target className="h-3 w-3" />
-                      {competition.symbols && competition.symbols.length > 1 ? 'Symbols' : 'Symbol'}
-                    </div>
-                    <p className="font-bold text-gray-900 text-sm">
-                      {(competition.symbols && competition.symbols.length > 1
-                        ? competition.symbols
-                        : [competition.symbol]
-                      ).join(', ')}
-                    </p>
-                  </div>
-                  <div className="bg-gray-50 rounded-xl p-3.5 border border-gray-100">
-                    <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-1.5">
-                      <Calendar className="h-3 w-3" />
-                      Backtest Period
-                    </div>
-                    <p className="font-semibold text-gray-900 text-xs leading-snug">
-                      {fmtDate(competition.backtest_start)}<br />
-                      <span className="text-gray-400">→</span> {fmtDate(competition.backtest_end)}
-                    </p>
-                  </div>
-                  <div className="bg-gray-50 rounded-xl p-3.5 border border-gray-100">
-                    <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-1.5">
-                      <DollarSign className="h-3 w-3" />
-                      Starting Capital
-                    </div>
-                    <p className="font-bold text-gray-900">${competition.initial_capital.toLocaleString()}</p>
-                  </div>
-                  <div className={`bg-gray-50 rounded-xl p-3.5 border border-gray-100 ${isMultiMetric ? 'sm:col-span-1' : ''}`}>
-                    <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-1.5">
-                      <BarChart3 className="h-3 w-3" />
-                      Ranked By
-                    </div>
-                    <p className="font-bold text-gray-900 text-sm leading-snug">{rankingLabel}</p>
-                  </div>
-                </div>
-
-                {/* Rules */}
-                {competition.rules && Object.keys(competition.rules).length > 0 && (
-                  <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
-                    <p className="text-xs font-semibold text-amber-800 mb-1.5 flex items-center gap-1.5">
-                      <Shield className="h-3.5 w-3.5" /> Rules & Requirements
-                    </p>
-                    <ul className="text-sm text-amber-700 space-y-0.5">
-                      {Object.entries(competition.rules).map(([k, v]) => (
-                        <li key={k}><span className="font-medium">{k}:</span> {String(v)}</li>
-                      ))}
-                    </ul>
-                  </div>
+                {!isActive && !isCompleted && (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-full">
+                    <Timer className="h-3 w-3" /> Draft
+                  </span>
                 )}
-              </div>
-
-              {/* Entry count */}
-              <div className="shrink-0">
-                <div className="text-center bg-gray-50 rounded-2xl px-6 py-5 border border-gray-100 min-w-[100px]">
-                  <div className="text-4xl font-bold text-gray-900">{competition.entry_count}</div>
-                  <div className="text-sm text-gray-500 flex items-center gap-1 justify-center mt-1">
-                    <Users className="h-3.5 w-3.5" />
-                    {competition.entry_count === 1 ? 'entry' : 'entries'}
-                  </div>
+                <span className="inline-flex items-center gap-1.5 text-sm text-gray-500 bg-gray-50 border border-gray-100 px-3 py-1.5 rounded-full">
+                  <Users className="h-3.5 w-3.5 text-gray-400" />
+                  <span className="font-semibold text-gray-800">{competition.entry_count}</span>
+                  {competition.entry_count === 1 ? 'entry' : 'entries'}
                   {competition.max_entries && (
-                    <div className="text-[10px] text-gray-400 mt-1">
-                      / {competition.max_entries} max
-                    </div>
+                    <span className="text-gray-400">/ {competition.max_entries}</span>
                   )}
-                </div>
+                </span>
               </div>
             </div>
 
+            {competition.description && (
+              <p className="text-gray-500 mb-5 leading-relaxed max-w-2xl">{competition.description}</p>
+            )}
+
+            {/* Countdown (active only) */}
+            {isActive && (
+              <div className="flex items-center gap-2 mb-5">
+                <span className="text-xs text-gray-400 font-medium">Ends in</span>
+                <CountdownBlock endDate={competition.end_date} />
+              </div>
+            )}
+
+            {/* Stats strip */}
+            <div className="flex flex-wrap gap-2.5 mb-1">
+              <div className="flex items-center gap-1.5 text-sm bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5">
+                <Target className="h-3.5 w-3.5 text-gray-400" />
+                <span className="text-gray-400 text-xs">Symbol</span>
+                <span className="font-semibold text-gray-900">
+                  {(competition.symbols && competition.symbols.length > 1
+                    ? competition.symbols
+                    : [competition.symbol]
+                  ).join(', ')}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 text-sm bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5">
+                <Calendar className="h-3.5 w-3.5 text-gray-400" />
+                <span className="text-gray-400 text-xs">Period</span>
+                <span className="font-semibold text-gray-900">
+                  {new Date(competition.backtest_start).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                  {' → '}
+                  {new Date(competition.backtest_end).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 text-sm bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5">
+                <DollarSign className="h-3.5 w-3.5 text-gray-400" />
+                <span className="text-gray-400 text-xs">Capital</span>
+                <span className="font-semibold text-gray-900">${competition.initial_capital.toLocaleString()}</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-sm bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5">
+                <BarChart3 className="h-3.5 w-3.5 text-gray-400" />
+                <span className="text-gray-400 text-xs">Ranked by</span>
+                <span className="font-semibold text-gray-900">{rankingLabel}</span>
+              </div>
+            </div>
+
+            {/* Rules */}
+            {competition.rules && Object.keys(competition.rules).length > 0 && (
+              <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                <p className="text-xs font-semibold text-amber-800 mb-1.5 flex items-center gap-1.5">
+                  <Shield className="h-3.5 w-3.5" /> Rules & Requirements
+                </p>
+                <ul className="text-sm text-amber-700 space-y-0.5">
+                  {Object.entries(competition.rules).map(([k, v]) => (
+                    <li key={k}><span className="font-medium">{k}:</span> {String(v)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {/* Submit section */}
             {isAuthenticated && isActive && (
-              <div className="mt-6 pt-5 border-t border-gray-100">
+              <div className="mt-5 pt-5 border-t border-gray-100">
                 {myEntry ? (
-                  <div className="flex items-center gap-3 bg-emerald-50 border border-emerald-200 px-5 py-4 rounded-xl">
-                    <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  <div className="flex items-center justify-between gap-4 bg-emerald-50 border border-emerald-200 px-5 py-3.5 rounded-xl">
+                    <div className="flex items-center gap-3">
+                      <div className="w-7 h-7 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                      </div>
+                      <span className="font-semibold text-emerald-800 text-sm">You&apos;re entered</span>
                     </div>
-                    <div>
-                      <span className="font-semibold text-emerald-800 text-sm">You&apos;re entered!</span>
-                      <span className="text-emerald-700 text-sm ml-1.5">
-                        Ranked #{myEntry.rank || '—'} with {fmtPct(myEntry.total_return)} return
+                    <div className="flex items-center gap-3 text-sm">
+                      {myEntry.rank && (
+                        <span className="text-emerald-700 font-medium">#{myEntry.rank} place</span>
+                      )}
+                      <span className={`font-semibold tabular-nums ${myEntry.total_return != null && myEntry.total_return >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {fmtPct(myEntry.total_return)}
                       </span>
                     </div>
                   </div>
