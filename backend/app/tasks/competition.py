@@ -434,13 +434,10 @@ def expire_competitions_task():
 
 
 def _next_monday(now: datetime) -> datetime:
-    """Return next Monday 00:00 UTC (the Monday of the upcoming competition week)."""
+    """Return the upcoming Monday 00:00 UTC, or today if it's already Monday."""
     from datetime import timedelta
-    if now.weekday() == 0:  # Monday: next Monday is 7 days ahead
-        d = now + timedelta(days=7)
-    else:
-        days_until = 7 - now.weekday()
-        d = now + timedelta(days=days_until)
+    days_until = (7 - now.weekday()) % 7  # 0 if today is Monday
+    d = now + timedelta(days=days_until)
     return d.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
