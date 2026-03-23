@@ -40,13 +40,7 @@ import {
   FactorResults,
 } from '@/types';
 
-function getApiBaseUrl(): string {
-  if (typeof window !== 'undefined') {
-    return '/api/v1';
-  }
-  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-}
-const API_BASE_URL = getApiBaseUrl();
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 class ApiClient {
   private client: AxiosInstance;
@@ -64,8 +58,10 @@ class ApiClient {
       },
     });
 
-    // Add access token to requests
     this.client.interceptors.request.use((config) => {
+      if (typeof window !== 'undefined') {
+        config.baseURL = '/api/v1';
+      }
       if (this.accessToken) {
         config.headers.Authorization = `Bearer ${this.accessToken}`;
       }
