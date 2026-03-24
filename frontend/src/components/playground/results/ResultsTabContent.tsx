@@ -60,7 +60,7 @@ interface ResultsTabContentProps {
   onTabChange: (tab: ResultsTab) => void;
   analytics: AnalyticsState;
   paramDefs: ExtractedParam[];
-  /** Hides built-in tab nav when sidebar owns it */
+  /** When true, parent draws the tab rail (embed mode). */
   hideTabNav?: boolean;
 }
 
@@ -88,13 +88,11 @@ export default function ResultsTabContent({
     handleRunCpcv, handleRunFactorAttribution, handleRunMonteCarlo,
   } = analytics;
 
-  // Stats shown in chart headers
   const equityValues = results.equity_curve?.map((p) => p.equity) ?? [];
   const pnl =
     equityValues.length >= 2
       ? ((equityValues.at(-1)! - equityValues[0]) / equityValues[0]) * 100
       : null;
-  // drawdown_pct is positive (9.09 = 9%). Worst = max of these
   const maxDrawdown = results.drawdown_series?.length
     ? Math.max(...results.drawdown_series.map((p) => p.drawdown_pct))
     : null;
@@ -117,7 +115,7 @@ export default function ResultsTabContent({
                 <div className="p-3 pb-6">
                   {!hideTabNav && <div className="space-y-3 pb-3 border-b border-gray-200">
                     <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Analysis</div>
-                    {/* main tabs */}
+{/* tabs */}
                     <div className="flex gap-1 p-1 rounded-lg bg-gray-100 border border-gray-200">
                       {(['summary', 'trades', 'orders', 'charts'] as const).map((tab) => {
                         const primaryIcons = { summary: LayoutDashboard, trades: ArrowLeftRight, orders: ListOrdered, charts: LineChartIcon };
@@ -138,7 +136,7 @@ export default function ResultsTabContent({
                         );
                       })}
                   </div>
-                    {/* advanced tabs */}
+{/* more tabs */}
                     <div className="grid grid-cols-4 gap-1.5">
                       {(['tca', 'optimize', 'walkforward', 'oos', 'cpcv', 'factors', 'montecarlo', 'risk', 'heatmap', 'distribution', 'compare'] as const).map((tab) => {
                         const secondaryIcons = { tca: Activity, optimize: Sliders, walkforward: GitBranch, oos: Filter, cpcv: Layers, factors: PieChartIcon, montecarlo: Shuffle, risk: Shield, heatmap: Calendar, distribution: BarChart2, compare: GitCompare };
@@ -165,6 +163,18 @@ export default function ResultsTabContent({
                 <ErrorBoundary label="Results">
                       {activeResultsTab === 'summary' && (
                         <div className="space-y-2">
+{/* missing symbols */}
+                          {results.warnings && results.warnings.length > 0 && (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 space-y-0.5">
+                              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-700 mb-0.5">
+                                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden><path d="M6.5 1.5L12 11.5H1L6.5 1.5Z" stroke="#b45309" strokeWidth="1.3" fill="none" strokeLinejoin="round"/><line x1="6.5" y1="5.5" x2="6.5" y2="8" stroke="#b45309" strokeWidth="1.3" strokeLinecap="round"/><circle cx="6.5" cy="9.5" r="0.6" fill="#b45309"/></svg>
+                                Symbol warnings
+                              </div>
+                              {results.warnings.map((w, i) => (
+                                <div key={i} className="text-[11px] text-amber-700">{w}</div>
+                              ))}
+                            </div>
+                          )}
                           <div className="grid grid-cols-2 gap-2">
                             <div className={`p-3 rounded-lg border ${results.total_return >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
                               <div className="text-[10px] text-gray-500 uppercase tracking-wide">Return</div>
@@ -189,7 +199,9 @@ export default function ResultsTabContent({
                           </div>
                       {results.benchmark_return !== undefined && (
                             <div className="p-2 rounded-lg border border-gray-200 bg-gray-50 flex justify-between items-center">
-                              <span className="text-[11px] text-gray-500">vs Buy &amp; Hold</span>
+                              <span className="text-[11px] text-gray-500">
+                                {(results.num_symbols ?? 1) > 1 ? 'vs Blended B&H' : 'vs Buy & Hold'}
+                              </span>
                               <span className={results.total_return > results.benchmark_return ? 'text-emerald-600' : 'text-amber-600'}>
                                 Alpha {(results.total_return - results.benchmark_return) >= 0 ? '+' : ''}{(results.total_return - results.benchmark_return).toFixed(1)}%
                             </span>
@@ -225,12 +237,15 @@ export default function ResultsTabContent({
                           <TradeLog trades={results.trades ?? []} />
                             </div>
                           )}
-                      {activeResultsTab === 'orders' && results.orders && results.orders.length > 0 && (
-                        <div className="space-y-2 overflow-x-auto">
-                          <div className="text-xs font-semibold text-gray-500 mb-2">{results.orders.length} Orders</div>
+                      {activeResultsTab === 'orders' && results.orders && results.orders.length > 0 && (() => {
+                        const orderMultiAsset = new Set(results.orders.map((o) => o.symbol).filter(Boolean)).size > 1;
+                        return (
+                          <div className="space-y-2 overflow-x-auto">
+                            <div className="text-xs font-semibold text-gray-500 mb-2">{results.orders.length} Orders</div>
                             <table className="w-full text-xs">
                               <thead>
-                              <tr className="text-gray-500 border-b border-gray-200">
+                                <tr className="text-gray-500 border-b border-gray-200">
+                                  {orderMultiAsset && <th className="text-left py-1 px-1">Symbol</th>}
                                   <th className="text-left py-1 px-1">Side</th>
                                   <th className="text-left py-1 px-1">Type</th>
                                   <th className="text-right py-1 px-1">Qty</th>
@@ -242,18 +257,22 @@ export default function ResultsTabContent({
                               <tbody>
                                 {results.orders.slice(0, 100).map((order, i) => (
                                   <tr key={i} className="border-b border-gray-200 hover:bg-gray-50">
-                                  <td className={`py-1 px-1 ${order.side === 'buy' ? 'text-emerald-600' : 'text-red-600'}`}>{order.side.toUpperCase()}</td>
+                                    {orderMultiAsset && (
+                                      <td className="py-1 px-1 font-mono font-semibold text-gray-700">{order.symbol}</td>
+                                    )}
+                                    <td className={`py-1 px-1 font-semibold ${order.side === 'buy' ? 'text-emerald-600' : 'text-red-600'}`}>{order.side.toUpperCase()}</td>
                                     <td className="py-1 px-1 text-gray-700">{order.order_type}</td>
                                     <td className="py-1 px-1 text-right text-gray-700">{order.filled_quantity}</td>
                                     <td className="py-1 px-1 text-right text-gray-900">${order.avg_fill_price.toFixed(2)}</td>
                                     <td className="py-1 px-1 text-right text-gray-500">${order.commission.toFixed(2)}</td>
-                                  <td className="py-1 px-1"><span className={`text-[10px] px-1 py-0.5 rounded ${order.status === 'filled' ? 'bg-emerald-50 text-emerald-700' : order.status === 'cancelled' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>{order.status}</span></td>
+                                    <td className="py-1 px-1"><span className={`text-[10px] px-1 py-0.5 rounded ${order.status === 'filled' ? 'bg-emerald-50 text-emerald-700' : order.status === 'cancelled' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>{order.status}</span></td>
                                   </tr>
                                 ))}
                               </tbody>
                             </table>
-                        </div>
-                      )}
+                          </div>
+                        );
+                      })()}
                       {activeResultsTab === 'orders' && (!results.orders || results.orders.length === 0) && (
                         <div className="text-center py-8 text-gray-500 text-xs">Order history shown above.</div>
                       )}
@@ -363,7 +382,7 @@ export default function ResultsTabContent({
                               </div>
                             </div>
                           ) : null}
-                          {/* Top-5 worst drawdown periods */}
+{/* worst DD */}
                           {results.drawdown_series && results.drawdown_series.length > 1 && (() => {
                             type DdPeriod = { start: string; trough: string; end: string; depth: number; duration: number };
                             const dd = results.drawdown_series;
@@ -423,7 +442,7 @@ export default function ResultsTabContent({
                               </div>
                             );
                           })()}
-                          {/* Crisis Events */}
+{/* crises */}
                           {(() => {
                             const CRISES = [
                               { name: 'GFC 2008',       start: '2008-09-01', end: '2009-03-31', color: 'text-red-600' },
@@ -583,7 +602,7 @@ export default function ResultsTabContent({
                               </div>
                             </div>
                           ) : null}
-                          {/* Daily Returns */}
+{/* daily rets */}
                           {results.equity_curve && results.equity_curve.length >= 2 && (() => {
                             const ec = results.equity_curve;
                             const dailyReturns = ec.map((p, i) =>
@@ -592,7 +611,6 @@ export default function ResultsTabContent({
                                 pct: ((p.equity - ec[i - 1].equity) / ec[i - 1].equity) * 100,
                               }
                             ).filter(Boolean) as { date: string; pct: number }[];
-                            // Throttle to ~200 bars for perf
                             const maxBars = 200;
                             const displayed = dailyReturns.length > maxBars
                               ? dailyReturns.filter((_, i) => i % Math.ceil(dailyReturns.length / maxBars) === 0)
@@ -635,7 +653,7 @@ export default function ResultsTabContent({
                               </div>
                             );
                           })()}
-                          {/* Annual Returns */}
+{/* annual */}
                           {results.equity_curve && results.equity_curve.length >= 2 && (() => {
                             const ec = results.equity_curve;
                             const byYear: Record<string, { first: number; last: number }> = {};
@@ -692,7 +710,7 @@ export default function ResultsTabContent({
                               </div>
                             );
                           })()}
-                          {/* Asset Allocation donut */}
+{/* allocation */}
                           {results.trades && results.trades.length > 0 && (() => {
                             const trades = results.trades;
                             const hasShorts = trades.some(t => t.type === 'SHORT');
@@ -1218,7 +1236,7 @@ export default function ResultsTabContent({
                           )}
                           {factorResults && !factorResults.error && factorResults.status === 'completed' && (
                             <div className="space-y-3">
-                              {/* alpha */}
+{/* α */}
                               <div className={`p-3 rounded-lg border ${factorResults.alpha_significant ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 bg-white'}`}>
                                 <div className="flex items-baseline justify-between">
                                   <div>
@@ -1234,7 +1252,7 @@ export default function ResultsTabContent({
                                 </div>
                               </div>
 
-                              {/* model fit */}
+{/* fit */}
                               <div className="grid grid-cols-3 gap-2">
                                 <div className="p-3 rounded-lg border border-gray-200 bg-white">
                                   <div className="text-[10px] text-gray-500">R²</div>
@@ -1251,7 +1269,7 @@ export default function ResultsTabContent({
                                 </div>
                               </div>
 
-                              {/* factor loadings */}
+{/* loadings */}
                               <div>
                                 <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Factor Loadings</div>
                                 <div className="rounded-lg border border-gray-200 overflow-hidden">
@@ -1287,7 +1305,7 @@ export default function ResultsTabContent({
                                 </div>
                               </div>
 
-                              {/* breakdown */}
+{/* breakdown */}
                               <div>
                                 <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Return Decomposition</div>
                                 <div className="p-3 rounded-lg border border-gray-200 bg-white space-y-2">
@@ -1326,7 +1344,7 @@ export default function ResultsTabContent({
                                 </div>
                               </div>
 
-                              {/* notes */}
+{/* notes */}
                               <div className="p-2 rounded-lg border border-gray-200 bg-gray-50 text-[11px] text-gray-600 space-y-1">
                                 {(factorResults.r_squared ?? 0) > 0.7 && <p>High R² ({((factorResults.r_squared ?? 0) * 100).toFixed(0)}%) — most of your returns are explained by known factors.</p>}
                                 {(factorResults.r_squared ?? 0) <= 0.7 && (factorResults.r_squared ?? 0) > 0.3 && <p>Moderate R² ({((factorResults.r_squared ?? 0) * 100).toFixed(0)}%) — returns are partially driven by factors, with meaningful unique behavior.</p>}
@@ -1365,7 +1383,6 @@ export default function ResultsTabContent({
                       )}
                           {walkForwardResults && !walkForwardResults.error && (walkForwardResults.windows?.length || walkForwardResults.splits?.length) && (() => {
                             const wins = walkForwardResults.windows ?? walkForwardResults.splits ?? [];
-                            // One row per window: IS/OOS Sharpe + OOS return
                             const chartData = wins.map((w, i) => ({
                               label: `W${(w.window ?? i + 1)}`,
                               is_sharpe: w.train_sharpe ?? null,
@@ -1377,7 +1394,7 @@ export default function ResultsTabContent({
                             const hasIS = chartData.some(d => d.is_sharpe != null);
                             return (
                               <div className="space-y-3">
-                                {/* Summary row */}
+{/* summary */}
                                 <div className="grid grid-cols-3 gap-2">
                                   {walkForwardResults.avg_oos_return != null && (
                                     <div className="p-2 rounded-lg border border-gray-200 bg-white">
@@ -1405,7 +1422,7 @@ export default function ResultsTabContent({
                                   )}
                                 </div>
 
-                                {/* IS vs OOS Sharpe bar chart */}
+{/* sharpe bars */}
                                 <div>
                                   <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">
                                     {hasIS ? 'IS vs OOS Sharpe per Window' : 'OOS Sharpe per Window'}
@@ -1431,7 +1448,7 @@ export default function ResultsTabContent({
                                   </div>
                                 </div>
 
-                                {/* OOS Return bar chart */}
+{/* return bars */}
                                 <div>
                                   <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">OOS Return per Window (%)</div>
                                   <div className="h-20">
@@ -1451,7 +1468,7 @@ export default function ResultsTabContent({
                                   </div>
                                 </div>
 
-                                {/* Detail list */}
+{/* details */}
                                 <div className="rounded-lg border border-gray-200 divide-y divide-gray-100 max-h-40 overflow-y-auto">
                                   {chartData.map((d, i) => (
                                     <div key={i} className="px-3 py-1.5 flex items-center justify-between text-[10px] hover:bg-gray-50">
@@ -1491,7 +1508,7 @@ export default function ResultsTabContent({
                           )}
                           {monteCarloResults && !monteCarloResults.error && (monteCarloResults.percentiles || monteCarloResults.percentile_curves) && (
                             <div className="space-y-3">
-                              {/* Summary stats */}
+{/* stats */}
                               <div className="grid grid-cols-3 gap-2">
                                 {monteCarloResults.probability_of_loss != null && (
                                   <div className="p-2 rounded-lg border border-gray-200 bg-white">
@@ -1515,17 +1532,15 @@ export default function ResultsTabContent({
                                 )}
                               </div>
 
-                              {/* Fan chart if percentile_curves available, else table fallback */}
+{/* MC fan or table */}
                               {monteCarloResults.percentile_curves ? (() => {
                                 const pc = monteCarloResults.percentile_curves!;
                                 const fanData = pc.p5.map((v, i) => ({
                                   step: i,
-                                  // Deltas for stacked bands
                                   p5: v,
                                   d_p5_p25: pc.p25[i] - v,
                                   d_p25_p75: pc.p75[i] - pc.p25[i],
                                   d_p75_p95: pc.p95[i] - pc.p75[i],
-                                  // Absolute vals for tooltip
                                   abs_p5: v,
                                   abs_p25: pc.p25[i],
                                   abs_p50: pc.p50[i],
@@ -1567,12 +1582,12 @@ export default function ResultsTabContent({
                                             domain={['auto', 'auto']}
                                           />
                                           <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(0,0,0,0.1)', strokeWidth: 1 }} />
-                                          {/* p5→p25, p25→p75, p75→p95 stacked bands */}
+{/* bands */}
                                           <Area stackId="fan" type="monotone" dataKey="p5" fill="transparent" stroke="none" />
                                           <Area stackId="fan" type="monotone" dataKey="d_p5_p25" fill="#bfdbfe" fillOpacity={0.5} stroke="none" />
                                           <Area stackId="fan" type="monotone" dataKey="d_p25_p75" fill="#93c5fd" fillOpacity={0.4} stroke="none" />
                                           <Area stackId="fan" type="monotone" dataKey="d_p75_p95" fill="#bfdbfe" fillOpacity={0.5} stroke="none" />
-                                          {/* Median line (ignores stack) */}
+{/* median */}
                                           <Line type="monotone" dataKey="p50" stroke="#2563eb" strokeWidth={2} dot={false} />
                                         </ComposedChart>
                                       </ResponsiveContainer>
@@ -1580,7 +1595,7 @@ export default function ResultsTabContent({
                                   </div>
                                 );
                               })() : (
-                                /* No fan chart — show percentile table */
+/* table fallback */
                                 monteCarloResults.percentiles && (
                                   <div>
                                     <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Final Value Percentiles</div>
@@ -1722,14 +1737,18 @@ export default function ResultsTabContent({
                         <div className="space-y-3">
                           {results.benchmark_return !== undefined ? (
                             <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
-                              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">vs Buy &amp; Hold</div>
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                                {(results.num_symbols ?? 1) > 1 ? 'vs Equal-Weight Buy & Hold' : 'vs Buy & Hold'}
+                              </div>
                               <div className="grid grid-cols-2 gap-2">
                                 <div className="p-3 rounded-lg border border-gray-200 bg-white">
                                   <div className="text-[11px] text-gray-500 mb-1">Strategy</div>
                                   <div className={`text-sm font-semibold ${results.total_return >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{results.total_return.toFixed(1)}%</div>
                                 </div>
                                 <div className="p-3 rounded-lg border border-gray-200 bg-white">
-                                  <div className="text-[11px] text-gray-500 mb-1">Benchmark</div>
+                                  <div className="text-[11px] text-gray-500 mb-1">
+                                    {(results.num_symbols ?? 1) > 1 ? 'Blended B&H' : 'Benchmark'}
+                                  </div>
                                   <div className={`text-sm font-semibold ${results.benchmark_return >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{results.benchmark_return.toFixed(1)}%</div>
                               </div>
                           </div>

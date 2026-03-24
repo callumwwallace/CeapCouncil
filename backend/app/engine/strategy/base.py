@@ -1,8 +1,7 @@
-"""Base class for user strategies.
+"""What every user strategy subclasses.
 
-Provides lifecycle hooks, access to portfolio/broker, order helpers,
-data history access, indicators, consolidators, custom charts,
-notifications, and warm-up period support.
+You get lifecycle hooks, the portfolio/broker handles, helpers for orders and
+``history()``, warm-up, custom charts, and alerts — everything the engine wires up for you.
 """
 
 from __future__ import annotations
@@ -39,13 +38,13 @@ class StrategyContext:
 class StrategyBase(ABC):
     """Base class for all trading strategies.
 
-    Lifecycle:
-    1. on_init() : called once before backtest starts
-    2. on_data(bar) : called for each new bar (after warm-up)
-    3. on_order_event(fill) : called when an order fills
-    4. on_end() : called when backtest completes
+    Rough order of operations:
+    1. ``on_init()`` — once, before the first bar
+    2. ``on_data(bar)`` — every bar after warm-up
+    3. ``on_order_event(fill)`` — whenever something fills
+    4. ``on_end()`` — after the last bar
 
-    Strategies use helper methods to submit orders and query state.
+    Use the helpers below to trade and inspect state; don't reimplement the plumbing.
     """
 
     def __init__(self, params: dict[str, Any] | None = None):
@@ -53,33 +52,29 @@ class StrategyBase(ABC):
         self._context = StrategyContext()
         self._name = self.__class__.__name__
 
-        # Data history (per-symbol ring buffer)
+        # Ring buffer per symbol for history()
         self._history: dict[str, list[BarData]] = {}
         self._max_history: int = 500
 
-        # Scheduled events
-        self._scheduled: list[tuple[str, int, Any]] = []  # (name, every_n_bars, callback)
+        # (label, every_n_bars, callback)
+        self._scheduled: list[tuple[str, int, Any]] = []
 
-        # Warm-up period
         self._warmup_bars: int = 0
         self._warmup_complete: bool = False
 
-        # Custom charts
         self._charts: dict[str, list[dict]] = {}
 
-        # Notifications
         self._alerts: list[dict] = []
 
-        # Bracket order tracking
+        # Bracket legs share a group id until one of them fills
         self._bracket_groups: dict[str, dict] = {}
 
-        # Execution algo tracking
         self._executors: list[TWAPExecutor | VWAPExecutor | IcebergExecutor | POVExecutor] = []
 
     def _set_context(self, ctx: StrategyContext) -> None:
         self._context = ctx
 
-    # -- Lifecycle hooks (override these) --
+    # --- Override these in your strategy ---
 
     def on_init(self) -> None:
         """Called once before the backtest starts. Set up indicators here."""
@@ -106,7 +101,7 @@ class StrategyBase(ABC):
         """Called when the backtest finishes. Override for cleanup."""
         pass
 
-    # -- Warm-up period API --
+    # --- Warm-up ---
 
     def set_warmup(self, bars: int = 0) -> None:
         """Set warm-up period. on_data() won't be called until warm-up is complete.
@@ -116,7 +111,6 @@ class StrategyBase(ABC):
         """
         self._warmup_bars = bars
         self._warmup_complete = bars <= 0
-        # Ensure history buffer is large enough to hold the warm-up period
         if bars > self._max_history:
             self._max_history = bars + 50
 
@@ -140,7 +134,7 @@ class StrategyBase(ABC):
             return True
         return False
 
-    # -- Data access --
+    # --- Data ---
 
     @property
     def portfolio(self) -> Portfolio:
@@ -182,8 +176,33 @@ class StrategyBase(ABC):
         feed = self._context.data_feed
         return feed.symbols if feed else []
 
+    def capital_per_symbol(self) -> float:
+        """Equal capital allocation per loaded symbol.
+
+        Returns total portfolio equity divided by the number of symbols.
+        Use this instead of ``self.equity`` directly when sizing positions
+        in multi-asset strategies so each symbol gets a fair share of
+        capital regardless of how many assets are loaded.
+
+        For single-symbol backtests this is identical to ``self.equity``.
+        """
+        n = max(1, len(self.symbols))
+        flat_count = sum(
+            1 for sym in self.symbols
+            if not self.portfolio.has_position(sym)
+        )
+        if flat_count == 0:
+            return self.equity / n
+        return min(self.equity / n, self.portfolio.cash / flat_count)
+
     def history(self, symbol: str | None = None, length: int = 1) -> list[BarData]:
-        """Get recent bars for a symbol. Default: primary symbol."""
+        """Get recent bars for a symbol. Default: primary symbol.
+
+        Returns an empty list if the symbol has not been loaded or has no
+        bars recorded yet — never returns None or raises KeyError.
+        """
+        if length <= 0:
+            return []
         if symbol is None:
             feed = self._context.data_feed
             symbol = feed.primary_symbol if feed else ""
@@ -199,7 +218,7 @@ class StrategyBase(ABC):
         if len(hist) > self._max_history:
             self._history[bar.symbol] = hist[-self._max_history:]
 
-    # -- Order helpers --
+    # --- Orders ---
 
     def market_order(self, symbol: str, quantity: float, **kwargs) -> Order:
         """Submit a market order."""
@@ -272,7 +291,7 @@ class StrategyBase(ABC):
         )
         return self.broker.submit_order(order, self.time)
 
-    # -- Bracket / Combo orders --
+    # --- Brackets & OCO ---
 
     def bracket_order(
         self, symbol: str, quantity: float,
@@ -305,8 +324,7 @@ class StrategyBase(ABC):
             "_quantity": quantity,
         }
 
-        # TP/SL orders are submitted automatically when the entry fills.
-        # Only the entry order exists at this point.
+        # TP/SL show up only after the entry actually fills — for now you just get the entry leg
         return {"entry": entry}
 
     def oco_order(
@@ -341,7 +359,6 @@ class StrategyBase(ABC):
         if order is None:
             return
 
-        # OCO handling
         if "oco_other" in order.metadata and order.status.value == "filled":
             other_id = order.metadata["oco_other"]
             self.broker.cancel_order(other_id, self.time)
@@ -390,7 +407,7 @@ class StrategyBase(ABC):
         """Cancel all pending orders."""
         return self.broker.cancel_all(symbol, self.time)
 
-    # -- Execution algorithms --
+    # --- Execution algos (TWAP, VWAP, …) ---
 
     def twap_order(
         self, symbol: str, quantity: float, num_slices: int = 10,
@@ -519,7 +536,7 @@ class StrategyBase(ABC):
                     executor.on_fill(fill.quantity)
                     return
 
-    # -- Custom charting API --
+    # --- Custom charts ---
 
     def plot(self, chart_name: str, series_name: str, value: float) -> None:
         """Plot a value on a custom chart.
@@ -538,7 +555,7 @@ class StrategyBase(ABC):
         """Get all custom chart data. Called by engine after backtest."""
         return dict(self._charts)
 
-    # -- Notifications --
+    # --- Alerts ---
 
     def notify(self, message: str, level: str = "info", data: dict | None = None) -> None:
         """Send a notification/alert.
@@ -560,7 +577,7 @@ class StrategyBase(ABC):
         """Get all alerts generated during the backtest."""
         return list(self._alerts)
 
-    # -- Scheduling --
+    # --- Schedules ---
 
     def schedule(self, name: str, every_n_bars: int, callback: Any) -> None:
         """Schedule a callback to run every N bars.
@@ -576,7 +593,7 @@ class StrategyBase(ABC):
             if bar_index > 0 and bar_index % interval == 0:
                 callback(bar)
 
-    # -- Position helpers --
+    # --- Position shortcuts ---
 
     def position_size(self, symbol: str) -> float:
         """Current quantity held in symbol (positive = long, negative = short)."""

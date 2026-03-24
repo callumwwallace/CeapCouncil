@@ -1,7 +1,6 @@
-"""Engine : the main event-driven backtest runner.
+"""The backtest loop: walk bars, fill orders, let the strategy react.
 
-Orchestrates the event loop: feeds data, processes orders, fills, signals.
-Replaces Backtrader's cerebro.run() with a deterministic, extensible loop.
+Same idea as a classic cerebro.run(), but smaller and fully under our control.
 """
 
 from __future__ import annotations
@@ -45,58 +44,58 @@ class EngineConfig:
     commission_per_share: float = 0.0
     min_commission: float = 0.0
 
-    # Slippage model selection
+    # How we model slippage (none, %, volume-aware, linear, auto)
     slippage_model: str = "percentage"   # "none", "percentage", "volume_aware", "linear", "auto"
     slippage_pct: float = 0.1            # For percentage model
     liquidity_tier: str | None = None    # For volume_aware/auto: "high", "mid", "low"
 
-    # Spread model selection
+    # Bid/ask width model
     spread_model: str = "none"           # "none", "fixed", "fixed_bps", "volatility"
     spread_value: float = 0.0            # For fixed models
 
-    # Margin
+    # Leverage / margin account
     margin_enabled: bool = False
     allow_shorts_without_margin: bool = False  # e.g. crypto perps
     initial_margin_pct: float = 50.0
     maintenance_margin_pct: float = 25.0
     max_leverage: float = 2.0
 
-    # Risk limits
+    # Hard risk rails the manager enforces
     max_position_pct: float = 100.0
     max_drawdown_pct: float = 50.0
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
 
-    # Fill
+    # Fill assumptions (e.g. open vs close of bar)
     fill_at_open: bool = True
     max_fill_pct_volume: float = 0.1
 
-    # Intrabar simulation for realistic limit/stop fills (always on)
+    # Simulate path inside the bar so limits/stops fill in believable order
     intrabar_enabled: bool = True
     intrabar_model: str = "ohlc_path"
     intrabar_ticks: int = 20
 
-    # Determinism
+    # Fix the RNG when you need identical reruns
     random_seed: int | None = None
 
-    # Warm-up
+    # Bars to collect before we call on_data
     warmup_bars: int = 0
 
-    # Pattern Day Trading (US equities)
+    # US equity PDT rules
     pdt_enabled: bool = False
 
-    # Crypto perpetual funding rates
+    # Perp funding accrual (crypto)
     funding_enabled: bool = False
     funding_rate_annual_pct: float = 10.0  # Annualized funding rate (typical: 10-30%)
     funding_interval_hours: int = 8        # Standard perp funding interval
 
-    # Multi-currency
+    # Reporting currency
     base_currency: str = "USD"
 
-    # Misc
+    # Tweaks routing (e.g. crypto-style spread)
     is_crypto: bool = False
     benchmark_symbol: str | None = None
-    streaming: bool = False  # Use StreamingDataFeed for lower memory usage
+    streaming: bool = False  # numpy-backed feed when datasets are huge
 
     _NON_DETERMINISTIC_FIELDS = {"streaming"}
 
@@ -122,19 +121,19 @@ class EngineResult:
     backtest_id: str = ""
     risk_violations: list[dict] = field(default_factory=list)
 
-    # Rolling metrics
+    # Optional rolling analytics series
     rolling_sharpe: list[dict] | None = None
     rolling_sortino: list[dict] | None = None
     rolling_beta: list[dict] | None = None
     rolling_vol: list[dict] | None = None
 
-    # Custom strategy charts
+    # Whatever the strategy plotted via self.plot()
     custom_charts: dict = field(default_factory=dict)
 
-    # Strategy alerts
+    # self.notify() messages
     alerts: list[dict] = field(default_factory=list)
 
-    # Full event log for audit trail
+    # Every order, fill, bar tick we logged (heavy, useful for debugging)
     event_log: list[dict] = field(default_factory=list)
 
     @staticmethod
@@ -181,7 +180,7 @@ class EngineResult:
             "max_consecutive_losses": p(m.max_consecutive_losses),
             "calmar_ratio": p(m.calmar_ratio),
             "exposure_pct": p(m.exposure_pct),
-            # Extended metrics
+            # Extra fields the UI knows about
             "orders": self.orders,
             "expectancy": p(m.expectancy),
             "volatility_annual": p(m.volatility_annual),
@@ -234,12 +233,12 @@ class Engine:
         self._event_queue = EventQueue()
         self._clock = SimulationClock(ClockMode.BACKTEST)
 
-        # Multi-currency support
+        # FX when symbols aren't denominated in base currency
         self._currency_mgr = CurrencyManager(base_currency=self.config.base_currency)
         self._fx_currencies_needed: set[str] = set()
         self._fx_data: dict[str, pd.DataFrame] = {}
 
-        # Build components from config
+        # Spin up broker stack from config
         self._spread_model = self._build_spread_model()
         self._slippage_model = self._build_slippage_model()
         self._intrabar_sim = self._build_intrabar_simulator()
@@ -284,7 +283,7 @@ class Engine:
         )
         self._risk_manager = RiskManager(limits=risk_limits)
 
-        # Wire up callbacks
+        # Hook broker → portfolio / strategy / event log
         self._broker.set_fill_callback(self._on_fill)
         self._broker.set_order_submit_callback(self._on_order_submit)
         self._broker.set_cancel_callback(self._on_cancel_dispatch)
@@ -297,11 +296,12 @@ class Engine:
             return self._risk_manager.check_order(order, self._portfolio, price)
 
         self._broker.set_pre_submit_check(_pre_submit_check)
+        self._broker.set_cash_fn(lambda: self._portfolio.cash)
+        self._broker.allow_overdraft = self.config.margin_enabled
 
-        # Event log for audit
         self._event_log: list[dict] = []
 
-        # Benchmark returns for alpha/beta/IR
+        # Daily benchmark returns if you want CAPM stats
         self._benchmark_returns: list[float] | None = None
 
     def set_benchmark_returns(self, returns: list[float]) -> None:
@@ -314,7 +314,7 @@ class Engine:
             df = corporate_actions.apply_all(df, symbol)
         self._data_feed.add_symbol(symbol, df)
 
-        # Detect non-base currencies that need FX conversion
+        # Remember if we need to pull an FX series for this symbol
         currency = self._currency_mgr.get_currency_for_symbol(symbol)
         if currency != self._currency_mgr.base_currency:
             self._fx_currencies_needed.add(currency)
@@ -332,7 +332,6 @@ class Engine:
         if not self._data_feed.symbols:
             raise ValueError("No data loaded. Call add_data() first.")
 
-        # Initialize strategy context
         ctx = StrategyContext(
             portfolio=self._portfolio,
             broker=self._broker,
@@ -342,15 +341,14 @@ class Engine:
         self._strategy._set_context(ctx)
         self._strategy.on_init()
 
-        # Apply warm-up from config or strategy
+        # Config can override strategy warm-up if the strategy left it at zero
         if self.config.warmup_bars > 0 and self._strategy._warmup_bars == 0:
             self._strategy.set_warmup(bars=self.config.warmup_bars)
 
-        # Fetch FX data for non-base currencies
         if self._fx_currencies_needed:
             self._load_fx_data()
 
-        # Main event loop : iterate through all bars
+        # Walk the merged timeline bar by bar
         bar_index = 0
         last_bar_group: list[MarketDataEvent] = []
         for bar_group in self._data_feed.iterate():
@@ -360,15 +358,18 @@ class Engine:
             ctx.current_time = timestamp
             ctx.bar_index = bar_index
 
-            # Update FX rates for this bar's date
             if self._fx_data:
                 self._update_fx_rates(timestamp)
 
-            # Update prices
-            prices = {ev.symbol: ev.close for ev in bar_group}
+            # Skip NaN closes — happens early in a series before forward-fill kicks in
+            prices = {
+                ev.symbol: ev.close
+                for ev in bar_group
+                if ev.close == ev.close  # NaN != NaN
+            }
             self._portfolio.update_prices(prices)
 
-            # Log market data events
+            # Audit trail: what the engine saw this step
             for event in bar_group:
                 self._event_log.append({
                     "type": "market_data",
@@ -381,7 +382,7 @@ class Engine:
                     "volume": event.volume,
                 })
 
-            # Process pending orders against new bars
+            # Working orders meet the new prints
             for event in bar_group:
                 bar = BarData(
                     symbol=event.symbol,
@@ -395,7 +396,6 @@ class Engine:
                 )
                 self._broker.process_bar(bar, timestamp)
 
-            # Check risk limits
             violations = self._risk_manager.on_bar(self._portfolio, timestamp)
             if violations:
                 for v in violations:
@@ -409,8 +409,12 @@ class Engine:
                     if v.action == "liquidate":
                         self._liquidate_all(timestamp)
 
-            # Call strategy on_data for primary symbol
-            primary_event = bar_group[0]
+            # Schedules follow the *primary* symbol's clock — not alphabetically first in the group
+            _primary_sym = self._data_feed.primary_symbol
+            primary_event = next(
+                (ev for ev in bar_group if ev.symbol == _primary_sym),
+                bar_group[0],
+            )
             primary_bar = BarData(
                 symbol=primary_event.symbol,
                 timestamp=primary_event.timestamp,
@@ -422,7 +426,7 @@ class Engine:
                 bar_index=primary_event.bar_index,
             )
 
-            # Record bar in history
+            # Feed strategy history() buffers
             for event in bar_group:
                 b = BarData(
                     symbol=event.symbol,
@@ -436,25 +440,43 @@ class Engine:
                 )
                 self._strategy._record_bar(b)
 
-            # Execute strategy logic (skip during warm-up).
-            # Run on_data even when halted so the strategy can submit closing orders;
-            # pre_submit_check will reject new opens but allow closing/reducing positions.
+            # Warm-up: no on_data yet. After halt we still call on_data so you can flatten — new risk opens get blocked upstream.
             if self._strategy._check_warmup(bar_index):
-                self._strategy.on_data(primary_bar)
+                for event in bar_group:
+                    b = BarData(
+                        symbol=event.symbol,
+                        timestamp=event.timestamp,
+                        open=event.open,
+                        high=event.high,
+                        low=event.low,
+                        close=event.close,
+                        volume=event.volume,
+                        bar_index=event.bar_index,
+                    )
+                    self._strategy.on_data(b)
 
-            # Tick execution algorithms (TWAP/VWAP/Iceberg/POV)
-            self._strategy._tick_executors(primary_bar, timestamp)
+            # Slice-style execution algos advance one bar
+            for event in bar_group:
+                b = BarData(
+                    symbol=event.symbol,
+                    timestamp=event.timestamp,
+                    open=event.open,
+                    high=event.high,
+                    low=event.low,
+                    close=event.close,
+                    volume=event.volume,
+                    bar_index=event.bar_index,
+                )
+                self._strategy._tick_executors(b, timestamp)
 
-            # Check scheduled events
             self._strategy._check_schedules(bar_index, primary_bar)
 
-            # Margin checks (before equity recording so the curve is consistent)
+            # Margin before we snapshot equity so the curve doesn't lie
             if self._portfolio.margin.enabled:
                 self._portfolio.accrue_borrow_fees(timestamp)
                 if self._portfolio.check_margin_call(timestamp):
                     self._liquidate_all(timestamp)
 
-            # Crypto perpetual funding rate accrual
             if self.config.funding_enabled:
                 payments_per_day = max(1, 24 // max(self.config.funding_interval_hours, 1))
                 self._portfolio.accrue_funding(
@@ -463,7 +485,6 @@ class Engine:
                     payments_per_day=payments_per_day,
                 )
 
-            # Record equity after all state changes for this bar
             self._portfolio.record_equity(timestamp)
 
             bar_index += 1
@@ -506,7 +527,6 @@ class Engine:
         self._strategy.on_end()
         elapsed = (time.monotonic() - start_time) * 1000
 
-        # Compute metrics
         equity_curve = [{"date": p.date, "equity": p.equity} for p in self._portfolio.equity_curve]
         trades_list = [t.to_dict() for t in self._portfolio.trades]
         orders_list = [o.to_dict() for o in self._broker.all_orders]
@@ -518,7 +538,6 @@ class Engine:
             benchmark_returns=self._benchmark_returns,
         )
 
-        # Attach funding rate totals from portfolio
         metrics.total_funding_paid = round(self._portfolio.total_funding_paid, 2)
         metrics.total_funding_received = round(self._portfolio.total_funding_received, 2)
         metrics.net_funding = round(
@@ -531,7 +550,6 @@ class Engine:
             for v in self._risk_manager.violations
         ]
 
-        # Collect custom charts and alerts from strategy
         custom_charts = self._strategy.get_charts() if self._strategy else {}
         alerts = self._strategy.get_alerts() if self._strategy else []
 
@@ -580,13 +598,12 @@ class Engine:
             self._strategy.on_order_reject(order)
 
     def _on_fill(self, fill: FillEvent) -> None:
-        """Handle fill events : update portfolio and notify strategy."""
+        """Portfolio books the fill; strategy hears about it too."""
         completed_trades = self._portfolio.on_fill(fill)
         if self._strategy:
             self._strategy._route_executor_fill(fill)
             self._strategy.on_order_event(fill)
             self._strategy._handle_bracket_fill(fill)
-        # Log event
         self._event_log.append({
             "type": "fill",
             "timestamp": fill.timestamp.isoformat(),
@@ -599,7 +616,7 @@ class Engine:
         })
 
     def _liquidate_all(self, timestamp: datetime) -> None:
-        """Emergency liquidation : close all positions."""
+        """Nuke every open position (risk liquidation)."""
         for symbol, pos in self._portfolio._positions.items():
             if not pos.is_flat:
                 from app.engine.broker.order import Order, OrderSide, OrderType
@@ -616,7 +633,6 @@ class Engine:
         """Fetch FX rate history for all non-base currencies via yfinance."""
         import yfinance as yf
 
-        # Get date range from the primary symbol's data
         primary = self._data_feed.primary_symbol
         if not primary:
             return
@@ -628,7 +644,7 @@ class Engine:
 
         base = self._currency_mgr.base_currency
         for currency in self._fx_currencies_needed:
-            # yfinance format: GBPUSD=X gives USD per 1 GBP
+            # yfinance wants pairs like GBPUSD=X (USD per 1 GBP)
             pair_symbol = f"{currency}{base}=X"
             try:
                 ticker = yf.Ticker(pair_symbol)

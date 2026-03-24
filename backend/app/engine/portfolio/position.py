@@ -1,6 +1,6 @@
-"""Position tracking : per-symbol position with cost basis and P&L.
+"""One open symbol at a time: size, average cost, realized P&L.
 
-Supports FIFO trade matching for entry/exit recording.
+When you close, we match lots first-in-first-out and emit trade records.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ class TradeRecord:
 
     def to_dict(self) -> dict:
         return {
+            "symbol": self.symbol,
             "entry_date": self.entry_date,
             "exit_date": self.exit_date,
             "entry_price": round(self.entry_price, 4),
@@ -64,10 +65,10 @@ class Position:
     total_slippage: float = 0.0
     total_spread_cost: float = 0.0
 
-    # FIFO lots
+    # Open lots, oldest first (FIFO)
     _lots: list[PositionLot] = field(default_factory=list)
 
-    # Completed trades
+    # Round-trips we've already closed out
     trades: list[TradeRecord] = field(default_factory=list)
 
     @property
@@ -115,10 +116,10 @@ class Position:
         completed_trades: list[TradeRecord] = []
 
         if self.is_flat or (quantity > 0 and self.quantity >= 0) or (quantity < 0 and self.quantity <= 0):
-            # Increasing or opening a position
+            # Adding to the book or opening fresh
             self._add_lot(quantity, price, commission, timestamp)
         else:
-            # Reducing or reversing a position
+            # Trimming or flipping — walk the FIFO lots
             completed_trades = self._close_lots(quantity, price, commission, slippage, spread_cost, timestamp)
 
         return completed_trades
@@ -155,13 +156,13 @@ class Position:
             lot_qty = abs(lot.quantity)
             close_qty = min(remaining, lot_qty)
 
-            # Compute PnL
+            # P&L for this slice of the lot
             if lot.quantity > 0:
-                # Closing long position
+                # Was long — profit if exit above entry
                 pnl = (price - lot.price) * close_qty
                 trade_type = "LONG"
             else:
-                # Closing short position
+                # Was short — profit if exit below entry
                 pnl = (lot.price - price) * close_qty
                 trade_type = "SHORT"
 

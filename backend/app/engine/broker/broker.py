@@ -1,7 +1,6 @@
-"""Broker simulator: manages orders and produces fills.
+"""Fake broker for the backtest: takes orders, matches them to bars, emits fills.
 
-Processes pending orders against incoming market data events.
-Handles order lifecycle, commission, and integrates spread/slippage models.
+Handles the full order lifecycle, commissions, and plugs in spread/slippage models.
 """
 
 from __future__ import annotations
@@ -51,24 +50,26 @@ class BrokerSimulator:
         self.commission = commission or CommissionModel()
         self.initial_cash = initial_cash
 
-        # Order management
+        # Live queue + full history + quick lookup by id
         self._pending_orders: list[Order] = []
         self._all_orders: list[Order] = []
         self._order_map: dict[str, Order] = {}
 
-        # Average volume tracking for spread/slippage
+        # Rolling volume per symbol — spread/slippage models care about this
         self._avg_volumes: dict[str, float] = {}
         self._volume_history: dict[str, list[float]] = defaultdict(list)
 
-        # Fill callback (set by engine to notify portfolio)
+        # Engine wires these up: portfolio listens for fills, strategy hears cancels/rejects
         self._on_fill: Callable[[FillEvent], None] | None = None
-        # Order submit callback (set by engine for audit logging)
         self._on_order_submit: Callable[[Order, datetime], None] | None = None
-        # Cancel/reject callbacks (set by engine to notify strategy)
         self._on_cancel: Callable[[Order], None] | None = None
         self._on_reject: Callable[[Order], None] | None = None
-        # Pre-submit check (order) -> (allowed, reason). If returns (False, _), order is rejected.
+        # Optional gate: return (False, reason) and we reject before the order hits the book
         self._pre_submit_check: Callable[[Order], tuple[bool, str]] | None = None
+
+        # Without margin, block buys that would put cash underwater
+        self._cash_fn: Callable[[], float] | None = None
+        self.allow_overdraft: bool = False  # flip on when margin is enabled
 
     def set_fill_callback(self, callback: Callable[[FillEvent], None]) -> None:
         self._on_fill = callback
@@ -87,6 +88,10 @@ class BrokerSimulator:
     def set_pre_submit_check(self, callback: Callable[[Order], tuple[bool, str]] | None) -> None:
         """Set optional pre-submit validator. If it returns (False, reason), order is rejected."""
         self._pre_submit_check = callback
+
+    def set_cash_fn(self, fn: Callable[[], float]) -> None:
+        """Set a callable that returns the current available cash (used to prevent overdraft)."""
+        self._cash_fn = fn
 
     def submit_order(self, order: Order, timestamp: datetime) -> Order:
         """Submit a new order. Returns the order with SUBMITTED or REJECTED status."""
@@ -147,12 +152,12 @@ class BrokerSimulator:
 
         Returns list of fills produced.
         """
-        # Update volume history for slippage calculations
+        # Refresh recent volume for this symbol (slippage uses it)
         self._volume_history[bar.symbol].append(bar.volume)
         recent = self._volume_history[bar.symbol][-20:]
         self._avg_volumes[bar.symbol] = sum(recent) / len(recent) if recent else 0
 
-        # Phase 1: evaluate all orders for this symbol and collect results
+        # First pass: see which orders would fill on this bar
         avg_vol = self._avg_volumes.get(bar.symbol)
         candidates: list[tuple[Order, FillResult]] = []
         still_pending: list[Order] = []
@@ -170,16 +175,26 @@ class BrokerSimulator:
             else:
                 still_pending.append(order)
 
-        # Phase 2: sort by intrabar tick index for correct fill sequencing.
-        # Orders without a tick index (market, MOO, MOC) get index -1 so
-        # they fill before conditional orders, preserving existing behavior.
+        # Same bar, multiple triggers — sort by simulated tick order so stops/limits make sense.
+        # Plain market (and similar) orders use tick index -1 so they go before conditional fills.
         candidates.sort(key=lambda c: c[1].intrabar_tick_index if c[1].intrabar_tick_index is not None else -1)
 
-        # Phase 3: execute fills in sequence
+        # Apply fills in that order
         fills: list[FillEvent] = []
         for order, result in candidates:
             if not order.is_active:
                 continue
+
+            # Still no margin? Don't let a buy slip through if cash can't cover it
+            if (order.side == OrderSide.BUY
+                    and not self.allow_overdraft
+                    and self._cash_fn is not None):
+                fill_cost = result.fill_price * result.fill_quantity
+                if fill_cost > self._cash_fn() * 1.02:
+                    order.reject("Insufficient cash")
+                    if self._on_reject:
+                        self._on_reject(order)
+                    continue
 
             comm = self.commission.compute(result.fill_price, result.fill_quantity)
             order.fill(
@@ -250,14 +265,14 @@ class LatencySimulator:
     """
 
     def __init__(self, latency_bars: int = 0, latency_ms: float = 0):
-        self.latency_bars = latency_bars  # Delay execution by N bars
-        self.latency_ms = latency_ms      # Simulated milliseconds delay
+        self.latency_bars = latency_bars  # hold the order this many bars before it reaches the broker
+        self.latency_ms = latency_ms      # optional ms-style delay; bar stepping mainly uses latency_bars
         self._pending_queue: list[tuple[int, "Order"]] = []  # (release_bar, order)
 
     def submit(self, order: "Order", current_bar: int) -> "Order" | None:
         """Submit an order with latency. Returns order if immediately released, else None."""
         if self.latency_bars <= 0:
-            return order  # No delay
+            return order  # passes straight through
         release_bar = current_bar + self.latency_bars
         self._pending_queue.append((release_bar, order))
         return None

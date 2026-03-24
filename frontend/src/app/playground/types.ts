@@ -14,7 +14,7 @@ export interface BacktestConfig {
   takeProfitPct: number | null;
   benchmarkSymbol: string | null;
   interval: '1d' | '1h' | '15m' | '5m' | '1m';
-  // Advanced engine settings
+  // Margin, slippage model, warm-up, … (mirrors worker `parameters`)
   spreadModel: 'auto' | 'none' | 'volatility' | 'fixed_bps';
   slippageModel: 'percentage' | 'volume_aware' | 'auto' | 'none';
   marginEnabled: boolean;
@@ -34,11 +34,9 @@ export interface BacktestResult {
   total_trades: number;
   final_value: number;
   initial_capital: number;
-  // Trade-level data from backend
   trades: BacktestTrade[];
   equity_curve: EquityCurvePoint[];
   drawdown_series: DrawdownPoint[];
-  // Extended metrics
   sortino_ratio?: number;
   profit_factor?: number;
   avg_trade_duration?: number;
@@ -82,6 +80,10 @@ export interface BacktestResult {
   risk_violations?: Array<{timestamp: string; rule: string; description: string; action: string}>;
   custom_charts?: Record<string, Array<{date: string; series: string; value: number}>>;
   alerts?: Array<{timestamp: string; level: string; message: string; data?: unknown}>;
+  /** Tickers we tried to load but dropped (bad symbol, no data, …). */
+  warnings?: string[];
+  /** How many symbols made it into the engine (1 means classic single-name run). */
+  num_symbols?: number;
 }
 
 export const SYMBOLS = [
@@ -105,7 +107,7 @@ export const SYMBOLS = [
   { value: 'TLT', label: 'Treasury Bond ETF' },
   { value: 'BTC-USD', label: 'Bitcoin' },
   { value: 'ETH-USD', label: 'Ethereum' },
-  // Forex (yfinance format: CURRENCYPAIR=X)
+  // FX pair tickers use yfinance's `EURUSD=X` style
   { value: 'EURUSD=X', label: 'EUR/USD' },
   { value: 'GBPUSD=X', label: 'GBP/USD' },
   { value: 'USDJPY=X', label: 'USD/JPY' },

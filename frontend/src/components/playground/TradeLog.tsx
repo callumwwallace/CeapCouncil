@@ -9,25 +9,34 @@ export interface TradeLogProps {
   trades: BacktestTrade[];
 }
 
-type SortKey = 'entry_date' | 'type' | 'entry_price' | 'exit_price' | 'size' | 'pnl' | 'commission';
+type SortKey = 'entry_date' | 'type' | 'symbol' | 'entry_price' | 'exit_price' | 'size' | 'pnl' | 'commission';
 
 const ROW_HEIGHT = 32;
 const VIRTUALIZATION_THRESHOLD = 100;
 
-const COLUMN_GRID = 'grid grid-cols-[1fr_60px_80px_80px_56px_120px_64px]';
+// Multi-asset runs get a Symbol column; single-symbol layouts stay tighter
+const COLUMN_GRID_SINGLE = 'grid grid-cols-[1fr_60px_80px_80px_56px_120px_64px]';
+const COLUMN_GRID_MULTI  = 'grid grid-cols-[64px_1fr_50px_72px_72px_48px_108px_52px]';
 
 interface TradeRowExtraProps {
   trades: BacktestTrade[];
+  isMultiAsset: boolean;
 }
 
-function TradeRowComponent({ index, style, trades }: { index: number; style: React.CSSProperties } & TradeRowExtraProps) {
+function TradeRowComponent({ index, style, trades, isMultiAsset }: { index: number; style: React.CSSProperties } & TradeRowExtraProps) {
   const trade = trades[index];
+  const colGrid = isMultiAsset ? COLUMN_GRID_MULTI : COLUMN_GRID_SINGLE;
   return (
     <div
       style={style}
-      className={`${COLUMN_GRID} items-center text-xs hover:bg-gray-50 border-b border-gray-100`}
+      className={`${colGrid} items-center text-xs hover:bg-gray-50 border-b border-gray-100`}
       data-testid={`trade-row-${index}`}
     >
+      {isMultiAsset && (
+        <div className="px-2 font-mono font-semibold text-gray-700 truncate" title={trade.symbol}>
+          {trade.symbol ?? '—'}
+        </div>
+      )}
       <div className="px-2 text-gray-600 truncate">
         {new Date(trade.entry_date).toLocaleDateString('en-US', {
           month: 'short',
@@ -77,11 +86,18 @@ export default function TradeLog({ trades }: TradeLogProps) {
   const [sortKey, setSortKey] = useState<SortKey>('entry_date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
+  /** Several tickers in one result set — show who each row belongs to. */
+  const isMultiAsset = useMemo(
+    () => new Set(trades.map((t) => t.symbol).filter(Boolean)).size > 1,
+    [trades]
+  );
+
   const sortedTrades = useMemo(() => {
     const arr = [...trades];
     arr.sort((a, b) => {
       let cmp = 0;
       if (sortKey === 'entry_date') cmp = new Date(a.entry_date).getTime() - new Date(b.entry_date).getTime();
+      else if (sortKey === 'symbol') cmp = (a.symbol ?? '').localeCompare(b.symbol ?? '');
       else if (sortKey === 'type') cmp = (a.type || '').localeCompare(b.type || '');
       else if (sortKey === 'entry_price') cmp = a.entry_price - b.entry_price;
       else if (sortKey === 'exit_price') cmp = a.exit_price - b.exit_price;
@@ -122,7 +138,7 @@ export default function TradeLog({ trades }: TradeLogProps) {
     };
   }, [trades]);
 
-  const rowProps = useMemo(() => ({ trades: sortedTrades }), [sortedTrades]);
+  const rowProps = useMemo(() => ({ trades: sortedTrades, isMultiAsset }), [sortedTrades, isMultiAsset]);
 
   if (trades.length === 0) {
     return (
@@ -167,14 +183,17 @@ export default function TradeLog({ trades }: TradeLogProps) {
       </div>
 
       {/* Column Headers */}
-      <div className={`${COLUMN_GRID} shrink-0 bg-gray-50 border-b border-gray-200 text-left text-[10px] text-gray-500 uppercase tracking-wider`}>
-        <div className="px-2 py-1.5 font-medium cursor-pointer hover:text-gray-300 inline-flex items-center gap-0.5" onClick={() => handleSort('entry_date')}>Date <SortIcon col="entry_date" /></div>
-        <div className="px-2 py-1.5 font-medium cursor-pointer hover:text-gray-300" onClick={() => handleSort('type')}>Type</div>
-        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('entry_price')}>Entry</div>
-        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('exit_price')}>Exit</div>
-        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('size')}>Size</div>
-        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('pnl')}><span className="inline-flex items-center gap-0.5 justify-end">P&L <SortIcon col="pnl" /></span></div>
-        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-300" onClick={() => handleSort('commission')}>Comm.</div>
+      <div className={`${isMultiAsset ? COLUMN_GRID_MULTI : COLUMN_GRID_SINGLE} shrink-0 bg-gray-50 border-b border-gray-200 text-left text-[10px] text-gray-500 uppercase tracking-wider`}>
+        {isMultiAsset && (
+          <div className="px-2 py-1.5 font-medium cursor-pointer hover:text-gray-700 inline-flex items-center gap-0.5" onClick={() => handleSort('symbol')}>Symbol <SortIcon col="symbol" /></div>
+        )}
+        <div className="px-2 py-1.5 font-medium cursor-pointer hover:text-gray-700 inline-flex items-center gap-0.5" onClick={() => handleSort('entry_date')}>Date <SortIcon col="entry_date" /></div>
+        <div className="px-2 py-1.5 font-medium cursor-pointer hover:text-gray-700" onClick={() => handleSort('type')}>Type</div>
+        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-700" onClick={() => handleSort('entry_price')}>Entry</div>
+        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-700" onClick={() => handleSort('exit_price')}>Exit</div>
+        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-700" onClick={() => handleSort('size')}>Size</div>
+        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-700" onClick={() => handleSort('pnl')}><span className="inline-flex items-center gap-0.5 justify-end">P&L <SortIcon col="pnl" /></span></div>
+        <div className="px-2 py-1.5 font-medium text-right cursor-pointer hover:text-gray-700" onClick={() => handleSort('commission')}>Comm.</div>
       </div>
 
       {/* Rows */}
@@ -191,7 +210,7 @@ export default function TradeLog({ trades }: TradeLogProps) {
         ) : (
           <div className="overflow-auto h-full">
             {sortedTrades.map((trade, index) => (
-              <TradeRowComponent key={index} index={index} style={{ height: ROW_HEIGHT }} trades={sortedTrades} />
+              <TradeRowComponent key={index} index={index} style={{ height: ROW_HEIGHT }} trades={sortedTrades} isMultiAsset={isMultiAsset} />
             ))}
           </div>
         )}

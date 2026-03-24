@@ -1,5 +1,4 @@
-// Built-in strategy templates
-// Moved here to keep the main playground page focused on UI
+// Starter strategies live here so the playground page stays mostly layout + state.
 
 export const STRATEGY_TEMPLATES = {
   sma_crossover: {
@@ -39,7 +38,7 @@ class MyStrategy(StrategyBase):
 
         if self.is_flat(bar.symbol):
             if fast_prev <= slow_prev and fast_now > slow_now:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if fast_prev >= slow_prev and fast_now < slow_now:
@@ -72,11 +71,11 @@ class MyStrategy(StrategyBase):
 
         if self.is_flat(bar.symbol):
             if cross_up:
-                qty = int(self.portfolio.cash * 0.95 / bar.close)
+                qty = int(self.capital_per_symbol() * 0.95 / bar.close)
                 if qty > 0:
                     self.market_order(bar.symbol, qty)
             elif cross_down:
-                qty = int(self.portfolio.cash * 0.95 / bar.close)
+                qty = int(self.capital_per_symbol() * 0.95 / bar.close)
                 if qty > 0:
                     self.market_order(bar.symbol, -qty)
         elif self.is_long(bar.symbol) and cross_down:
@@ -114,7 +113,7 @@ class MyStrategy(StrategyBase):
 
         if self.is_flat(bar.symbol):
             if bar.close < lower:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if bar.close > mid:
@@ -150,7 +149,7 @@ class MyStrategy(StrategyBase):
 
         if self.is_flat(bar.symbol):
             if roc > threshold:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if roc < -threshold:
@@ -201,7 +200,7 @@ class MyStrategy(StrategyBase):
 
         if self.is_flat(bar.symbol):
             if rsi < self.params['oversold']:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if rsi > self.params['overbought']:
@@ -260,7 +259,7 @@ class MyStrategy(StrategyBase):
 
         if self.is_flat(bar.symbol):
             if macd_prev <= sig_prev and macd_now > sig_now:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if macd_prev >= sig_prev and macd_now < sig_now:
@@ -297,7 +296,7 @@ class MyStrategy(StrategyBase):
 
         if self.is_flat(bar.symbol):
             if bar.close > highest:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if bar.close < lowest:
@@ -338,7 +337,7 @@ class MyStrategy(StrategyBase):
 
         if self.is_flat(bar.symbol):
             if bar.close < vwap - num_std * std:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if bar.close > vwap:
@@ -378,7 +377,7 @@ class MyStrategy(StrategyBase):
 
         if self.is_flat(bar.symbol):
             if abs_mom and rel_mom:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if not abs_mom:
@@ -428,10 +427,10 @@ class MyStrategy(StrategyBase):
         if self.is_flat(bar.symbol):
             if bar.close > highest:
                 if atr and atr > 0:
-                    risk = self.portfolio.equity * 0.01
+                    risk = self.capital_per_symbol() * 0.01
                     qty = max(1, int(risk / atr))
                 else:
-                    qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                    qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if bar.close < lowest:
@@ -502,7 +501,7 @@ class MyStrategy(StrategyBase):
 
         if self.is_flat(bar.symbol):
             if not squeeze and mom > 0:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if mom < 0:
@@ -569,7 +568,7 @@ class MyStrategy(StrategyBase):
             price_ll = bar.close < min(price_window)
             rsi_hl = rsi_now > min(rsi_window)
             if price_ll and rsi_hl and rsi_now < oversold:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if rsi_now > 50:
@@ -620,7 +619,7 @@ class MyStrategy(StrategyBase):
 
         if self.is_flat(bar.symbol):
             if bullish:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if bearish:
@@ -659,7 +658,7 @@ class MyStrategy(StrategyBase):
 
         if self.is_flat(bar.symbol):
             if z < -z_thresh:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if z > 0:
@@ -735,7 +734,7 @@ class MyStrategy(StrategyBase):
 
         if self.is_flat(bar.symbol) and not self.traded_today:
             if bar.close > self.orb_high:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
                 self.traded_today = True
 

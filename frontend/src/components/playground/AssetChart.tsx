@@ -19,7 +19,6 @@ import {
 import { ChevronDown, ZoomIn, ZoomOut, Maximize2, CircleOff } from 'lucide-react';
 import api from '@/lib/api';
 
-// Type exports
 
 export type ChartType =
   | 'candles'
@@ -68,6 +67,8 @@ export interface AssetChartProps {
   drawdownSeries?: DrawdownPoint[];
   benchmarkReturn?: number | null;
   chartTheme?: ChartTheme;
+  /** Extra tickers overlaid when you're comparing normalized % moves. */
+  additionalSymbols?: string[];
 }
 
 export interface PriceDataPoint {
@@ -88,7 +89,6 @@ export interface PriceDataPoint {
   ema50?: number;
 }
 
-// Chart types and icons
 
 function CandleIcon() {
   return (
@@ -172,23 +172,20 @@ const CHART_TYPES: { value: ChartType; label: string; icon: React.ReactNode }[] 
   { value: 'baseline', label: 'Baseline', icon: <BaselineChartIcon /> },
 ];
 
-// Interval and helpers
 
 function isIntraday(interval: string): boolean {
   return interval !== '1d';
 }
 
-/** Pick chart type based on symbol (forex, crypto, indices, etc) */
+/** Pick candles vs area vs FX bars from the ticker alone. */
 function getOptimalChartType(symbol: string): ChartType {
   const s = symbol.toUpperCase();
-  if (s.endsWith('=X')) return 'ohlcBars';  // Forex
+  if (s.endsWith('=X')) return 'ohlcBars';
   if (s.includes('-USD') || ['BTC', 'ETH', 'SOL', 'DOGE', 'ADA', 'XRP', 'AVAX', 'MATIC', 'LINK', 'UNI'].some(x => s.includes(x)))
-    return 'candles';  // Crypto
-  if (['SPY', 'QQQ', 'IWM', 'GLD', 'SLV', 'TLT', 'HYG', 'DIA'].includes(s)) return 'area';  // Indices & ETFs
-  return 'candles';  // Stocks
+    return 'candles';
+  if (['SPY', 'QQQ', 'IWM', 'GLD', 'SLV', 'TLT', 'HYG', 'DIA'].includes(s)) return 'area';
+  return 'candles';
 }
-
-// Smart x-axis tick formatter (TradingView-style)
 
 function createSmartTickFormatter(interval: string, data: PriceDataPoint[]) {
   const dayStarts = new Set<string>();
@@ -226,8 +223,6 @@ function createSmartTickFormatter(interval: string, data: PriceDataPoint[]) {
   };
 }
 
-// Session boundaries for intraday dividers
-
 function getSessionBoundaries(data: PriceDataPoint[]): string[] {
   const boundaries: string[] = [];
   let prevDate = '';
@@ -238,8 +233,6 @@ function getSessionBoundaries(data: PriceDataPoint[]): string[] {
   }
   return boundaries;
 }
-
-// Heikin-Ashi transform
 
 function computeHeikinAshi(data: PriceDataPoint[]): PriceDataPoint[] {
   if (data.length === 0) return [];
@@ -261,8 +254,6 @@ function computeHeikinAshi(data: PriceDataPoint[]): PriceDataPoint[] {
   return ha;
 }
 
-// Moving averages
-
 function sma(data: PriceDataPoint[], period: number, key: keyof PriceDataPoint) {
   for (let i = period - 1; i < data.length; i++) {
     const sum = data.slice(i - period + 1, i + 1).reduce((acc, d) => acc + d.close, 0);
@@ -276,7 +267,6 @@ function ema(data: PriceDataPoint[], period: number, key: keyof PriceDataPoint) 
   for (let i = 0; i < data.length; i++) {
     if (i < period - 1) continue;
     if (prev === null) {
-      // Seed with SMA of first `period` bars
       const seed = data.slice(0, period).reduce((acc, d) => acc + d.close, 0) / period;
       prev = seed;
     }
@@ -298,7 +288,6 @@ function addMovingAverages(data: PriceDataPoint[]): PriceDataPoint[] {
   return data;
 }
 
-// Price bars (candlestick, hollow, OHLC)
 
 const BULL_COLOR = '#26a69a';
 const BEAR_COLOR = '#ef5350';
@@ -308,7 +297,7 @@ const SELL_GLOW = '#f59e0b';
 
 export type TradeMarkerStyle = 'none' | 'dot' | 'pro' | 'box';
 
-/** Trade markers: none, dot, pro (TradingView), or box */
+/** Renders buy/sell markers on top of the price pane. */
 function TradeMarkersLayer({
   trades,
   data,
@@ -422,7 +411,7 @@ function PriceBarsLayer({ data, chartType }: { data: PriceDataPoint[]; chartType
         const yLow = yScale(d.low);
         const yOpen = yScale(d.open);
         const yClose = yScale(d.close);
-        // When open === close (Doji), use prior close so flat bars follow trend direction
+        // Doji — nudge with yesterday's close so we still pick a body colour
         const prevClose = i > 0 ? data[i - 1].close : d.open;
         const bullish = d.close > d.open ? true : d.close < d.open ? false : d.close >= prevClose;
         const color = bullish ? BULL_COLOR : BEAR_COLOR;
@@ -463,7 +452,6 @@ function PriceBarsLayer({ data, chartType }: { data: PriceDataPoint[]; chartType
   );
 }
 
-// Crosshair cursor
 
 function CustomCursor({ points, width, height }: any) {
   if (!points || !points.length) return null;
@@ -477,7 +465,7 @@ function CustomCursor({ points, width, height }: any) {
   );
 }
 
-// TradingView-style tooltip
+// ohlc tooltip
 
 function TradingViewTooltip({ active, payload, interval, activeMAs, showPerfOverlay, showDrawdownOverlay, tc }: {
   active?: boolean; payload?: any[]; interval: string; activeMAs: ActiveMAs;
@@ -576,7 +564,6 @@ function TradingViewTooltip({ active, payload, interval, activeMAs, showPerfOver
   );
 }
 
-// Trade marker style selector
 
 function DotMarkerIcon() {
   return (
@@ -650,7 +637,6 @@ function TradeMarkerStyleSelector({ value, onChange, hasTrades, chartTheme }: { 
   );
 }
 
-// Chart type selector
 
 function ChartTypeSelector({ value, onChange, chartTheme }: { value: ChartType; onChange: (ct: ChartType) => void; chartTheme: ChartTheme }) {
   const [open, setOpen] = useState(false);
@@ -692,7 +678,6 @@ function ChartTypeSelector({ value, onChange, chartTheme }: { value: ChartType; 
   );
 }
 
-// Charts dropdown (overlays + trade markers)
 
 interface ChartsDropdownProps {
   hasEquity: boolean;
@@ -828,7 +813,6 @@ function ChartsDropdown({
   );
 }
 
-// MA dropdown
 
 const MA_OPTIONS = [
   { key: 'sma9'  as keyof ActiveMAs, label: 'SMA 9',   color: '#f59e0b', hint: 'scalp', section: 'sma' },
@@ -922,7 +906,6 @@ function MADropdown({ activeMAs, onChange, chartTheme }: { activeMAs: ActiveMAs;
   );
 }
 
-// Main component
 
 const CHART_THEME_COLORS: Record<ChartTheme, { grid: string; axis: string; axisTick: string; volume: string; sessionBoundary: string; baseline: string; markerStroke: string; tooltipBg: string; tooltipBorder: string; tooltipText: string; tooltipTextMuted: string; controlBg: string; controlBorder: string; controlText: string; controlTextMuted: string }> = {
   dark: {
@@ -961,6 +944,65 @@ const CHART_THEME_COLORS: Record<ChartTheme, { grid: string; axis: string; axisT
   },
 };
 
+
+/** Line colours for multi-symbol mode (index 0 = primary; tuned for light & dark UI). */
+const MULTI_ASSET_PALETTE = [
+  '#2962ff',
+  '#ff6d00',
+  '#00897b',
+  '#c62828',
+  '#9c27b0',
+  '#2e7d32',
+];
+
+/** Hover card listing each symbol's % off its own start. */
+function MultiAssetTooltip({
+  active, payload, allSymbols, palette, tc,
+}: {
+  active?: boolean;
+  payload?: any[];
+  allSymbols: string[];
+  palette: string[];
+  tc: { tooltipBg: string; tooltipBorder: string; tooltipText: string; tooltipTextMuted: string };
+}) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload as Record<string, any>;
+  if (!d) return null;
+
+  const dateStr = new Date(d.date).toLocaleDateString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+  });
+
+  return (
+    <div
+      className="rounded-lg shadow-xl p-3 text-xs font-mono backdrop-blur-sm min-w-[180px]"
+      style={{ backgroundColor: tc.tooltipBg, borderWidth: 1, borderStyle: 'solid', borderColor: tc.tooltipBorder }}
+    >
+      <div className="mb-2 font-sans text-[11px]" style={{ color: tc.tooltipTextMuted }}>{dateStr}</div>
+      <div className="space-y-1.5">
+        {allSymbols.map((sym, i) => {
+          const norm = d[`norm_${sym}`] as number | null | undefined;
+          if (norm == null) return null;
+          const pct = norm - 100;
+          const positive = pct >= 0;
+          return (
+            <div key={sym} className="flex items-center justify-between gap-4">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: palette[i % palette.length] }} />
+                <span className="font-sans font-medium" style={{ color: palette[i % palette.length] }}>{sym}</span>
+              </span>
+              <span className={`font-semibold tabular-nums ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
+                {positive ? '+' : ''}{pct.toFixed(2)}%
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
 export default function AssetChart({
   symbol,
   startDate,
@@ -971,6 +1013,7 @@ export default function AssetChart({
   drawdownSeries,
   benchmarkReturn,
   chartTheme = 'dark',
+  additionalSymbols = [],
 }: AssetChartProps) {
   const tc = CHART_THEME_COLORS[chartTheme];
   const [activeMAs, setActiveMAs] = useState<ActiveMAs>(DEFAULT_ACTIVE_MAS);
@@ -985,12 +1028,23 @@ export default function AssetChart({
   const [showEntrySignals, setShowEntrySignals] = useState(true);
   const [showExitSignals, setShowExitSignals] = useState(true);
 
-  // Auto-switch chart type when symbol (asset) changes
-  useEffect(() => {
-    setChartType(getOptimalChartType(symbol));
-  }, [symbol]);
+  /** Per-extra-ticker OHLCV; `null` means that download failed. */
+  const [additionalRealData, setAdditionalRealData] = useState<Record<string, PriceDataPoint[] | null>>({});
+  const [additionalLoading, setAdditionalLoading] = useState(false);
 
-  // Zoom/pan state : indices into the data array
+  const isMultiAsset = additionalSymbols.length > 0;
+
+  /** Primary ticker first, then any extras that actually loaded. */
+  const allSymbolsInOrder = useMemo(() => {
+    if (!isMultiAsset) return [symbol];
+    const loaded = additionalSymbols.filter((s) => additionalRealData[s] !== null && additionalRealData[s] !== undefined);
+    return [symbol, ...loaded];
+  }, [isMultiAsset, symbol, additionalSymbols, additionalRealData]);
+
+  useEffect(() => {
+    if (!isMultiAsset) setChartType(getOptimalChartType(symbol));
+  }, [symbol, isMultiAsset]);
+
   const [viewStart, setViewStart] = useState(0);
   const [viewEnd, setViewEnd] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -1021,34 +1075,58 @@ export default function AssetChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchKey]);
 
+  const extraFetchKey = `${startDate}|${endDate}|${interval}|${additionalSymbols.join(',')}`;
+  useEffect(() => {
+    if (additionalSymbols.length === 0) {
+      setAdditionalRealData({});
+      return;
+    }
+    let cancelled = false;
+    setAdditionalLoading(true);
+    Promise.all(
+      additionalSymbols.map((sym) =>
+        api.getMarketData(sym, startDate, endDate, interval)
+          .then((res) => {
+            const basePrice = res.data[0]?.close ?? 100;
+            const points: PriceDataPoint[] = res.data.map((d: any) => ({
+              date: d.date, open: d.open, high: d.high, low: d.low, close: d.close, volume: d.volume,
+              return: parseFloat((((d.close - basePrice) / basePrice) * 100).toFixed(2)),
+            }));
+            return [sym, points] as [string, PriceDataPoint[]];
+          })
+          .catch(() => [sym, null] as [string, null])
+      )
+    ).then((results) => {
+      if (cancelled) return;
+      setAdditionalRealData(Object.fromEntries(results));
+    }).finally(() => { if (!cancelled) setAdditionalLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extraFetchKey]);
+
   const fullData = useMemo(() => {
     if (realData && realData.length > 0) return realData;
     return [];
   }, [realData]);
 
-  // Apply Heikin-Ashi transform on the full dataset
   const transformedData = useMemo(() => {
     if (chartType === 'heikinAshi') return computeHeikinAshi(fullData);
     return fullData;
   }, [fullData, chartType]);
 
-  // Reset view when data changes
   useEffect(() => {
     setViewStart(0);
     setViewEnd(Math.max(0, transformedData.length - 1));
   }, [transformedData.length]);
 
-  // Sync refs for use in non-passive event handlers
   useEffect(() => { viewStartRef.current = viewStart; }, [viewStart]);
   useEffect(() => { viewEndRef.current = viewEnd; }, [viewEnd]);
   useEffect(() => { dataLenRef.current = transformedData.length; }, [transformedData.length]);
 
-  // Visible slice of data (controlled by brush / zoom / pan)
   const data = useMemo(() => {
     return transformedData.slice(viewStart, viewEnd + 1);
   }, [transformedData, viewStart, viewEnd]);
 
-  // Merge overlay data: strategy (normalized to 100), benchmark, drawdown
   const hasPerfOverlay = Boolean(
     (showEquityOverlay && equityCurve?.length) || (showBenchmarkOverlay && benchmarkReturn != null)
   );
@@ -1104,7 +1182,71 @@ export default function AssetChart({
     return [Math.min(min - 2, -5), 2];
   }, [hasDrawdownOverlay, chartData]);
 
-  // ── Zoom / Pan handlers ──
+
+  /** One row per primary date; each symbol gets a rebased % column (100 = day-one). */
+  const multiAssetChartData = useMemo(() => {
+    if (!isMultiAsset || !realData || realData.length === 0) return [];
+
+    const syms = allSymbolsInOrder;
+    const allSrcData: Record<string, PriceDataPoint[]> = {
+      [symbol]: realData,
+      ...Object.fromEntries(
+        Object.entries(additionalRealData).filter(([, v]) => v !== null && v !== undefined) as [string, PriceDataPoint[]][]
+      ),
+    };
+
+    const priceMaps: Record<string, Map<string, number>> = {};
+    for (const sym of syms) {
+      const src = allSrcData[sym];
+      if (!src) continue;
+      priceMaps[sym] = new Map(src.map((d) => [d.date.slice(0, 10), d.close]));
+    }
+
+    const primaryDates = realData.map((d) => d.date.slice(0, 10));
+    const firstValues: Record<string, number | null> = {};
+    for (const sym of syms) {
+      const map = priceMaps[sym];
+      if (!map) { firstValues[sym] = null; continue; }
+      firstValues[sym] = null;
+      for (const date of primaryDates) {
+        const close = map.get(date);
+        if (close != null && close > 0) { firstValues[sym] = close; break; }
+      }
+    }
+
+    const lastKnown: Record<string, number | null> = {};
+    return primaryDates.map((date) => {
+      const row: Record<string, any> = { date };
+      for (const sym of syms) {
+        const close = priceMaps[sym]?.get(date) ?? null;
+        if (close != null) lastKnown[sym] = close;
+        const eff = lastKnown[sym] ?? null;
+        const first = firstValues[sym];
+        row[`norm_${sym}`] = eff != null && first != null && first > 0 ? (eff / first) * 100 : null;
+      }
+      return row;
+    });
+  }, [isMultiAsset, realData, additionalRealData, symbol, allSymbolsInOrder]);
+
+  const normDomain = useMemo<[number, number]>(() => {
+    if (!isMultiAsset || multiAssetChartData.length === 0) return [80, 120];
+    let min = 100, max = 100;
+    for (const sym of allSymbolsInOrder) {
+      const key = `norm_${sym}`;
+      for (const d of multiAssetChartData) {
+        const v = d[key] as number | null;
+        if (v != null && isFinite(v)) { min = Math.min(min, v); max = Math.max(max, v); }
+      }
+    }
+    const pad = Math.max((max - min) * 0.08, 3);
+    return [Math.floor(min - pad), Math.ceil(max + pad)];
+  }, [isMultiAsset, multiAssetChartData, allSymbolsInOrder]);
+
+  const multiAssetVisibleData = useMemo(
+    () => multiAssetChartData.slice(viewStart, viewEnd + 1),
+    [multiAssetChartData, viewStart, viewEnd]
+  );
+
 
   const zoomIn = useCallback(() => {
     const range = viewEndRef.current - viewStartRef.current;
@@ -1127,7 +1269,6 @@ export default function AssetChart({
     setViewEnd(Math.max(0, dataLenRef.current - 1));
   }, []);
 
-  // Mouse drag to pan
   const dragState = useRef<{ dragging: boolean; startX: number; origStart: number; origEnd: number }>({
     dragging: false, startX: 0, origStart: 0, origEnd: 0,
   });
@@ -1164,7 +1305,6 @@ export default function AssetChart({
     setIsDragging(false);
   }, []);
 
-  // ── Non-passive wheel handler (trackpad pinch + scroll + mouse wheel) ──
   useEffect(() => {
     const el = chartWrapperRef.current;
     if (!el) return;
@@ -1185,7 +1325,6 @@ export default function AssetChart({
       const isHorizontalScroll = absX > absY * 1.5 && !isPinch;
 
       if (isHorizontalScroll) {
-        // PAN : horizontal two-finger swipe on trackpad
         const panSensitivity = Math.max(1, range / rect.width * 3);
         const panDelta = Math.round(e.deltaX * panSensitivity);
         if (panDelta === 0) return;
@@ -1198,11 +1337,9 @@ export default function AssetChart({
         setViewStart(Math.max(0, newStart));
         setViewEnd(Math.min(maxIdx, newEnd));
       } else {
-        // ZOOM : vertical scroll / pinch-to-zoom / mouse wheel
         if (absY < 0.5) return;
 
         const cursorPct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        // Pinch sends small fractional deltas; mouse wheel sends ~100
         const sensitivity = isPinch ? 0.01 : 0.0015;
         const zoomAmount = Math.min(0.3, absY * sensitivity);
         const delta = Math.max(1, Math.round(range * zoomAmount));
@@ -1226,7 +1363,6 @@ export default function AssetChart({
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  // ── Touch handler (mobile/tablet pinch-to-zoom + drag-to-pan) ──
   useEffect(() => {
     const el = chartWrapperRef.current;
     if (!el) return;
@@ -1305,7 +1441,6 @@ export default function AssetChart({
     };
   }, []);
 
-  // Computed chart values from visible data
   const priceChange = data.length > 1 ? data[data.length - 1].close - data[0].close : 0;
   const isPositive = priceChange >= 0;
   const minPrice = data.length > 0 ? Math.min(...data.map((d) => d.low)) : 0;
@@ -1320,11 +1455,9 @@ export default function AssetChart({
 
   const smartTickFormatter = useMemo(() => createSmartTickFormatter(interval, data), [interval, data]);
 
-  // Smart tick selection: always includes day boundaries for intraday data
   const smartTicks = useMemo(() => {
     if (data.length === 0) return undefined;
 
-    // Collect day-boundary indices
     const dayStartIndices: number[] = [];
     let prevDateStr = '';
     for (let i = 0; i < data.length; i++) {
@@ -1336,7 +1469,6 @@ export default function AssetChart({
     }
 
     if (isIntraday(interval)) {
-      // Always include every day boundary, then fill time ticks between them
       const targetTotal = Math.min(20, data.length);
       const timeTickBudget = Math.max(0, targetTotal - dayStartIndices.length);
       const tickIndices = new Set<number>(dayStartIndices);
@@ -1352,7 +1484,6 @@ export default function AssetChart({
       return Array.from(tickIndices).sort((a, b) => a - b).map((i) => data[i].date);
     }
 
-    // Daily data: show all ticks when few, sample evenly otherwise
     if (data.length <= 30) return undefined;
     const step = Math.max(1, Math.floor(data.length / 15));
     const ticks: string[] = [];
@@ -1376,7 +1507,6 @@ export default function AssetChart({
 
   const isZoomed = viewStart > 0 || viewEnd < transformedData.length - 1;
 
-  // Trade markers
   const tradeMarkers = useMemo(() => {
     if (!trades.length || !fullData.length) return [];
     const allDates = fullData.map((d) => d.date);
@@ -1398,7 +1528,7 @@ export default function AssetChart({
 
   return (
     <div className={`h-full w-full flex flex-col min-h-0 ${chartTheme === 'light' ? 'bg-gray-50' : 'bg-gray-950'}`} data-testid="asset-chart">
-      {/* ═══════════ Chart Area (full height, pan/zoom target) ═══════════ */}
+{/* plot */}
       <div
         ref={chartWrapperRef}
         className="flex-1 relative min-h-[200px] w-full"
@@ -1408,41 +1538,57 @@ export default function AssetChart({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
       >
-        {/* TradingView-style floating toolbar - top right */}
+{/* chart tools */}
         {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
         <div className="absolute top-3 right-4 z-20 flex items-center gap-1.5 flex-wrap justify-end pointer-events-auto" onMouseDown={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1 rounded-lg border backdrop-blur-sm px-1.5 py-1 shadow-lg" style={{ borderColor: tc.controlBorder, backgroundColor: tc.controlBg }} data-testid="chart-controls">
-            {/* Chart type dropdown */}
-            <ChartTypeSelector value={chartType} onChange={setChartType} chartTheme={chartTheme} />
-            {/* Overlays dropdown — only shown when there is overlay data available */}
-            {(Boolean(equityCurve?.length) || benchmarkReturn != null || Boolean(drawdownSeries?.length) || tradeMarkers.length > 0) && (
+{/* compare badge */}
+            {isMultiAsset ? (
+              <span
+                className="flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-medium select-none"
+                style={{ background: 'rgba(41,98,255,0.15)', color: '#2962ff', border: '1px solid rgba(41,98,255,0.35)' }}
+                title="Normalized % return compare mode — all series rebased to 100 at start"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                  <polyline points="1,9 3.5,4.5 5.5,7 8,2 11,4" stroke="#2962ff" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Compare
+              </span>
+            ) : (
               <>
+{/* chart type */}
+                <ChartTypeSelector value={chartType} onChange={setChartType} chartTheme={chartTheme} />
+{/* overlays */}
+                {(Boolean(equityCurve?.length) || benchmarkReturn != null || Boolean(drawdownSeries?.length) || tradeMarkers.length > 0) && (
+                  <>
+                    <div className={`h-4 w-px self-center mx-0.5 ${chartTheme === 'light' ? 'bg-gray-200' : 'bg-gray-700/60'}`} aria-hidden />
+                    <ChartsDropdown
+                      hasEquity={Boolean(equityCurve?.length)}
+                      hasBenchmark={benchmarkReturn != null}
+                      hasDrawdown={Boolean(drawdownSeries?.length)}
+                      showEquity={showEquityOverlay} onEquityChange={setShowEquityOverlay}
+                      showBenchmark={showBenchmarkOverlay} onBenchmarkChange={setShowBenchmarkOverlay}
+                      showDrawdown={showDrawdownOverlay} onDrawdownChange={setShowDrawdownOverlay}
+                      hasTrades={tradeMarkers.length > 0}
+                      showEntries={showEntrySignals} onEntriesChange={setShowEntrySignals}
+                      showExits={showExitSignals} onExitsChange={setShowExitSignals}
+                      chartTheme={chartTheme}
+                    />
+                  </>
+                )}
+{/* | */}
                 <div className={`h-4 w-px self-center mx-0.5 ${chartTheme === 'light' ? 'bg-gray-200' : 'bg-gray-700/60'}`} aria-hidden />
-                <ChartsDropdown
-                  hasEquity={Boolean(equityCurve?.length)}
-                  hasBenchmark={benchmarkReturn != null}
-                  hasDrawdown={Boolean(drawdownSeries?.length)}
-                  showEquity={showEquityOverlay} onEquityChange={setShowEquityOverlay}
-                  showBenchmark={showBenchmarkOverlay} onBenchmarkChange={setShowBenchmarkOverlay}
-                  showDrawdown={showDrawdownOverlay} onDrawdownChange={setShowDrawdownOverlay}
-                  hasTrades={tradeMarkers.length > 0}
-                  showEntries={showEntrySignals} onEntriesChange={setShowEntrySignals}
-                  showExits={showExitSignals} onExitsChange={setShowExitSignals}
-                  chartTheme={chartTheme}
-                />
+{/* MAs */}
+                <MADropdown activeMAs={activeMAs} onChange={setActiveMAs} chartTheme={chartTheme} />
+{/* | */}
+                <div className={`h-4 w-px self-center mx-0.5 ${chartTheme === 'light' ? 'bg-gray-200' : 'bg-gray-700/60'}`} aria-hidden />
               </>
             )}
-            {/* Separator */}
-            <div className={`h-4 w-px self-center mx-0.5 ${chartTheme === 'light' ? 'bg-gray-200' : 'bg-gray-700/60'}`} aria-hidden />
-            {/* Avgs dropdown */}
-            <MADropdown activeMAs={activeMAs} onChange={setActiveMAs} chartTheme={chartTheme} />
-            {/* Separator */}
-            <div className={`h-4 w-px self-center mx-0.5 ${chartTheme === 'light' ? 'bg-gray-200' : 'bg-gray-700/60'}`} aria-hidden />
-            {/* Zoom In */}
+{/* zoom */}
+            {isMultiAsset && <div className={`h-4 w-px self-center mx-0.5 ${chartTheme === 'light' ? 'bg-gray-200' : 'bg-gray-700/60'}`} aria-hidden />}
             <button onClick={zoomIn} title="Zoom In" className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${chartTheme === 'light' ? 'text-gray-500 hover:text-gray-800 hover:bg-gray-100' : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800/60'}`}>
               <ZoomIn size={14} />
             </button>
-            {/* Zoom Out */}
             <button onClick={zoomOut} title="Zoom Out" className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${chartTheme === 'light' ? 'text-gray-500 hover:text-gray-800 hover:bg-gray-100' : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800/60'}`}>
               <ZoomOut size={14} />
             </button>
@@ -1453,11 +1599,15 @@ export default function AssetChart({
             )}
             {isZoomed && <span className={`text-[10px] px-0.5 ${chartTheme === 'light' ? 'text-gray-600' : 'text-gray-500'}`}>{data.length}/{transformedData.length}</span>}
           </div>
-          {dataLoading && <span className={`text-[10px] animate-pulse px-2 py-0.5 rounded ${chartTheme === 'light' ? 'text-gray-600 bg-white/80' : 'text-gray-500 bg-gray-900/80'}`}>Loading…</span>}
+          {(dataLoading || additionalLoading) && (
+            <span className={`text-[10px] animate-pulse px-2 py-0.5 rounded ${chartTheme === 'light' ? 'text-gray-600 bg-white/80' : 'text-gray-500 bg-gray-900/80'}`}>
+              {additionalLoading ? 'Loading symbols…' : 'Loading…'}
+            </span>
+          )}
           {!realData && !dataLoading && data.length === 0 && <span className={`text-[10px] text-amber-500/90 px-2 py-0.5 rounded ${chartTheme === 'light' ? 'bg-white/80' : 'bg-gray-900/80'}`}>No data</span>}
         </div>
 
-        {/* Placeholder when no real data - never show mock */}
+{/* empty state */}
         {!realData && (
           <div className={`absolute inset-0 flex items-center justify-center rounded-lg z-10 ${chartTheme === 'light' ? 'bg-white/70' : 'bg-gray-900/50'}`}>
             <p className={`text-sm ${chartTheme === 'light' ? 'text-gray-600' : 'text-gray-400'}`}>
@@ -1466,7 +1616,8 @@ export default function AssetChart({
           </div>
         )}
         <ResponsiveContainer width="100%" height="100%" minHeight={200}>
-          <ComposedChart data={chartData} margin={{ top: 20, right: 4, left: 10, bottom: 20 }}>
+{/* compare vs ohlc data */}
+          <ComposedChart data={isMultiAsset ? multiAssetVisibleData : chartData} margin={{ top: 20, right: 4, left: 10, bottom: 20 }}>
             <defs>
               <filter id="trade-buy-glow" x="-30%" y="-30%" width="160%" height="160%">
                 <feDropShadow dx="0" dy="0" stdDeviation="2" floodColor={BUY_GLOW} floodOpacity="0.7" />
@@ -1494,66 +1645,97 @@ export default function AssetChart({
 
             <CartesianGrid strokeDasharray="3 3" stroke={tc.grid} vertical={isIntraday(interval)} />
 
-            {sessionBoundaries.map((boundary) => (
+{/* session lines */}
+            {!isMultiAsset && sessionBoundaries.map((boundary) => (
               <ReferenceLine key={`session-${boundary}`} x={boundary} stroke={tc.sessionBoundary} strokeWidth={1.5} strokeDasharray="6 4" yAxisId="price" />
             ))}
 
             <XAxis dataKey="date" stroke={tc.axis} fontSize={10} tickLine={false} axisLine={{ stroke: tc.grid }}
               tickFormatter={smartTickFormatter} ticks={smartTicks} minTickGap={25} tick={{ fill: tc.axisTick }} />
+
+{/* y axes */}
             <YAxis yAxisId="price" stroke={tc.axis} fontSize={10} tickLine={false} axisLine={false}
+              hide={isMultiAsset}
               domain={[yDomainMin, yDomainMax]}
               tickFormatter={(v: number) => {
                 if (v >= 10000) return `${(v / 1000).toFixed(1)}k`;
                 if (v >= 1000) return `${(v / 1000).toFixed(2)}k`;
                 return v.toFixed(v >= 100 ? 0 : 2);
               }}
-              width={55} tick={{ fill: tc.axisTick }} />
+              width={isMultiAsset ? 0 : 55} tick={{ fill: tc.axisTick }} />
             <YAxis yAxisId="volume" orientation="right" domain={[0, maxVolume * 4]} hide width={0} />
-            {/* Always-rendered right axes — fixed width keeps plot area stable when toggling overlays */}
+{/* perf axes */}
             <YAxis yAxisId="perf" orientation="right" fontSize={9} tickLine={false}
-              axisLine={hasPerfOverlay ? { stroke: hasDrawdownOverlay ? '#10b98140' : tc.sessionBoundary } : false}
+              hide={isMultiAsset}
+              axisLine={!isMultiAsset && hasPerfOverlay ? { stroke: hasDrawdownOverlay ? '#10b98140' : tc.sessionBoundary } : false}
               domain={perfDomain}
-              tickFormatter={(v: number) => hasPerfOverlay ? `${v >= 100 ? '+' : ''}${(v - 100).toFixed(0)}%` : ''}
-              width={44}
-              tick={hasPerfOverlay ? { fill: hasDrawdownOverlay ? '#10b981' : '#6b7280' } : false} />
+              tickFormatter={(v: number) => (!isMultiAsset && hasPerfOverlay) ? `${v >= 100 ? '+' : ''}${(v - 100).toFixed(0)}%` : ''}
+              width={!isMultiAsset ? 44 : 0}
+              tick={(!isMultiAsset && hasPerfOverlay) ? { fill: hasDrawdownOverlay ? '#10b981' : '#6b7280' } : false} />
             <YAxis yAxisId="dd" orientation="right" fontSize={9} tickLine={false}
-              axisLine={hasDrawdownOverlay ? { stroke: hasPerfOverlay ? '#f59e0b60' : tc.sessionBoundary } : false}
+              hide={isMultiAsset}
+              axisLine={!isMultiAsset && hasDrawdownOverlay ? { stroke: hasPerfOverlay ? '#f59e0b60' : tc.sessionBoundary } : false}
               domain={ddDomain}
-              tickFormatter={(v: number) => hasDrawdownOverlay ? `${v}%` : ''}
-              width={44}
-              tick={hasDrawdownOverlay ? { fill: '#f59e0b' } : false} />
+              tickFormatter={(v: number) => (!isMultiAsset && hasDrawdownOverlay) ? `${v}%` : ''}
+              width={!isMultiAsset ? 44 : 0}
+              tick={(!isMultiAsset && hasDrawdownOverlay) ? { fill: '#f59e0b' } : false} />
+{/* compare % axis */}
+            <YAxis yAxisId="norm" orientation="left" fontSize={10} tickLine={false} axisLine={false}
+              hide={!isMultiAsset}
+              domain={normDomain}
+              tickFormatter={(v: number) => `${v >= 100 ? '+' : ''}${(v - 100).toFixed(0)}%`}
+              width={isMultiAsset ? 52 : 0}
+              tick={{ fill: tc.axisTick }} />
 
-            <Tooltip content={(props: any) => <TradingViewTooltip {...props} interval={interval} activeMAs={activeMAs} showPerfOverlay={hasPerfOverlay} showDrawdownOverlay={hasDrawdownOverlay} tc={tc} />}
-              cursor={<CustomCursor />} isAnimationActive={false} />
+{/* tooltip */}
+            <Tooltip
+              content={(props: any) => isMultiAsset
+                ? <MultiAssetTooltip {...props} allSymbols={allSymbolsInOrder} palette={MULTI_ASSET_PALETTE} tc={tc} />
+                : <TradingViewTooltip {...props} interval={interval} activeMAs={activeMAs} showPerfOverlay={hasPerfOverlay} showDrawdownOverlay={hasDrawdownOverlay} tc={tc} />
+              }
+              cursor={<CustomCursor />}
+              isAnimationActive={false}
+            />
 
-            {data.length > 0 && (
+{/* ref lines */}
+            {!isMultiAsset && data.length > 0 && (
               <ReferenceLine yAxisId="price" y={data[0].close} stroke={tc.axis} strokeDasharray="3 3" strokeOpacity={0.3} />
             )}
-
-            {lastClose !== null && (
+            {!isMultiAsset && lastClose !== null && (
               <ReferenceLine yAxisId="price" y={lastClose}
                 stroke={isPositive ? '#10b981' : '#ef4444'} strokeDasharray="2 2" strokeOpacity={0.7}
                 label={{ value: `$${lastClose >= 1000 ? (lastClose / 1000).toFixed(2) + 'k' : lastClose.toFixed(2)}`,
                   position: 'right', fill: isPositive ? '#10b981' : '#ef4444', fontSize: 10, fontWeight: 600 }} />
             )}
 
-            <Bar yAxisId="volume" dataKey="volume" fill={tc.volume} opacity={0.4} isAnimationActive={false}
-              shape={(props: any) => {
-                const { x, y, width, height, payload } = props;
-                if (!isFinite(x) || !isFinite(y) || !isFinite(width) || !isFinite(height)) return null;
-                const clr = payload.close >= payload.open ? `${BULL_COLOR}40` : `${BEAR_COLOR}40`;
-                return <rect x={x} y={y} width={width} height={height} fill={clr} />;
-              }} />
+{/* 0% line */}
+            {isMultiAsset && (
+              <ReferenceLine yAxisId="norm" y={100}
+                stroke={tc.axis} strokeDasharray="4 4" strokeOpacity={0.45}
+                label={{ value: '0%', position: 'insideTopLeft', fill: tc.axisTick, fontSize: 9 }} />
+            )}
 
-            {chartType === 'area' && (
+{/* volume */}
+            {!isMultiAsset && (
+              <Bar yAxisId="volume" dataKey="volume" fill={tc.volume} opacity={0.4} isAnimationActive={false}
+                shape={(props: any) => {
+                  const { x, y, width, height, payload } = props;
+                  if (!isFinite(x) || !isFinite(y) || !isFinite(width) || !isFinite(height)) return null;
+                  const clr = payload.close >= payload.open ? `${BULL_COLOR}40` : `${BEAR_COLOR}40`;
+                  return <rect x={x} y={y} width={width} height={height} fill={clr} />;
+                }} />
+            )}
+
+{/* price */}
+            {!isMultiAsset && chartType === 'area' && (
               <Area yAxisId="price" type="monotone" dataKey="close" stroke={isPositive ? '#10b981' : '#ef4444'}
                 strokeWidth={1.5} fill="url(#priceGradient)" isAnimationActive={false} />
             )}
-            {chartType === 'line' && (
+            {!isMultiAsset && chartType === 'line' && (
               <Line yAxisId="price" type="monotone" dataKey="close" stroke={isPositive ? '#10b981' : '#ef4444'}
                 strokeWidth={1.5} dot={false} isAnimationActive={false} />
             )}
-            {chartType === 'baseline' && (
+            {!isMultiAsset && chartType === 'baseline' && (
               <>
                 <Area yAxisId="price" type="monotone" dataKey="close" stroke="url(#baselineStrokeGradient)"
                   strokeWidth={1.5} fill="url(#baselineFillGradient)" isAnimationActive={false} />
@@ -1562,18 +1744,19 @@ export default function AssetChart({
                     position: 'insideTopRight', fill: tc.baseline, fontSize: 9 }} />
               </>
             )}
-
-            {isCandleType && <PriceBarsLayer data={data} chartType={chartType} />}
-            {isCandleType && (
+            {!isMultiAsset && isCandleType && <PriceBarsLayer data={data} chartType={chartType} />}
+            {!isMultiAsset && isCandleType && (
               <Area yAxisId="price" type="monotone" dataKey="close" stroke="transparent" fill="transparent"
                 activeDot={false} isAnimationActive={false} />
             )}
 
-            {MA_OPTIONS.filter((o) => activeMAs[o.key]).map((o) => (
+{/* MA lines */}
+            {!isMultiAsset && MA_OPTIONS.filter((o) => activeMAs[o.key]).map((o) => (
               <Line key={o.key} yAxisId="price" type="monotone" dataKey={o.key} stroke={o.color} strokeWidth={1.2} dot={false} connectNulls isAnimationActive={false} />
             ))}
 
-            {hasPerfOverlay && (
+{/* equity overlay */}
+            {!isMultiAsset && hasPerfOverlay && (
               <>
                 {showEquityOverlay && equityCurve?.length && (
                   <Line yAxisId="perf" type="monotone" dataKey="strategy_idx" stroke="#10b981" strokeWidth={1.5}
@@ -1585,12 +1768,13 @@ export default function AssetChart({
                 )}
               </>
             )}
-            {hasDrawdownOverlay && (
+            {!isMultiAsset && hasDrawdownOverlay && (
               <Line yAxisId="dd" type="monotone" dataKey="drawdown_neg" stroke="#f59e0b" strokeWidth={1.5}
                 dot={false} connectNulls isAnimationActive={false} strokeOpacity={0.9} />
             )}
 
-            {tradeMarkers.length > 0 && isCandleType && (showEntrySignals || showExitSignals) && (
+{/* markers */}
+            {!isMultiAsset && tradeMarkers.length > 0 && isCandleType && (showEntrySignals || showExitSignals) && (
               <TradeMarkersLayer
                 trades={tradeMarkers.filter((t) =>
                   (t.type === 'buy' && showEntrySignals) || (t.type === 'sell' && showExitSignals)
@@ -1600,13 +1784,64 @@ export default function AssetChart({
                 style={tradeMarkerStyle}
               />
             )}
+
+{/* compare lines */}
+            {isMultiAsset && allSymbolsInOrder.map((sym, i) => (
+              <Line
+                key={sym}
+                yAxisId="norm"
+                type="monotone"
+                dataKey={`norm_${sym}`}
+                stroke={MULTI_ASSET_PALETTE[i % MULTI_ASSET_PALETTE.length]}
+                strokeWidth={i === 0 ? 2 : 1.6}
+                dot={false}
+                connectNulls
+                isAnimationActive={false}
+              />
+            ))}
           </ComposedChart>
         </ResponsiveContainer>
 
-        {/* ═══════════ Top-Left OHLCV Info Bar + Legend ═══════════ */}
-        {lastBar && (
+{/* ohlc strip */}
+
+{/* compare legend */}
+        {isMultiAsset && (
           <div className="absolute top-5 left-16 flex flex-col gap-1 pointer-events-none">
-            {/* OHLCV row */}
+            <div className="flex items-center gap-1 font-sans text-[10px]" style={{ color: tc.tooltipTextMuted }}>
+              <span className="uppercase tracking-wide mr-1">Compare</span>
+              <span>·</span>
+              <span className="uppercase tracking-wide">{interval}</span>
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              {allSymbolsInOrder.map((sym, i) => {
+                const lastNorm = multiAssetVisibleData.length > 0
+                  ? (multiAssetVisibleData[multiAssetVisibleData.length - 1] as any)[`norm_${sym}`] as number | null
+                  : null;
+                const pct = lastNorm != null ? lastNorm - 100 : null;
+                const positive = pct != null && pct >= 0;
+                return (
+                  <div key={sym} className="flex items-center gap-1.5">
+                    <div className="w-3 h-0.5 rounded flex-shrink-0" style={{ background: MULTI_ASSET_PALETTE[i % MULTI_ASSET_PALETTE.length] }} />
+                    <span className="font-semibold text-[11px]" style={{ color: MULTI_ASSET_PALETTE[i % MULTI_ASSET_PALETTE.length] }}>{sym}</span>
+                    {pct != null && (
+                      <span className={`text-[11px] font-mono ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {positive ? '+' : ''}{pct.toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+              {additionalLoading && (
+                <span className="text-[10px] animate-pulse" style={{ color: tc.tooltipTextMuted }}>loading…</span>
+              )}
+            </div>
+          </div>
+        )}
+
+{/* ohlc header */}
+        {!isMultiAsset && lastBar && (
+          <div className="absolute top-5 left-16 flex flex-col gap-1 pointer-events-none">
+{/* ohlc */}
             <div className="flex items-center gap-3 text-[11px] font-mono">
               <span className="text-gray-300 font-sans font-semibold text-xs">{symbol}</span>
               <span className="text-gray-500 font-sans uppercase">
@@ -1625,7 +1860,7 @@ export default function AssetChart({
                 {isPositive ? '+' : ''}{priceChange.toFixed(2)} ({isPositive ? '+' : ''}{data[0]?.close ? ((priceChange / data[0].close) * 100).toFixed(2) : '0.00'}%)
               </span>
             </div>
-            {/* Legend row — only when there's something to show */}
+{/* legend */}
             {(MA_OPTIONS.some((o) => activeMAs[o.key]) || hasPerfOverlay || hasDrawdownOverlay) && (
               <div className="flex items-center gap-3 text-[11px] flex-wrap">
                 {MA_OPTIONS.filter((o) => activeMAs[o.key]).map((o) => (

@@ -1,15 +1,10 @@
-"""Data feed : converts raw price data into MarketDataEvents.
+"""Turn DataFrames into time-ordered bar events the engine can step through.
 
-Supports bar-level (OHLCV) and tick-level data. Handles multiple symbols
-for multi-asset strategies.
-
-Two modes:
-  - DataFeed (default): Eager : materializes BarData objects upfront.
-    Best for small/medium datasets (< 100k rows).
-  - StreamingDataFeed: Lazy : keeps raw numpy arrays and creates BarData
-    on-the-fly during iteration. Uses ~60% less memory for large datasets.
-    Timestamp merging uses a heap-based k-way merge instead of collecting
-    all timestamps into a single sorted list.
+You get two flavours:
+  * **DataFeed** — builds a list of ``BarData`` up front. Simple and fast enough under ~100k rows.
+  * **StreamingDataFeed** — keeps numpy columns and materialises bars as we go. Roughly 40% lighter
+    on memory for big histories because we never allocate a giant list of Python objects.
+    Both paths merge timestamps with a small heap instead of sorting every stamp at once.
 """
 
 from __future__ import annotations
@@ -62,8 +57,6 @@ class BarData:
         )
 
 
-# ── Helper: normalize a pandas index entry to a naive datetime ────────────
-
 def _to_naive_dt(idx) -> datetime:
     """Convert any index value to a timezone-naive Python datetime."""
     if isinstance(idx, datetime):
@@ -77,8 +70,6 @@ def _to_naive_dt(idx) -> datetime:
     return ts
 
 
-# ── Resolve column name (case-insensitive) ────────────────────────────────
-
 def _col(df: pd.DataFrame, name: str) -> str:
     """Return the actual column name matching *name* (case-insensitive)."""
     for c in df.columns:
@@ -86,10 +77,6 @@ def _col(df: pd.DataFrame, name: str) -> str:
             return c
     return name  # fallback
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  DataFeed (original eager mode : unchanged API)
-# ═══════════════════════════════════════════════════════════════════════════
 
 class DataFeed:
     """Manages one or more symbol data feeds and emits bars in time order.
@@ -145,8 +132,11 @@ class DataFeed:
     def iterate(self) -> Iterator[list[MarketDataEvent]]:
         """Yield groups of events at each unique timestamp across all feeds.
 
-        At each timestamp, all symbols with data at that time are yielded
-        together so the strategy sees a synchronized snapshot.
+        Every group is guaranteed to contain ALL symbols. Symbols that have
+        no new bar at the current timestamp are filled forward with a
+        synthetic bar (open=high=low=close=last_close, volume=0) so the
+        strategy always sees a complete, synchronised snapshot with no
+        lookahead bias.
 
         Uses a heap-based k-way merge so we never build a full timestamp
         list in memory.
@@ -154,10 +144,11 @@ class DataFeed:
         if not self._feeds:
             return
 
+        all_symbols: list[str] = list(self._feeds.keys())
         pointers: dict[str, int] = {s: 0 for s in self._feeds}
+        last_known: dict[str, MarketDataEvent] = {}
 
-        # Seed the min-heap with the first bar of each symbol
-        # Heap entries: (timestamp, symbol_name)
+        # Min-heap of (next timestamp, symbol) — classic k-way merge
         heap: list[tuple[datetime, str]] = []
         for symbol, bars in self._feeds.items():
             if bars:
@@ -165,33 +156,58 @@ class DataFeed:
 
         last_ts: datetime | None = None
         pending: list[MarketDataEvent] = []
+        pending_syms: set[str] = set()
 
         while heap:
             ts, sym = heapq.heappop(heap)
 
-            # If the timestamp changed, flush the pending group
             if last_ts is not None and ts != last_ts and pending:
+                # Pad missing symbols with a synthetic flat bar (last close, zero volume)
+                for s in all_symbols:
+                    if s not in pending_syms and s in last_known:
+                        ev = last_known[s]
+                        pending.append(MarketDataEvent(
+                            timestamp=last_ts,
+                            symbol=s,
+                            open=ev.close,
+                            high=ev.close,
+                            low=ev.close,
+                            close=ev.close,
+                            volume=0.0,
+                            bar_index=ev.bar_index,
+                        ))
                 yield pending
                 pending = []
+                pending_syms = set()
 
             last_ts = ts
             ptr = pointers[sym]
-            pending.append(self._feeds[sym][ptr].to_event())
+            event = self._feeds[sym][ptr].to_event()
+            pending.append(event)
+            pending_syms.add(sym)
+            last_known[sym] = event
             pointers[sym] = ptr + 1
 
-            # Push next bar for this symbol
             if pointers[sym] < len(self._feeds[sym]):
                 next_bar = self._feeds[sym][pointers[sym]]
                 heapq.heappush(heap, (next_bar.timestamp, sym))
 
-        # Flush last group
         if pending:
+            for s in all_symbols:
+                if s not in pending_syms and s in last_known:
+                    ev = last_known[s]
+                    pending.append(MarketDataEvent(
+                        timestamp=last_ts,
+                        symbol=s,
+                        open=ev.close,
+                        high=ev.close,
+                        low=ev.close,
+                        close=ev.close,
+                        volume=0.0,
+                        bar_index=ev.bar_index,
+                    ))
             yield pending
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  StreamingDataFeed : lazy bar iteration with compact numpy storage
-# ═══════════════════════════════════════════════════════════════════════════
 
 class _SymbolArrays:
     """Compact columnar storage for one symbol's OHLCV data.
@@ -208,7 +224,6 @@ class _SymbolArrays:
         self.symbol = symbol
         self.length = len(df)
 
-        # Convert index to numpy datetime64, then to an array of Python datetimes
         idx = df.index
         if hasattr(idx, 'tz') and idx.tz is not None:
             idx = idx.tz_localize(None)
@@ -260,14 +275,10 @@ class _SymbolArrays:
 
 
 class StreamingDataFeed:
-    """Data feed using raw numpy arrays (~60% less memory than BarData objects).
+    """Same API as ``DataFeed``, but OHLCV lives in numpy until you actually need a bar.
 
-    Drop-in replacement for DataFeed : same public API : uses ~60%
-    less memory for large datasets because it stores compact numpy
-    arrays instead of Python BarData objects.
-
-    BarData/MarketDataEvent objects are created lazily during iteration
-    and immediately discarded after the engine processes each bar group.
+    Expect a meaningful memory win on large universes — we stop materialising
+    hundreds of thousands of ``BarData`` instances up front.
     """
 
     def __init__(self):
@@ -281,7 +292,7 @@ class StreamingDataFeed:
         self._bar_count[symbol] = arr.length
 
     def get_bars(self, symbol: str) -> list[BarData]:
-        """Materialise all bars (use sparingly : defeats the memory benefit)."""
+        """Build every bar (handy for tests; skips the whole point in production)."""
         arr = self._arrays.get(symbol)
         if arr is None:
             return []
@@ -307,18 +318,15 @@ class StreamingDataFeed:
         return max(self._bar_count.values()) if self._bar_count else 0
 
     def iterate(self) -> Iterator[list[MarketDataEvent]]:
-        """Heap-based k-way merge over compact arrays.
-
-        Creates MarketDataEvent objects lazily : only one bar-group's
-        worth of objects exist in memory at any time.
-        """
+        """Same merge semantics as ``DataFeed.iterate``, but events are built on demand."""
         if not self._arrays:
             return
 
+        all_symbols: list[str] = list(self._arrays.keys())
         pointers: dict[str, int] = {s: 0 for s in self._arrays}
+        last_known: dict[str, MarketDataEvent] = {}
 
-        # Seed heap: (timestamp_ns_int, symbol)
-        # Using int64 nanoseconds for fast comparison in the heap
+        # int64 nanoseconds compare cheaply in the heap
         heap: list[tuple[int, str]] = []
         for symbol, arr in self._arrays.items():
             if arr.length > 0:
@@ -326,24 +334,57 @@ class StreamingDataFeed:
                 heapq.heappush(heap, (ts_ns, symbol))
 
         last_ts_ns: int | None = None
+        last_ts_dt: datetime | None = None
         pending: list[MarketDataEvent] = []
+        pending_syms: set[str] = set()
 
         while heap:
             ts_ns, sym = heapq.heappop(heap)
 
             if last_ts_ns is not None and ts_ns != last_ts_ns and pending:
+                # Carry forward anyone who didn't print this timestamp
+                for s in all_symbols:
+                    if s not in pending_syms and s in last_known:
+                        ev = last_known[s]
+                        pending.append(MarketDataEvent(
+                            timestamp=last_ts_dt,
+                            symbol=s,
+                            open=ev.close,
+                            high=ev.close,
+                            low=ev.close,
+                            close=ev.close,
+                            volume=0.0,
+                            bar_index=ev.bar_index,
+                        ))
                 yield pending
                 pending = []
+                pending_syms = set()
 
             last_ts_ns = ts_ns
             ptr = pointers[sym]
-            pending.append(self._arrays[sym].event_at(ptr))
+            event = self._arrays[sym].event_at(ptr)
+            pending.append(event)
+            pending_syms.add(sym)
+            last_known[sym] = event
+            last_ts_dt = event.timestamp
             pointers[sym] = ptr + 1
 
-            # Push next bar
             if pointers[sym] < self._arrays[sym].length:
                 next_ts = int(self._arrays[sym].timestamps[pointers[sym]])
                 heapq.heappush(heap, (next_ts, sym))
 
         if pending:
+            for s in all_symbols:
+                if s not in pending_syms and s in last_known:
+                    ev = last_known[s]
+                    pending.append(MarketDataEvent(
+                        timestamp=last_ts_dt,
+                        symbol=s,
+                        open=ev.close,
+                        high=ev.close,
+                        low=ev.close,
+                        close=ev.close,
+                        volume=0.0,
+                        bar_index=ev.bar_index,
+                    ))
             yield pending

@@ -10,7 +10,6 @@ import {
   Timer,
 } from 'lucide-react';
 
-// ─── Section registry ──────────────────────────────────────────────
 const SECTIONS = [
   { id: 'overview',      title: 'Overview',                    icon: Book },
   { id: 'quickstart',    title: 'Quick start',                 icon: Zap },
@@ -27,10 +26,10 @@ const SECTIONS = [
   { id: 'scheduling',    title: 'Scheduling & state',          icon: Clock },
   { id: 'parameters',    title: 'Parameters',                  icon: Terminal },
   { id: 'restrictions',  title: 'Restrictions',                icon: Shield },
+  { id: 'multi-asset',   title: 'Multi-asset strategies',      icon: Layers },
   { id: 'version-control', title: 'Version control',           icon: GitBranch },
 ] as const;
 
-// ─── Interactive code examples ─────────────────────────────────────
 const PLAYGROUND_EXAMPLES: Record<string, { title: string; code: string; description: string }> = {
   sma_crossover: {
     title: 'SMA Crossover',
@@ -63,7 +62,7 @@ const PLAYGROUND_EXAMPLES: Record<string, { title: string; code: string; descrip
 
         if self.is_flat(bar.symbol):
             if fast_prev <= slow_prev and fast_now > slow_now:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol):
             if fast_prev >= slow_prev and fast_now < slow_now:
@@ -93,7 +92,7 @@ const PLAYGROUND_EXAMPLES: Record<string, { title: string; code: string; descrip
         sma = sum(closes) / period
 
         if self.is_flat(bar.symbol) and bar.close > sma:
-            qty = max(1, int(self.portfolio.cash * 0.90 / bar.close))
+            qty = max(1, int(self.capital_per_symbol() * 0.90 / bar.close))
             tp = bar.close * (1 + self.params['tp_pct'] / 100)
             sl = bar.close * (1 - self.params['sl_pct'] / 100)
             self.bracket_order(bar.symbol, qty,
@@ -131,7 +130,7 @@ const PLAYGROUND_EXAMPLES: Record<string, { title: string; code: string; descrip
         self.plot('Z-Score', 'z', z)
 
         if self.is_flat(bar.symbol) and rsi < 30 and z < -2:
-            qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+            qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
             self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol) and rsi > 70:
             self.close_position(bar.symbol)`,
@@ -159,13 +158,58 @@ const PLAYGROUND_EXAMPLES: Record<string, { title: string; code: string; descrip
         sma = sum(closes) / period
 
         if self.is_flat(bar.symbol) and bar.close > sma:
-            qty = max(10, int(self.portfolio.cash * 0.90 / bar.close))
+            qty = max(10, int(self.capital_per_symbol() * 0.90 / bar.close))
             # Split into 10 equal slices over 10 bars
             self.twap_order(bar.symbol, qty,
                 num_slices=self.params['slices'])
 
         elif self.is_long(bar.symbol) and bar.close < sma:
             self.close_position(bar.symbol)`,
+  },
+  multi_asset: {
+    title: 'Multi-Asset SMA Crossover',
+    description: 'Run the same signal logic across all selected assets with equal capital allocation',
+    code: `class MyStrategy(StrategyBase):
+    """
+    Multi-asset SMA crossover.
+    on_data is called once per symbol per bar, so the same logic
+    applies to every asset you select in the Playground.
+    capital_per_symbol() divides equity equally so each asset gets
+    a fair allocation regardless of price scale.
+    """
+    def on_init(self):
+        self.params.setdefault('fast', 10)
+        self.params.setdefault('slow', 30)
+
+    def _sma(self, closes, period):
+        if len(closes) < period:
+            return None
+        return sum(closes[-period:]) / period
+
+    def on_data(self, bar):
+        fast = self.params['fast']
+        slow = self.params['slow']
+        hist = self.history(bar.symbol, slow + 1)
+        if len(hist) < slow + 1:
+            return
+        closes = [b.close for b in hist]
+
+        fast_now  = self._sma(closes,      fast)
+        slow_now  = self._sma(closes,      slow)
+        fast_prev = self._sma(closes[:-1], fast)
+        slow_prev = self._sma(closes[:-1], slow)
+
+        if None in (fast_now, slow_now, fast_prev, slow_prev):
+            return
+
+        if self.is_flat(bar.symbol):
+            if fast_prev <= slow_prev and fast_now > slow_now:
+                # Equal allocation per asset — works for mixed price scales
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
+                self.market_order(bar.symbol, qty)
+        elif self.is_long(bar.symbol):
+            if fast_prev >= slow_prev and fast_now < slow_now:
+                self.close_position(bar.symbol)`,
   },
   scheduled_rebalance: {
     title: 'Scheduled Rebalance',
@@ -188,7 +232,7 @@ const PLAYGROUND_EXAMPLES: Record<string, { title: string; code: string; descrip
         roc = (hist[-1].close - hist[0].close) / hist[0].close
 
         if roc > 0.02 and self.is_flat(bar.symbol):
-            qty = max(1, int(self.cash * 0.95 / bar.close))
+            qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
             self.market_order(bar.symbol, qty)
             self.notify(f"Entered long: ROC={roc:.2%}", level="info")
         elif roc < -0.02 and self.is_long(bar.symbol):
@@ -201,7 +245,6 @@ const PLAYGROUND_EXAMPLES: Record<string, { title: string; code: string; descrip
   },
 };
 
-// ─── Reusable components ───────────────────────────────────────────
 
 function CodeBlock({ code, language = 'python' }: { code: string; language?: string }) {
   const [copied, setCopied] = useState(false);
@@ -310,7 +353,15 @@ function CollapsibleSection({ title, children, defaultOpen = false }: { title: s
   );
 }
 
-function Callout({ type, children }: { type: 'info' | 'warning' | 'tip'; children: React.ReactNode }) {
+function Callout({
+  type,
+  children,
+  className,
+}: {
+  type: 'info' | 'warning' | 'tip';
+  children: React.ReactNode;
+  className?: string;
+}) {
   const styles = {
     info: 'bg-blue-50 border-blue-200 text-blue-900',
     warning: 'bg-amber-50 border-amber-200 text-amber-900',
@@ -318,13 +369,12 @@ function Callout({ type, children }: { type: 'info' | 'warning' | 'tip'; childre
   };
   const labels = { info: 'Note', warning: 'Warning', tip: 'Tip' };
   return (
-    <div className={`p-4 border rounded-lg text-sm ${styles[type]}`}>
+    <div className={['p-4 border rounded-lg text-sm', styles[type], className].filter(Boolean).join(' ')}>
       <strong>{labels[type]}:</strong> {children}
     </div>
   );
 }
 
-// ─── Main page ─────────────────────────────────────────────────────
 export default function DocsPage() {
   const [activeSection, setActiveSection] = useState('overview');
   const [searchQuery, setSearchQuery] = useState('');
@@ -397,7 +447,7 @@ export default function DocsPage() {
 
             <article className="space-y-16">
 
-              {/* ═══════════════ OVERVIEW ═══════════════ */}
+              {/* overview */}
               <section id="overview" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Book className="h-6 w-6 text-emerald-600" />
@@ -435,7 +485,7 @@ export default function DocsPage() {
                 </div>
               </section>
 
-              {/* ═══════════════ QUICK START ═══════════════ */}
+              {/* quick start */}
               <section id="quickstart" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Zap className="h-6 w-6 text-emerald-600" />
@@ -465,7 +515,7 @@ export default function DocsPage() {
                 </div>
               </section>
 
-              {/* ═══════════════ STRATEGY STRUCTURE ═══════════════ */}
+              {/* strategy structure */}
               <section id="structure" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <FileCode className="h-6 w-6 text-emerald-600" />
@@ -508,7 +558,7 @@ export default function DocsPage() {
                 </Callout>
               </section>
 
-              {/* ═══════════════ LIFECYCLE METHODS ═══════════════ */}
+              {/* lifecycle methods */}
               <section id="lifecycle" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Activity className="h-6 w-6 text-emerald-600" />
@@ -550,7 +600,7 @@ export default function DocsPage() {
                 </div>
               </section>
 
-              {/* ═══════════════ DATA & BAR OBJECT ═══════════════ */}
+              {/* data & bar object */}
               <section id="data" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <BarChart3 className="h-6 w-6 text-emerald-600" />
@@ -602,7 +652,7 @@ if len(hist) < 50:
                 ]} />
               </section>
 
-              {/* ═══════════════ BUILT-IN INDICATORS ═══════════════ */}
+              {/* built-in indicators */}
               <section id="indicators" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <LineChart className="h-6 w-6 text-emerald-600" />
@@ -716,7 +766,7 @@ sma_series = SMA(period=20).series(closes)   # → numpy array`} />
                 </div>
               </section>
 
-              {/* ═══════════════ ORDERS & POSITIONS ═══════════════ */}
+              {/* orders & positions */}
               <section id="orders" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Target className="h-6 w-6 text-emerald-600" />
@@ -763,7 +813,7 @@ sma_series = SMA(period=20).series(closes)   # → numpy array`} />
                 ]} />
               </section>
 
-              {/* ═══════════════ ADVANCED ORDERS ═══════════════ */}
+              {/* advanced orders */}
               <section id="advanced-orders" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Layers className="h-6 w-6 text-emerald-600" />
@@ -802,7 +852,7 @@ sma_series = SMA(period=20).series(closes)   # → numpy array`} />
                 ]} />
               </section>
 
-              {/* ═══════════════ EXECUTION ALGORITHMS ═══════════════ */}
+              {/* execution algorithms */}
               <section id="execution" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Gauge className="h-6 w-6 text-emerald-600" />
@@ -841,7 +891,7 @@ sma_series = SMA(period=20).series(closes)   # → numpy array`} />
                 </div>
               </section>
 
-              {/* ═══════════════ PORTFOLIO API ═══════════════ */}
+              {/* portfolio api */}
               <section id="portfolio" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <TrendingUp className="h-6 w-6 text-emerald-600" />
@@ -879,7 +929,7 @@ has_pos = self.portfolio.has_position(bar.symbol)
 qty = self.portfolio.get_position_quantity(bar.symbol)`} />
               </section>
 
-              {/* ═══════════════ CUSTOM CHARTS & ALERTS ═══════════════ */}
+              {/* custom charts & alerts */}
               <section id="charts" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Activity className="h-6 w-6 text-emerald-600" />
@@ -906,7 +956,7 @@ qty = self.portfolio.get_position_quantity(bar.symbol)`} />
                 </div>
               </section>
 
-              {/* ═══════════════ BAR CONSOLIDATORS ═══════════════ */}
+              {/* bar consolidators */}
               <section id="consolidators" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Timer className="h-6 w-6 text-emerald-600" />
@@ -960,7 +1010,7 @@ qty = self.portfolio.get_position_quantity(bar.symbol)`} />
         # Trade based on hourly signal + current bar
         if self.hourly_sma and self.is_flat(bar.symbol):
             if bar.close > self.hourly_sma:
-                qty = max(1, int(self.portfolio.cash * 0.95 / bar.close))
+                qty = max(1, int(self.capital_per_symbol() * 0.95 / bar.close))
                 self.market_order(bar.symbol, qty)
         elif self.is_long(bar.symbol) and self.hourly_sma:
             if bar.close < self.hourly_sma:
@@ -982,7 +1032,7 @@ qty = self.portfolio.get_position_quantity(bar.symbol)`} />
                 </Callout>
               </section>
 
-              {/* ═══════════════ SCHEDULING & STATE ═══════════════ */}
+              {/* scheduling & state */}
               <section id="scheduling" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Clock className="h-6 w-6 text-emerald-600" />
@@ -1013,7 +1063,7 @@ qty = self.portfolio.get_position_quantity(bar.symbol)`} />
                 </div>
               </section>
 
-              {/* ═══════════════ PARAMETERS ═══════════════ */}
+              {/* parameters */}
               <section id="parameters" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Terminal className="h-6 w-6 text-emerald-600" />
@@ -1041,7 +1091,7 @@ def on_data(self, bar):
                 </Callout>
               </section>
 
-              {/* ═══════════════ RESTRICTIONS ═══════════════ */}
+              {/* restrictions */}
               <section id="restrictions" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Shield className="h-6 w-6 text-emerald-600" />
@@ -1096,7 +1146,69 @@ def on_data(self, bar):
                 </div>
               </section>
 
-              {/* ═══════════════ VERSION CONTROL ═══════════════ */}
+              {/* multi-asset */}
+              <section id="multi-asset" className="scroll-mt-8">
+                <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+                  <Layers className="h-6 w-6 text-emerald-600" />
+                  Multi-asset strategies
+                </h2>
+                <p className="text-gray-700 mb-4">
+                  Add extra symbols in the asset selector to run your strategy across multiple markets simultaneously.
+                  The engine loads data for every selected symbol and calls <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">on_data</code> once
+                  per symbol per bar, so your existing single-asset logic works unchanged — each call receives the bar for one specific symbol.
+                </p>
+
+                <h3 className="font-semibold text-gray-900 mb-3">Multi-asset API</h3>
+                <ApiTable rows={[
+                  { method: 'self.symbols', description: 'List of all symbols loaded into the engine for this backtest' },
+                  { method: 'self.capital_per_symbol()', description: 'self.equity / len(self.symbols) — equal capital slice per asset. Identical to self.equity for single-asset backtests.' },
+                  { method: 'self.history(symbol, n)', description: 'Fetch the last N bars for any loaded symbol by name' },
+                  { method: 'self.is_flat(symbol)', description: 'True if no open position for the given symbol' },
+                  { method: 'self.close_position(symbol)', description: 'Close the open position for a specific symbol' },
+                ]} />
+
+                <Callout type="tip" className="mt-6">
+                  Always size positions with <code className="bg-emerald-100 px-1 rounded">self.capital_per_symbol()</code> rather than{' '}
+                  <code className="bg-emerald-100 px-1 rounded">self.portfolio.cash</code> in multi-asset strategies.
+                  Using raw cash means the first symbol called on each bar consumes most of the available capital,
+                  leaving insufficient funds for subsequent assets — especially when mixing asset classes with very
+                  different price scales (e.g. equities at ~$150 vs Bitcoin at ~$40,000).
+                </Callout>
+
+                <h3 className="font-semibold text-gray-900 mt-8 mb-3">Example — equal-weight crossover across all assets</h3>
+                <CodeBlock code={PLAYGROUND_EXAMPLES.multi_asset.code} />
+
+                <h3 className="font-semibold text-gray-900 mt-8 mb-3">How bar dispatch works</h3>
+                <p className="text-gray-700 mb-3">
+                  On each timestamp the engine groups all loaded symbols into a single bar group, then loops through them
+                  calling <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">on_data(bar)</code> once per symbol.
+                  Use <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">bar.symbol</code> inside your strategy to identify which asset triggered the call.
+                </p>
+                <CodeBlock code={`def on_data(self, bar):
+    # bar.symbol tells you which asset this call is for
+    hist = self.history(bar.symbol, 20)
+    if len(hist) < 20:
+        return
+
+    # Access any other symbol's history at the same time
+    spy_hist = self.history('SPY', 20)
+
+    # Position sizing: equal allocation per loaded symbol
+    alloc = self.capital_per_symbol()
+    qty = max(1, int(alloc * 0.95 / bar.close))
+
+    # ... signal logic ...`} />
+
+                <h3 className="font-semibold text-gray-900 mt-8 mb-3">Mixing asset classes</h3>
+                <p className="text-gray-700">
+                  You can combine equities, ETFs, crypto, and forex in the same backtest. The engine aligns all data to
+                  the primary symbol&apos;s calendar and forward-fills gaps (e.g. weekend crypto prices fill into equity
+                  trading days). <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">capital_per_symbol()</code> ensures
+                  each asset gets a fair share of capital regardless of price magnitude.
+                </p>
+              </section>
+
+              {/* version control */}
               <section id="version-control" className="scroll-mt-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <GitBranch className="h-6 w-6 text-emerald-600" />
@@ -1137,7 +1249,7 @@ def on_data(self, bar):
                 </div>
               </section>
 
-              {/* ═══════════════ CTA ═══════════════ */}
+              {/* cta */}
               <section className="mt-16 p-6 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-lg">
                 <div className="flex items-center gap-4">
                   <div className="p-3 bg-emerald-100 rounded-lg">

@@ -120,7 +120,7 @@ export default function PlaygroundPage() {
   const [saveAsNewTitleInput, setSaveAsNewTitleInput] = useState('');
   const [showSignInPrompt, setShowSignInPrompt] = useState(false);
 
-  // Params are pulled from the code
+  // Keys we scraped from `self.params` / numeric literals in the editor
   const paramDefs = useMemo(() => extractParamsFromCode(code), [code]);
 
   const [config, setConfig] = useState<BacktestConfig>({
@@ -172,7 +172,7 @@ export default function PlaygroundPage() {
     setCanPortal(true);
   }, []);
 
-  // Code from docs "Try in Playground" or forum embeds
+  // Optional code injection from another page
   useEffect(() => {
     const injectedCode = sessionStorage.getItem('playground_inject_code');
     if (injectedCode) {
@@ -188,7 +188,7 @@ export default function PlaygroundPage() {
     }
   }, []);
 
-  // Load shared strategies from ?strategy=ID in the URL
+  // Open a saved Lab strategy via ?strategy=123
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const strategyIdParam = params.get('strategy') ?? params.get('strategy_id');
@@ -225,7 +225,7 @@ export default function PlaygroundPage() {
   const [resultsPanelWidth, setResultsPanelWidth] = useState(320);
   const [isResizingResults, setIsResizingResults] = useState(false);
   const resizeStartRef = useRef<{ x: number; w: number }>({ x: 0, w: 320 });
-  const [uiScale, setUiScale] = useState(1); // 0.75–1.25 for sidebars
+  const [uiScale, setUiScale] = useState(1);
   const [showCodeEditor, setShowCodeEditor] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [lastBacktestShareToken, setLastBacktestShareToken] = useState<string | null>(null);
@@ -260,7 +260,6 @@ export default function PlaygroundPage() {
     paramsSnapshot: Record<string, number>;
   })[]>([]);
   const [showComparison, setShowComparison] = useState(false);
-  // Analytics hook
   const analytics = useAnalytics({ config, code, paramDefs, strategyParams });
   const {
     optimizeResults, walkForwardResults, oosResults, cpcvResults, factorResults, monteCarloResults,
@@ -281,7 +280,7 @@ export default function PlaygroundPage() {
     handleRunCpcv, handleRunFactorAttribution, handleRunMonteCarlo,
   } = analytics;
   
-  // Trade markers from backend
+  // Buy/sell dots on the price chart
   const tradeMarkers: TradeMarker[] = useMemo(() => {
     if (!results?.trades) return [];
     const markers: TradeMarker[] = [];
@@ -292,7 +291,7 @@ export default function PlaygroundPage() {
     return markers;
   }, [results?.trades]);
 
-  // Equity curve from backend, formatted for the drawdown chart
+  // Same curve the drawdown panel consumes
   const equityCurveData = useMemo(() => {
     return results?.equity_curve || [];
   }, [results?.equity_curve]);
@@ -346,7 +345,7 @@ export default function PlaygroundPage() {
     return hints;
   }, [config.startDate, config.endDate, config.initialCapital, config.slippage, config.commission, code]);
 
-  // Clear validation/backtest errors when config changes (keep loadError)
+  // Clear stale run errors once the user fixes inputs
   useEffect(() => {
     if (error && !isRunning && validateConfig() === null) {
       setError(null);
@@ -373,7 +372,7 @@ export default function PlaygroundPage() {
     const startTime = Date.now();
 
     try {
-      // User params stay separate from engine config so self.params is clean
+      // Worker reads numeric strategy params and engine toggles from the same `parameters` object
       const backtestConfig = {
         symbol: config.symbol,
         symbols: additionalSymbols.length > 0 ? additionalSymbols : undefined,
@@ -384,7 +383,6 @@ export default function PlaygroundPage() {
         commission: config.commission / 100,
         parameters: {
           ...strategyParams,
-          // Engine config
           spread_model: config.spreadModel,
           slippage_model: config.slippageModel,
           margin_enabled: config.marginEnabled,
@@ -401,8 +399,8 @@ export default function PlaygroundPage() {
         interval: config.interval,
       };
 
-      // Use current editor code (no save needed)
-      const CREATE_TIMEOUT_MS = 30000; // 30 seconds
+      // Never silently run stale code — ship exactly what's in the editor
+      const CREATE_TIMEOUT_MS = 30000;
       const createPromise = api.createBacktestWithCode({ ...backtestConfig, code });
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Request timed out. Check your connection and try again.')), CREATE_TIMEOUT_MS)
@@ -410,7 +408,7 @@ export default function PlaygroundPage() {
       const backtest = await Promise.race([createPromise, timeoutPromise]);
 
       let attempts = 0;
-      const maxAttempts = 120; // 2 minutes polling
+      const maxAttempts = 120;
       
       while (attempts < maxAttempts) {
         if (runCancelledRef.current) {
@@ -431,7 +429,6 @@ export default function PlaygroundPage() {
           setLastBacktestId(result.id);
           setLastBacktestShareToken(result.share_token);
           const r = result.results;
-          // Use real benchmark from backend (buy & hold over actual market data)
           const benchmarkReturn = r?.benchmark_return ?? undefined;
           const resultsObj: BacktestResult = {
             total_return: result.total_return || 0,
@@ -485,9 +482,8 @@ export default function PlaygroundPage() {
             alerts: r?.alerts ?? undefined,
           };
           setResults(resultsObj);
-          // Add to comparison history with config snapshot
           setComparisonHistory(prev => [
-            ...prev.slice(-9), // Keep last 10 total
+            ...prev.slice(-9),
             {
               ...resultsObj,
               label: `${STRATEGY_TEMPLATES[selectedStarter]?.name ?? 'Strategy'} - ${config.symbol}`,
@@ -520,7 +516,7 @@ export default function PlaygroundPage() {
       setLastRunTime(`${elapsed}s`);
       setIsRunning(false);
     }
-  }, [isAuthenticated, code, config, strategyParams]);
+  }, [isAuthenticated, code, config, strategyParams, additionalSymbols]);
 
   const handleCancelBacktest = useCallback(() => {
     runCancelledRef.current = true;
@@ -534,7 +530,6 @@ export default function PlaygroundPage() {
   const handleReset = () => {
     setCode(DEFAULT_CODE);
     setSelectedStarter('sma_crossover');
-    // Params will be extracted dynamically from the default code
     const extracted = extractParamsFromCode(DEFAULT_CODE);
     const defaultParams: Record<string, number> = {};
     extracted.forEach(p => { defaultParams[p.key] = p.defaultValue; });
@@ -607,14 +602,12 @@ export default function PlaygroundPage() {
     [savedStrategies, deletedStrategyIds]
   );
 
-  // Fetch saved strategies
   useEffect(() => {
     if (isAuthenticated) {
       refetchSavedStrategies();
     }
   }, [isAuthenticated, refetchSavedStrategies]);
 
-  // Fetch groups when using Lab
   useEffect(() => {
     if (isAuthenticated && strategySource === 'lab') {
       api.getStrategyGroups().then((g) => setStrategyGroups(g)).catch(() => setStrategyGroups([]));
@@ -623,14 +616,12 @@ export default function PlaygroundPage() {
     }
   }, [isAuthenticated, strategySource]);
 
-  // Pick first group if we have groups but none selected
   useEffect(() => {
     if (strategySource === 'lab' && isAuthenticated && strategyGroups.length > 0 && selectedLabGroupId === null) {
       setSelectedLabGroupId(strategyGroups[0].id);
     }
   }, [strategySource, isAuthenticated, strategyGroups, selectedLabGroupId]);
 
-  // Fetch strategies for the selected group
   useEffect(() => {
     if (!isAuthenticated || strategySource !== 'lab') {
       setLabStrategies([]);
@@ -648,7 +639,6 @@ export default function PlaygroundPage() {
         setLabStrategies(list);
         const wasLoadedFromUrl = loadedFromUrlRef.current;
         loadedFromUrlRef.current = false;
-        // Deselect if strategy isn't in this group (unless we loaded from URL)
         setSavedStrategyId((prev) => {
           if (prev !== null && !list.some((s) => s.id === prev) && !wasLoadedFromUrl) return null;
           return prev;
@@ -783,7 +773,7 @@ export default function PlaygroundPage() {
     onExport: handleExportResults,
   });
 
-  // Drag and resize for setup panel
+  // Draggable setup window
   const handleSetupPanelDragStart = (e: React.MouseEvent) => {
     e.preventDefault();
     setIsDraggingSetupPanel(true);
@@ -831,7 +821,7 @@ export default function PlaygroundPage() {
     };
   }, [isDraggingSetupPanel, isResizingSetupPanel]);
 
-  // Results panel resize handle
+  // Resize the results drawer
   const handleResultsResizeStart = (e: React.MouseEvent) => {
     e.preventDefault();
     setIsResizingResults(true);
@@ -841,7 +831,7 @@ export default function PlaygroundPage() {
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizingResults) return;
-      const delta = resizeStartRef.current.x - e.clientX; // drag left = positive delta = wider
+      const delta = resizeStartRef.current.x - e.clientX;
       const newW = Math.min(600, Math.max(260, resizeStartRef.current.w + delta));
       setResultsPanelWidth(newW);
     };
@@ -885,11 +875,10 @@ export default function PlaygroundPage() {
       link.href = canvas.toDataURL('image/png');
       link.click();
     } catch {
-      // ignore
     }
   }, [config.symbol]);
 
-  // Playground needs tablet or larger
+  // Playground needs horizontal space
   if (typeof window !== 'undefined' && window.innerWidth < 768) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
@@ -908,7 +897,7 @@ export default function PlaygroundPage() {
 
   return (
     <div ref={playgroundRef} className="relative h-full flex flex-col bg-white text-gray-900">
-      {/* Chart Header - TradingView style: asset, interval, run, actions */}
+      {/* chart toolbar */}
       <ChartHeader
         symbol={config.symbol}
         additionalSymbols={additionalSymbols}
@@ -930,7 +919,7 @@ export default function PlaygroundPage() {
         onScreenshot={handleScreenshot}
       />
 
-      {/* Sign-in overlay - shown when they try to run without being signed in */}
+      {/* sign-in gate */}
       {!isAuthenticated && showSignInPrompt && (
         <SignInPrompt
           variant="modal"
@@ -940,7 +929,7 @@ export default function PlaygroundPage() {
         />
       )}
 
-      {/* Load error banner - strategy load failures (e.g. from URL), persistent until dismissed */}
+      {/* strategy load error */}
       {loadError && (
         <div className="flex-shrink-0 flex items-center justify-between gap-3 px-3 py-2 bg-red-900/30 border-b border-red-800/60 text-xs">
           <div className="flex items-center gap-2 min-w-0">
@@ -952,7 +941,7 @@ export default function PlaygroundPage() {
           </button>
         </div>
       )}
-      {/* Error banner - visible when backtest/validation fails */}
+      {/* run error */}
       {error && (
         <div className="flex-shrink-0 flex items-center justify-between gap-3 px-3 py-2 bg-red-900/30 border-b border-red-800/60 text-xs">
           <div className="flex items-center gap-2 min-w-0">
@@ -979,12 +968,12 @@ export default function PlaygroundPage() {
         </div>
       )}
 
-      {/* KPI Strip - appears after backtest runs, slim metric bar above chart */}
+      {/* post-run KPIs */}
       {results && <KpiStrip results={results} />}
 
-      {/* Main Content Area - chart uses full width, icon bar overlays */}
+      {/* chart + chrome */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Icon toolbar - absolute overlay on left edge, no layout space */}
+        {/* left icon rail */}
         <div className="absolute left-0 top-0 bottom-0 z-30 flex flex-col bg-white border-r border-gray-200 w-12 items-center py-2 gap-0.5 overflow-visible shadow-sm">
             {([
               'strategy', 'dates',
@@ -1023,9 +1012,9 @@ export default function PlaygroundPage() {
             })}
         </div>
 
-        {/* Main Content - Chart + Right Sidebar - ml-12 reserves space for icon bar overlay */}
+        {/* chart + results */}
         <div className="flex-1 flex flex-row min-w-0 min-h-0 overflow-hidden ml-12">
-          {/* Chart column */}
+          {/* chart */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
             <div ref={chartAreaRef} className={`flex-1 min-h-[300px] relative flex flex-col overflow-hidden ${effectiveChartTheme === 'light' ? 'bg-gray-50' : 'bg-gray-950'}`}>
               <ErrorBoundary label="Chart">
@@ -1039,12 +1028,13 @@ export default function PlaygroundPage() {
                   drawdownSeries={results?.drawdown_series}
                   benchmarkReturn={results?.benchmark_return ?? undefined}
                   chartTheme={effectiveChartTheme}
+                  additionalSymbols={additionalSymbols}
                 />
               </ErrorBoundary>
             </div>
           </div>
 
-          {/* Right Results Sidebar - slides in when results exist */}
+          {/* results drawer */}
           {results && (
             <ResultsSidebar
               results={results}
@@ -1064,7 +1054,7 @@ export default function PlaygroundPage() {
         </div>
       </div>
 
-      {/* Status Bar */}
+      {/* status */}
       <StatusBar
         isRunning={isRunning}
         results={results ? {
@@ -1090,7 +1080,7 @@ export default function PlaygroundPage() {
         onUiScaleChange={setUiScale}
       />
 
-      {/* Floating Setup Panel - portal to body so it floats over chart, not inside result section */}
+      {/* setup floater */}
       {activeSetupPanel && canPortal && typeof window !== 'undefined' && createPortal(
         <div
           className="bg-white border border-gray-200 rounded-lg shadow-2xl flex flex-col overflow-hidden relative"
@@ -1105,7 +1095,7 @@ export default function PlaygroundPage() {
             transition: (isDraggingSetupPanel || isResizingSetupPanel) ? 'none' : 'box-shadow 0.15s',
           }}
         >
-          {/* Header - draggable */}
+          {/* drag handle */}
           <div
             className="h-9 px-3 flex items-center justify-between border-b border-gray-200 bg-gray-50 cursor-move select-none shrink-0"
             onMouseDown={handleSetupPanelDragStart}
@@ -1121,12 +1111,12 @@ export default function PlaygroundPage() {
               <X className="h-4 w-4" />
             </button>
           </div>
-          {/* Content - scrollable */}
+          {/* scroll */}
           <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
             {activeSetupPanel === 'strategy' && (
               <div className="space-y-2">
                 <p className="text-[10px] text-gray-400 leading-relaxed">Sidebar controls the environment (capital, costs, dates). Your code controls the trading logic.</p>
-                {/* Source: Starter | From Lab */}
+                {/* source */}
                 <div>
                   <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-1">Source</div>
                   <ConfigSelect
@@ -1189,7 +1179,7 @@ export default function PlaygroundPage() {
                   <p className="text-[10px] text-amber-600 py-1">Sign in to load strategies from Lab.</p>
                 )}
 
-                {/* Prompt when Lab selected but no groups yet */}
+                {/* empty lab */}
                 {strategySource === 'lab' && savedStrategyId === null && isAuthenticated && strategyGroups.length === 0 && (
                   <div className="pt-2 border-t border-gray-200">
                     <p className="text-[11px] text-gray-600 mb-2">
@@ -1205,7 +1195,7 @@ export default function PlaygroundPage() {
                   </div>
                 )}
 
-                {/* Dynamic parameters (extracted from code) — only when a strategy is selected */}
+                {/* params from code */}
                 {paramDefs.length > 0 && (strategySource !== 'lab' || savedStrategyId !== null) && (
                   <div className="space-y-2 pt-2 border-t border-gray-200">
                     <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Parameters</div>
@@ -1230,7 +1220,7 @@ export default function PlaygroundPage() {
                   </div>
                 )}
 
-                {/* Save as New, Refresh & Open Editor — only when using Lab with a strategy selected */}
+                {/* lab actions */}
                 {strategySource === 'lab' && savedStrategyId !== null && (
                   <>
                     {isAuthenticated && (
@@ -1261,12 +1251,12 @@ export default function PlaygroundPage() {
             )}
             {activeSetupPanel === 'dates' && (
               <div className="space-y-3">
-                {/* Quick presets */}
+                {/* date presets */}
                 <div>
                   <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-1.5">Quick Select</div>
                   <div className="flex flex-wrap gap-1">
                     {(['1M', '3M', '6M', 'YTD', '1Y', '2Y', '3Y', '5Y', 'Max'] as DatePreset[]).map((p) => {
-                      // Check if this preset matches current dates
+                      // Highlight the preset button when dates already match
                       const preview = applyDatePreset(p);
                       const isActive = preview.startDate === config.startDate && preview.endDate === config.endDate;
                       return (
@@ -1288,7 +1278,7 @@ export default function PlaygroundPage() {
                     })}
                   </div>
                 </div>
-                {/* Manual date inputs */}
+                {/* dates */}
                 <div className="pt-2 border-t border-gray-200">
                   <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">Start</div>
                   <input type="date" value={config.startDate} onChange={(e) => setConfig({ ...config, startDate: e.target.value })} className="w-full px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900" />
@@ -1417,7 +1407,7 @@ export default function PlaygroundPage() {
                         const elapsed = Date.now() - run.timestamp;
                         const timeLabel = elapsed < 60000 ? 'just now' : elapsed < 3600000 ? `${Math.floor(elapsed / 60000)}m ago` : `${Math.floor(elapsed / 3600000)}h ago`;
 
-                        // Detect what changed from previous run
+                        // Human-readable diff vs the last comparison run
                         const prevRun = comparisonHistory[comparisonHistory.length - 1 - i - 1];
                         const changes: string[] = [];
                         if (prevRun) {
@@ -1488,13 +1478,13 @@ export default function PlaygroundPage() {
               </div>
             )}
           </div>
-          {/* Resize handle */}
+{/* resize */}
           <div className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize" onMouseDown={handleSetupPanelResizeStart} style={{ background: 'linear-gradient(135deg, transparent 50%, rgba(156,163,175,0.6) 50%)' }} title="Resize" />
         </div>,
         document.getElementById('portal-root') ?? document.body
       )}
 
-      {/* Save as New title prompt modal */}
+      {/* save-as modal */}
       {showSaveAsNewPrompt && canPortal && typeof window !== 'undefined' && createPortal(
         <div className="fixed inset-0 z-[2147483646] flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-lg shadow-xl border border-gray-200 p-4 w-full max-w-sm mx-4">
@@ -1534,7 +1524,7 @@ export default function PlaygroundPage() {
         document.getElementById('portal-root') ?? document.body
       )}
 
-      {/* Floating Code Editor */}
+      {/* editor */}
       <FloatingCodeEditor
         additionalSymbols={additionalSymbols}
         visible={showCodeEditor}

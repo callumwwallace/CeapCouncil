@@ -140,7 +140,7 @@ def _extract_user_error(exc: Exception, code: str) -> str:
     while tb is not None:
         frame = tb.tb_frame
         filename = frame.f_code.co_filename
-        # User code runs in exec with filename "<string>"
+        # Sandbox runs user code as "<string>", so that's the frame we surface
         if filename == "<string>":
             lineno = tb.tb_lineno
             lines = code.split("\n")
@@ -187,9 +187,7 @@ def create_user_strategy(code: str) -> type:
     return strategy_cls
 
 
-# ---------------------------------------------------------------------------
-# Trade-level / equity-curve analyzer
-# ---------------------------------------------------------------------------
+# Legacy Backtrader hook: capture trades + mark-to-market equity
 
 class TradeRecorder(bt.Analyzer):
     """Records individual trades and an equity curve for every bar.
@@ -202,27 +200,22 @@ class TradeRecorder(bt.Analyzer):
         super().__init__()
         self.trades: list[dict] = []
         self.equity_curve: list[dict] = []
-        # Maps trade.ref → opening position size (captured when trade opens)
+        # Remember how big the position was when the trade opened (ref is Backtrader's id)
         self._open_sizes: dict[int, int] = {}
 
-    # -- called on every trade event (open, update, close) --
     def notify_trade(self, trade):
-        # When a trade opens, capture the position size for later
         if trade.isopen and trade.size != 0:
             self._open_sizes[trade.ref] = abs(trade.size)
 
         if not trade.isclosed:
             return
 
-        # On a closed trade, trade.size == 0 (fully closed).
-        # Use trade.long (always available) for direction.
+        # Closed legs report size 0 — use trade.long for side
         is_long = bool(getattr(trade, 'long', True))
         size = self._open_sizes.pop(trade.ref, 1)  # fallback to 1
         entry_price = round(trade.price, 4)
 
-        # Derive exit price from P&L:
-        #   Longs:  pnl = (exit - entry) * size  →  exit = entry + pnl/size
-        #   Shorts: pnl = (entry - exit) * size  →  exit = entry - pnl/size
+        # Backtrader gives entry + pnl; back out an exit print for the UI
         if is_long:
             exit_price = round(entry_price + trade.pnl / size, 4)
         else:
@@ -249,7 +242,6 @@ class TradeRecorder(bt.Analyzer):
             "type": "LONG" if is_long else "SHORT",
         })
 
-    # -- called on every bar --
     def next(self):
         self.equity_curve.append({
             "date": self.data.datetime.date(0).strftime("%Y-%m-%d"),
@@ -263,10 +255,6 @@ class TradeRecorder(bt.Analyzer):
         }
 
 
-# ---------------------------------------------------------------------------
-# Extended metrics computation
-# ---------------------------------------------------------------------------
-
 def _compute_sortino_ratio(
     equity_curve: list[dict], risk_free_rate: float = 0.0, annualize: bool = True
 ) -> float | None:
@@ -276,7 +264,7 @@ def _compute_sortino_ratio(
     equities = np.array([p["equity"] for p in equity_curve], dtype=float)
     returns = np.diff(equities) / equities[:-1]
     excess = returns - risk_free_rate / 252
-    # Downside dev: zero out wins, same as proper Sortino formula
+    # Classic Sortino: only downside volatility counts
     downside_std = float(np.sqrt(np.mean(np.minimum(excess, 0) ** 2)))
     if downside_std == 0:
         return None
@@ -358,9 +346,7 @@ def _compute_exposure_pct(trades: list[dict], total_bars: int) -> float | None:
     return round(len(held_dates) / total_bars * 100, 2)
 
 
-# ---------------------------------------------------------------------------
-# Engine runner
-# ---------------------------------------------------------------------------
+# run one backtest through Engine
 
 def _run_backtest(
     code: str,
@@ -396,9 +382,7 @@ def _run_backtest(
     return engine.run()
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# downsample equity, drawdown series
 
 def _sample_series(series: list[dict], max_points: int = 200) -> list[dict]:
     """Down-sample a list of dicts to at most *max_points* entries.
@@ -433,9 +417,7 @@ def _derive_drawdown_series(equity_curve: list[dict]) -> list[dict]:
     return drawdowns
 
 
-# ---------------------------------------------------------------------------
-# Backtrader → Engine code translator
-# ---------------------------------------------------------------------------
+# mechanical bt -> engine code pass
 
 import re as _re
 
@@ -466,28 +448,24 @@ def _translate_bt_to_engine(code: str) -> str:
             translated.append(" " * indent + "# [removed: bt.ind not available] " + stripped)
             continue
 
-        # Class definition: bt.Strategy → StrategyBase
         line = _re.sub(
             r"class\s+(\w+)\s*\(\s*bt\.Strategy\s*\)\s*:",
             r"class \1(StrategyBase):",
             line,
         )
 
-        # Lifecycle methods
         line = _re.sub(r"def\s+__init__\s*\(\s*self\s*\)\s*:", "def on_init(self):", line)
         line = _re.sub(r"def\s+next\s*\(\s*self\s*\)\s*:", "def on_data(self, bar):", line)
 
-        # Data accessors → bar fields
         line = line.replace("self.data.close[0]", "bar.close")
         line = line.replace("self.data.high[0]", "bar.high")
         line = line.replace("self.data.low[0]", "bar.low")
         line = line.replace("self.data.open[0]", "bar.open")
 
-        # Position checks (order matters : do 'not self.position' before 'self.position')
+        # Rewrite flat/long checks — do the "not position" form first or regex breaks
         line = _re.sub(r"not\s+self\.position\b", "self.is_flat(bar.symbol)", line)
         line = _re.sub(r"\bself\.position\b", "self.is_long(bar.symbol)", line)
 
-        # Order methods
         line = _re.sub(
             r"\bself\.buy\s*\(\s*\)",
             "self.market_order(bar.symbol, max(1, int(self.portfolio.cash * 0.95 / bar.close)))",
@@ -501,17 +479,12 @@ def _translate_bt_to_engine(code: str) -> str:
     return "\n".join(translated)
 
 
-# ---------------------------------------------------------------------------
-# Celery task
-# ---------------------------------------------------------------------------
-
 @celery_app.task(bind=True, time_limit=300, soft_time_limit=240)
 def run_backtest_task(self, backtest_id: int):
     """Execute a backtest for a given strategy."""
     db = SessionLocal()
 
     try:
-        # -- fetch backtest record --
         backtest = db.query(Backtest).filter(Backtest.id == backtest_id).first()
         if not backtest:
             return {"error": "Backtest not found"}
@@ -532,7 +505,6 @@ def run_backtest_task(self, backtest_id: int):
         else:
             raise ValueError("Backtest has no code and no strategy_id")
 
-        # -- fetch market data --
         params = backtest.parameters or {}
         interval = params.get("interval", "1d")
         ticker = yf.Ticker(backtest.symbol)
@@ -545,12 +517,10 @@ def run_backtest_task(self, backtest_id: int):
         if data.empty:
             raise ValueError(f"No data found for symbol {backtest.symbol}")
 
-        # Strip timezone from the index so Backtrader's internal date math
-        # stays timezone-naive and produces dates matching yfinance's index.
+        # yfinance often ships tz-aware indexes; we stay naive so dates line up everywhere
         if data.index.tz is not None:
             data.index = data.index.tz_localize(None)
 
-        # Filter to valid trading days per asset type (exclude weekends/holidays for equities)
         data = filter_to_trading_days(data, backtest.symbol)
         if data.empty:
             raise ValueError(f"No trading-day data found for {backtest.symbol} (weekends/holidays excluded)")
@@ -573,19 +543,17 @@ def run_backtest_task(self, backtest_id: int):
             for ind in ["-USD", "BTC", "ETH", "SOL", "DOGE", "XRP"]
         )
 
-        # Resolve spread model: "auto" means volatility for crypto, none for equities
         user_spread = params.get("spread_model", "auto")
         if user_spread == "auto":
             resolved_spread = "volatility" if is_crypto else "none"
         else:
             resolved_spread = user_spread
 
-        # Resolve slippage model from user config
         user_slippage_model = params.get("slippage_model", "percentage")
         liquidity_tier = None
         if user_slippage_model == "auto":
             user_slippage_model = "volume_aware"
-            # Infer tier from avg daily volume (cost-only; never rejects orders)
+            # Guess liquidity bucket from dollar volume — only affects cost models
             try:
                 dollar_vol = (data["Volume"] * data["Close"]).dropna()
                 avg_daily_usd = float(dollar_vol.mean()) if len(dollar_vol) > 0 else 0
@@ -594,12 +562,10 @@ def run_backtest_task(self, backtest_id: int):
             except Exception:
                 liquidity_tier = "high"
 
-        # Margin settings
         margin_enabled = bool(params.get("margin_enabled", False))
         allow_shorts_without_margin = bool(params.get("allow_shorts_without_margin", False))
         leverage = float(params.get("leverage", 1))
 
-        # Funding rate config (crypto perpetuals)
         funding_enabled = bool(params.get("funding_enabled", is_crypto))
         funding_rate = float(params.get("funding_rate_annual_pct", 10.0))
 
@@ -627,9 +593,11 @@ def run_backtest_task(self, backtest_id: int):
         engine = Engine(engine_config)
         engine.add_data(backtest.symbol, data)
 
-        # Load additional symbols for multi-asset strategies
         extra_symbols = params.get("additional_symbols") or []
-        for extra_sym in extra_symbols[:5]:  # Cap at 5 extra symbols to limit load
+        failed_symbols: list[str] = []
+        # One aligned close series per symbol — we need them all for a fair blended benchmark
+        loaded_close_series: list[pd.Series] = [data["Close"].astype(float)]
+        for extra_sym in extra_symbols[:5]:  # hard cap so a typo can't fan out 50 downloads
             try:
                 extra_ticker = yf.Ticker(extra_sym)
                 extra_data = extra_ticker.history(
@@ -637,25 +605,30 @@ def run_backtest_task(self, backtest_id: int):
                     end=backtest.end_date,
                     interval=interval,
                 )
-                if not extra_data.empty:
-                    if extra_data.index.tz is not None:
-                        extra_data.index = extra_data.index.tz_localize(None)
-                    extra_data = filter_to_trading_days(extra_data, extra_sym)
-                    if not extra_data.empty:
-                        engine.add_data(extra_sym, extra_data)
+                if extra_data.empty:
+                    failed_symbols.append(extra_sym)
+                    continue
+                if extra_data.index.tz is not None:
+                    extra_data.index = extra_data.index.tz_localize(None)
+                extra_data = filter_to_trading_days(extra_data, extra_sym)
+                # Snap to the primary calendar (BTC weekends vs SPY holidays, etc.)
+                extra_data = extra_data.reindex(data.index).ffill()
+                if not extra_data.empty and extra_data["Close"].notna().any():
+                    engine.add_data(extra_sym, extra_data)
+                    loaded_close_series.append(extra_data["Close"].astype(float))
+                else:
+                    failed_symbols.append(extra_sym)
             except Exception:
-                pass  # Skip symbols that fail to download
+                failed_symbols.append(extra_sym)
 
         engine.set_strategy(strategy)
 
-        # Load benchmark first so we can compute alpha, beta, IR, R²
-        benchmark_symbol = params.get("benchmark_symbol") or backtest.symbol
+        # Benchmark returns feed CAPM stats — user override wins, else blend everything we loaded
+        explicit_benchmark = params.get("benchmark_symbol")
         benchmark_return = None
         try:
-            if benchmark_symbol == backtest.symbol:
-                bm_data = data
-            else:
-                bm_ticker = yf.Ticker(benchmark_symbol)
+            if explicit_benchmark and explicit_benchmark != backtest.symbol:
+                bm_ticker = yf.Ticker(explicit_benchmark)
                 bm_data = bm_ticker.history(
                     start=backtest.start_date,
                     end=backtest.end_date,
@@ -663,18 +636,38 @@ def run_backtest_task(self, backtest_id: int):
                 )
                 if bm_data.index.tz is not None:
                     bm_data.index = bm_data.index.tz_localize(None)
-                bm_data = filter_to_trading_days(bm_data, benchmark_symbol)
-            if not bm_data.empty and len(bm_data) >= 2:
+                bm_data = filter_to_trading_days(bm_data, explicit_benchmark)
                 bm_closes = bm_data["Close"].values.astype(float)
                 bm_daily_returns = list((bm_closes[1:] - bm_closes[:-1]) / bm_closes[:-1])
                 bm_daily_returns = [r for r in bm_daily_returns if np.isfinite(r)]
                 engine.set_benchmark_returns(bm_daily_returns)
-                first_close = float(bm_closes[0])
-                last_close = float(bm_closes[-1])
+                first_close, last_close = float(bm_closes[0]), float(bm_closes[-1])
                 if first_close > 0:
-                    benchmark_return = round(
-                        ((last_close - first_close) / first_close) * 100, 4
-                    )
+                    benchmark_return = round((last_close - first_close) / first_close * 100, 4)
+            elif len(loaded_close_series) > 1:
+                combined = pd.concat(loaded_close_series, axis=1).ffill().dropna()
+                if len(combined) >= 2:
+                    daily_ret_matrix = combined.pct_change().iloc[1:]
+                    blended_returns = daily_ret_matrix.mean(axis=1)
+                    bm_daily_returns = [r for r in blended_returns.tolist() if np.isfinite(r)]
+                    engine.set_benchmark_returns(bm_daily_returns)
+                    per_asset_returns = [
+                        (float(s.dropna().iloc[-1]) / float(s.dropna().iloc[0]) - 1)
+                        for s in loaded_close_series
+                        if len(s.dropna()) >= 2 and float(s.dropna().iloc[0]) > 0
+                    ]
+                    if per_asset_returns:
+                        benchmark_return = round(
+                            sum(per_asset_returns) / len(per_asset_returns) * 100, 4
+                        )
+            else:
+                bm_closes = data["Close"].values.astype(float)
+                bm_daily_returns = list((bm_closes[1:] - bm_closes[:-1]) / bm_closes[:-1])
+                bm_daily_returns = [r for r in bm_daily_returns if np.isfinite(r)]
+                engine.set_benchmark_returns(bm_daily_returns)
+                first_close, last_close = float(bm_closes[0]), float(bm_closes[-1])
+                if first_close > 0:
+                    benchmark_return = round((last_close - first_close) / first_close * 100, 4)
         except Exception:
             pass
 
@@ -686,8 +679,13 @@ def run_backtest_task(self, backtest_id: int):
 
         results_dict = result.to_results_dict()
         results_dict["benchmark_return"] = benchmark_return
+        results_dict["num_symbols"] = len(loaded_close_series)
+        if failed_symbols:
+            results_dict["warnings"] = [
+                f"Symbol '{s}' could not be loaded and was excluded from the backtest."
+                for s in failed_symbols
+            ]
 
-        # Backtest versioning: tie run to exact code, params, data, config for reproducibility
         from app.core.data_cache import compute_config_hash, compute_data_hash, compute_code_hash
         versioning = {
             "code_hash": compute_code_hash(strategy_code),
@@ -701,7 +699,6 @@ def run_backtest_task(self, backtest_id: int):
         }
         results_dict["versioning"] = versioning
 
-        # Map result fields to database columns (convert numpy to plain Python)
         def _safe(val, default=None):
             """Convert value to plain Python type, handling numpy scalars."""
             if val is None:
@@ -752,10 +749,6 @@ def run_backtest_task(self, backtest_id: int):
         db.close()
 
 
-# ---------------------------------------------------------------------------
-# Parameter Optimization (Grid Search) task
-# ---------------------------------------------------------------------------
-
 def _fetch_data(symbol: str, start_date, end_date, interval: str = "1d"):
     """Download market data (or serve from cache), returning a clean DataFrame or None.
 
@@ -802,7 +795,7 @@ def _run_single_backtest(
     Either pass a pre-fetched ``data`` DataFrame **or** ``symbol`` /
     ``start_date`` / ``end_date`` to let this helper download it.
     """
-    # Period params (fast/slow etc) need to be ints — pandas rolling() chokes on 14.78
+    # Integer-looking params must become real ints or pandas rolling() explodes on 14.0
     clean_combo = {}
     for k, v in param_combo.items():
         try:
@@ -817,7 +810,6 @@ def _run_single_backtest(
     except (ValueError, Exception) as e:
         return {"params": clean_combo, "error": _safe_task_error(e, "Optimization failed")}
 
-    # Use pre-fetched data if available, otherwise download
     if data is None:
         if symbol is None:
             return {"params": clean_combo, "error": "No symbol or data provided"}
@@ -825,7 +817,6 @@ def _run_single_backtest(
     if data is None or data.empty:
         return {"params": clean_combo, "error": "No market data for this window"}
 
-    # Determine primary symbol from data or fallback
     sym = symbol or "SYM"
     if hasattr(data, 'name') and data.name:
         sym = data.name
@@ -907,22 +898,20 @@ def run_optimization_task(
     """Grid search over parameter combinations."""
     import itertools
 
-    # Pre-fetch data once (shared across all combos)
+    # One download for the whole grid — each combo mutates a fresh copy
     data = _fetch_data(symbol, start_date, end_date, interval)
     if data is None or data.empty:
         return {"status": "failed", "error": "No market data for the selected date range"}
 
-    # Generate all combinations
     keys = list(param_grid.keys())
     values = [param_grid[k] for k in keys]
     combos = [dict(zip(keys, v)) for v in itertools.product(*values)]
 
-    # Limit to 500 combinations max
     if len(combos) > 500:
         combos = combos[:500]
 
     results = []
-    # Use thread pool for parallel execution (processes can't pickle Celery task)
+    # Threads, not processes — Celery tasks don't pickle cleanly across forks here
     from concurrent.futures import ThreadPoolExecutor, as_completed
     max_workers = min(4, len(combos))
 
@@ -953,7 +942,6 @@ def run_optimization_task(
                     meta={"current": len(results), "total": len(combos)},
                 )
 
-    # Sort by Sharpe ratio (best first), then by return
     valid_results = [r for r in results if "error" not in r and not r.get("constraint_violated")]
     valid_results.sort(
         key=lambda r: (r.get("sharpe_ratio") or -999, r.get("total_return", -999)),
@@ -1041,7 +1029,6 @@ def run_bayesian_optimization_task(
         if value is None or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
             return float("-inf")
 
-        # Report progress
         self.update_state(
             state="PROGRESS",
             meta={"current": len(all_results), "total": n_trials},
@@ -1054,7 +1041,6 @@ def run_bayesian_optimization_task(
     )
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
 
-    # Sort by objective metric
     valid_results = [r for r in all_results if "error" not in r and not r.get("constraint_violated")]
     valid_results.sort(
         key=lambda r: (r.get(objective_metric, r.get("sharpe_ratio", 0)) or -999),
@@ -1076,10 +1062,6 @@ def run_bayesian_optimization_task(
         "best": valid_results[0] if valid_results else None,
     }
 
-
-# ---------------------------------------------------------------------------
-# Genetic Algorithm Optimization task
-# ---------------------------------------------------------------------------
 
 @celery_app.task(bind=True, time_limit=900, soft_time_limit=840)
 def run_genetic_optimization_task(
@@ -1115,7 +1097,6 @@ def run_genetic_optimization_task(
     population_size = min(population_size, 200)
     n_generations = min(n_generations, 100)
 
-    # Build param info
     param_keys = list(param_ranges.keys())
     param_bounds = []
     param_types = []
@@ -1131,7 +1112,7 @@ def run_genetic_optimization_task(
             param_bounds.append((0, 100))
             param_types.append("float")
 
-    # DEAP setup : use unique names to avoid conflicts
+    # DEAP is picky — blow away stale fitness classes between runs
     if hasattr(creator, "GeneticFitness"):
         del creator.GeneticFitness
     if hasattr(creator, "GeneticIndividual"):
@@ -1142,7 +1123,6 @@ def run_genetic_optimization_task(
 
     toolbox = base.Toolbox()
 
-    # Register attribute generators for each parameter
     for i, (low, high) in enumerate(param_bounds):
         toolbox.register(f"attr_{i}", random.uniform, low, high)
 
@@ -1177,7 +1157,6 @@ def run_genetic_optimization_task(
         if "error" in result:
             return (float("-inf"),)
 
-        # Check constraints
         if constraints:
             violated = _check_constraints(result, constraints)
             if violated:
@@ -1194,7 +1173,6 @@ def run_genetic_optimization_task(
     toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=1, indpb=0.2)
     toolbox.register("select", tools.selTournament, tournsize=3)
 
-    # Clamp values after crossover/mutation
     def clamp(individual):
         for i in range(len(individual)):
             low, high = param_bounds[i]
@@ -1204,7 +1182,6 @@ def run_genetic_optimization_task(
     random.seed(42)
     pop = toolbox.population(n=population_size)
 
-    # Evaluate initial population
     fitnesses = list(map(toolbox.evaluate, pop))
     for ind, fit in zip(pop, fitnesses):
         ind.fitness.values = fit
@@ -1213,7 +1190,6 @@ def run_genetic_optimization_task(
         offspring = toolbox.select(pop, len(pop))
         offspring = list(map(toolbox.clone, offspring))
 
-        # Crossover
         for c1, c2 in zip(offspring[::2], offspring[1::2]):
             if random.random() < crossover_prob:
                 toolbox.mate(c1, c2)
@@ -1222,14 +1198,12 @@ def run_genetic_optimization_task(
                 del c1.fitness.values
                 del c2.fitness.values
 
-        # Mutation
         for mut in offspring:
             if random.random() < mutation_prob:
                 toolbox.mutate(mut)
                 clamp(mut)
                 del mut.fitness.values
 
-        # Evaluate new individuals
         invalids = [ind for ind in offspring if not ind.fitness.valid]
         fitnesses = list(map(toolbox.evaluate, invalids))
         for ind, fit in zip(invalids, fitnesses):
@@ -1237,7 +1211,6 @@ def run_genetic_optimization_task(
 
         pop[:] = offspring
 
-        # Track best per generation
         best_fit = max(ind.fitness.values[0] for ind in pop)
         generation_history.append({"generation": gen + 1, "best_fitness": best_fit if best_fit != float("-inf") else None})
 
@@ -1261,10 +1234,6 @@ def run_genetic_optimization_task(
         "generation_history": generation_history,
     }
 
-
-# ---------------------------------------------------------------------------
-# Multi-Objective Optimization task
-# ---------------------------------------------------------------------------
 
 @celery_app.task(bind=True, time_limit=600, soft_time_limit=540)
 def run_multiobjective_optimization_task(
@@ -1352,7 +1321,7 @@ def run_multiobjective_optimization_task(
     )
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
 
-    # Extract Pareto front
+    # Non-dominated trials only
     pareto_front = []
     for trial in study.best_trials:
         pf_entry = {"values": {m: v for m, v in zip(objective_metrics, trial.values)}}
@@ -1373,10 +1342,6 @@ def run_multiobjective_optimization_task(
     }
 
 
-# ---------------------------------------------------------------------------
-# Parameter Heatmap task
-# ---------------------------------------------------------------------------
-
 def _heatmap_build_grid(r: dict) -> list[float]:
     """Evenly-spaced param values from a range (low, high, steps)."""
     low = float(r.get("low", 5))
@@ -1394,10 +1359,10 @@ def _heatmap_build_grid(r: dict) -> list[float]:
         for i in range(steps)
     ]
 
-    # When low/high are whole numbers, snap grid to ints — avoids rolling(14.78) type errors
+    # Whole-number ranges should produce int steps so rolling windows stay happy
     if use_int:
         values = [int(round(v)) for v in values]
-        # Dedupe in case we get repeats (small range + lots of steps)
+        # Thin duplicates when the grid is tight
         seen = set()
         values = [v for v in values if not (v in seen or seen.add(v))]
 
@@ -1674,10 +1639,6 @@ def run_heatmap_task(
     )
 
 
-# ---------------------------------------------------------------------------
-# Walk-Forward Analysis task
-# ---------------------------------------------------------------------------
-
 @celery_app.task(bind=True, time_limit=900, soft_time_limit=840, autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 2})
 def run_walk_forward_task(
     self,
@@ -1878,10 +1839,6 @@ def run_walk_forward_task(
     }
 
 
-# ---------------------------------------------------------------------------
-# Monte Carlo Simulation task
-# ---------------------------------------------------------------------------
-
 @celery_app.task(bind=True, time_limit=300, soft_time_limit=240)
 def run_monte_carlo_task(
     self,
@@ -1899,10 +1856,10 @@ def run_monte_carlo_task(
     n_steps = 100  # normalised curve length
 
     final_values = []
-    # Store a few equity curves for visualisation (10 paths)
+    # Keep a handful of sample paths for the chart (10)
     sample_curves: list[list[float]] = []
     sample_indices = set(range(0, n_simulations, max(1, n_simulations // 10)))
-    # Collect all curves downsampled to n_steps for per-step percentiles
+    # Resample every path to n_steps so percentiles line up
     all_curves: list[list[float]] = []
 
     for i in range(n_simulations):
@@ -1914,7 +1871,7 @@ def run_monte_carlo_task(
             curve.append(round(equity, 2))
         final_values.append(equity)
 
-        # Downsample to n_steps for fan chart
+        # Fan chart wants a fixed number of x positions
         if len(curve) > n_steps:
             step = len(curve) / n_steps
             downsampled = [curve[round(j * step)] for j in range(n_steps)]
@@ -1937,7 +1894,7 @@ def run_monte_carlo_task(
         "p95": round(float(np.percentile(fv, 95)), 2),
     }
 
-    # Per-step percentile curves for the fan chart (shape: n_steps each)
+    # p05 / p50 / p95 through time
     curves_matrix = np.array(all_curves)  # (n_simulations, n_steps)
     percentile_curves = {
         "p5":  [round(float(v), 2) for v in np.percentile(curves_matrix, 5, axis=0)],
@@ -1958,10 +1915,6 @@ def run_monte_carlo_task(
         "probability_of_loss": round(float(np.mean(fv < initial_capital)) * 100, 2),
     }
 
-
-# ---------------------------------------------------------------------------
-# Batch Strategy Runner
-# ---------------------------------------------------------------------------
 
 @celery_app.task(bind=True, time_limit=1800, soft_time_limit=1740)
 def run_batch_backtest_task(
@@ -2002,7 +1955,7 @@ def run_batch_backtest_task(
             meta={"current": i + 1, "total": len(strategies[:20])},
         )
 
-    # Sort by Sharpe
+    # Best Sharpe on top
     valid = [r for r in results if "error" not in r]
     valid.sort(key=lambda r: (r.get("sharpe_ratio") or -999), reverse=True)
     errors = [r for r in results if "error" in r]
@@ -2015,9 +1968,7 @@ def run_batch_backtest_task(
     }
 
 
-# ---------------------------------------------------------------------------
-# Out-of-Sample Enforcement
-# ---------------------------------------------------------------------------
+# IS/OOS + k-fold helpers
 
 def _run_kfold_oos(
     code: str,
@@ -2134,7 +2085,7 @@ def run_oos_validation_task(
     if data is None or data.empty:
         return {"status": "failed", "error": "No market data"}
 
-    # Split data
+    # In-sample vs out-of-sample slices
     n = len(data)
     split_idx = int(n * (1 - oos_ratio))
     is_data = data.iloc[:split_idx]
@@ -2143,7 +2094,7 @@ def run_oos_validation_task(
     if is_data.empty or oos_data.empty:
         return {"status": "failed", "error": "Not enough data for IS/OOS split"}
 
-    # K-fold cross-validation (report mean ± std across folds)
+    # K folds — we'll average metrics across them
     if n_folds > 1 and param_ranges:
         return _run_kfold_oos(
             code=code, data=data, symbol=symbol,
@@ -2158,7 +2109,7 @@ def run_oos_validation_task(
     oos_start = str(oos_data.index[0].date()) if hasattr(oos_data.index[0], 'date') else str(oos_data.index[0])
     oos_end = str(oos_data.index[-1].date()) if hasattr(oos_data.index[-1], 'date') else str(oos_data.index[-1])
 
-    # If no param_ranges, just run IS and OOS with default params
+    # Nothing to tune? Still compare IS vs OOS on defaults
     if not param_ranges:
         is_result = _run_single_backtest(
             code=code, initial_capital=initial_capital,
@@ -2180,7 +2131,7 @@ def run_oos_validation_task(
             "overfit_score": None,
         }
 
-    # Optimize on IS data
+    # Grid search only on the in-sample window
     try:
         import optuna
         optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -2220,21 +2171,21 @@ def run_oos_validation_task(
 
     best_params = study.best_params if study.best_trial else {}
 
-    # Run best params on OOS
+    # Walk the winner forward on unseen data
     oos_result = _run_single_backtest(
         code=code, initial_capital=initial_capital,
         commission=commission, slippage=slippage,
         param_combo=best_params, data=oos_data.copy(), symbol=symbol,
     )
 
-    # Run best params on IS for comparison
+    # Same params back on IS — sanity check the peak wasn't a fluke
     is_best = _run_single_backtest(
         code=code, initial_capital=initial_capital,
         commission=commission, slippage=slippage,
         param_combo=best_params, data=is_data.copy(), symbol=symbol,
     )
 
-    # Compute overfit score and multiple-testing note
+    # How much Sharpe deflates OOS vs IS, plus a gentle multiple-testing warning
     is_sharpe = is_best.get("sharpe_ratio", 0) or 0
     oos_sharpe = oos_result.get("sharpe_ratio", 0) or 0
     overfit_score = None
@@ -2259,10 +2210,6 @@ def run_oos_validation_task(
         "total_is_trials": len(is_results),
     }
 
-
-# ---------------------------------------------------------------------------
-# Combinatorial Purged Cross-Validation (CPCV)
-# ---------------------------------------------------------------------------
 
 @celery_app.task(bind=True, time_limit=1200, soft_time_limit=1140)
 def run_cpcv_task(
@@ -2319,14 +2266,12 @@ def run_cpcv_task(
             ),
         }
 
-    # Build group boundaries: list of (start_idx, end_idx) for each group
     groups = []
     for g in range(n_groups):
         g_start = g * group_size
         g_end = (g + 1) * group_size if g < n_groups - 1 else total_bars
         groups.append((g_start, g_end))
 
-    # All combinations of test groups
     combos = list(combinations(range(n_groups), n_test_groups))
     max_combos = 120
     if len(combos) > max_combos:
@@ -2370,17 +2315,16 @@ def run_cpcv_task(
         test_indices_set = set(test_group_indices)
         train_group_indices = [g for g in range(n_groups) if g not in test_indices_set]
 
-        # Build train indices with purging and embargo
         train_idx = []
         for g in train_group_indices:
             g_start, g_end = groups[g]
 
-            # Purge: remove bars at the end of a train group that borders a test group
+            # Trim the tail of a train chunk if it touches the next test chunk
             purge_end = 0
             if (g + 1) in test_indices_set:
                 purge_end = purge_bars + embargo_bars
 
-            # Purge: remove bars at the start of a train group that borders a test group
+            # Same idea on the leading edge
             purge_start = 0
             if (g - 1) in test_indices_set:
                 purge_start = purge_bars + embargo_bars
@@ -2391,7 +2335,6 @@ def run_cpcv_task(
             if adj_start < adj_end:
                 train_idx.extend(range(adj_start, adj_end))
 
-        # Build test indices (no purging needed on test)
         test_idx = []
         for g in test_group_indices:
             g_start, g_end = groups[g]
@@ -2442,7 +2385,6 @@ def run_cpcv_task(
     if not path_results:
         return {"status": "failed", "error": "No valid CPCV paths could be evaluated"}
 
-    # Aggregate OOS statistics
     oos_sharpes = [p["test_sharpe"] for p in path_results if p["test_sharpe"] is not None]
     oos_returns = [p["test_return"] for p in path_results if p["test_return"] is not None]
     train_sharpes = [p["train_sharpe"] for p in path_results if p["train_sharpe"] is not None]
@@ -2453,10 +2395,8 @@ def run_cpcv_task(
     oos_return_mean = round(float(np.mean(oos_returns)), 4) if oos_returns else None
     train_sharpe_mean = round(float(np.mean(train_sharpes)), 4) if train_sharpes else None
 
-    # Probability of OOS loss (negative Sharpe)
     prob_oos_loss = round(float(np.mean(np.array(oos_sharpes) < 0)) * 100, 1) if oos_sharpes else None
 
-    # Overfit score: how much Sharpe degrades IS → OOS
     overfit_score = None
     if train_sharpe_mean and train_sharpe_mean > 0 and oos_sharpe_mean is not None:
         overfit_score = round(max(0, 1 - (oos_sharpe_mean / train_sharpe_mean)) * 100, 1)
@@ -2481,20 +2421,14 @@ def run_cpcv_task(
     }
 
 
-# ---------------------------------------------------------------------------
-# Factor Attribution (multi-factor decomposition)
-# ---------------------------------------------------------------------------
-
 def _ols_regression(y: np.ndarray, X: np.ndarray) -> dict:
     """Ordinary least-squares via numpy. Returns coefficients, t-stats, p-values, R²."""
     from scipy import stats as sp_stats
 
     n, k = X.shape
-    # Add intercept column
     X_aug = np.column_stack([np.ones(n), X])
     k_aug = k + 1
 
-    # Beta = (X'X)^-1 X'y
     try:
         beta = np.linalg.lstsq(X_aug, y, rcond=None)[0]
     except np.linalg.LinAlgError:
@@ -2504,7 +2438,6 @@ def _ols_regression(y: np.ndarray, X: np.ndarray) -> dict:
     dof = max(n - k_aug, 1)
     mse = float(np.sum(residuals ** 2) / dof)
 
-    # Coefficient standard errors
     try:
         cov = mse * np.linalg.inv(X_aug.T @ X_aug)
         se = np.sqrt(np.diag(cov))
@@ -2556,13 +2489,11 @@ def run_factor_attribution_task(
     if not equity_curve or len(equity_curve) < 30:
         return {"status": "failed", "error": "Need at least 30 equity curve points for factor attribution"}
 
-    # Strategy daily returns
     equities = np.array([p["equity"] for p in equity_curve], dtype=float)
     dates = [p["date"] for p in equity_curve]
     strat_returns = np.diff(equities) / equities[:-1]
     strat_dates = dates[1:]
 
-    # Fetch factor proxy ETFs
     factor_etfs = ["SPY", "IWM", "IVE", "IVW", "MTUM"]
     factor_data = {}
     for etf in factor_etfs:
@@ -2581,7 +2512,6 @@ def run_factor_attribution_task(
 
     self.update_state(state="PROGRESS", meta={"current": 1, "total": 3})
 
-    # Fetch risk-free rate proxy
     rf_daily = 0.0
     try:
         irx = yf.Ticker("^IRX")
@@ -2592,7 +2522,6 @@ def run_factor_attribution_task(
     except Exception:
         pass
 
-    # Build aligned daily returns DataFrame
     strat_df = pd.DataFrame({"date": strat_dates, "strategy": strat_returns})
     strat_df["date"] = pd.to_datetime(strat_df["date"])
     strat_df = strat_df.set_index("date")
@@ -2604,14 +2533,12 @@ def run_factor_attribution_task(
         rets.index = pd.to_datetime(rets.index)
         factor_returns[etf] = rets
 
-    # Merge everything on common dates
     merged = strat_df.copy()
     for etf in factor_etfs:
         if etf in factor_returns:
             col = factor_returns[etf].rename(etf)
             merged = merged.join(col, how="inner")
 
-    # Drop rows with NaN
     available_factors = [f for f in factor_etfs if f in merged.columns]
     merged = merged.dropna(subset=["strategy"] + available_factors)
 
@@ -2620,29 +2547,24 @@ def run_factor_attribution_task(
 
     self.update_state(state="PROGRESS", meta={"current": 2, "total": 3})
 
-    # Construct factor series from ETF proxies
     factor_names = []
     factor_cols = []
 
-    # Market excess return
     if "SPY" in merged.columns:
         merged["Mkt_RF"] = merged["SPY"] - rf_daily
         factor_names.append("Market (Mkt-RF)")
         factor_cols.append("Mkt_RF")
 
-    # SMB (Size): small minus big
     if "IWM" in merged.columns and "SPY" in merged.columns:
         merged["SMB"] = merged["IWM"] - merged["SPY"]
         factor_names.append("Size (SMB)")
         factor_cols.append("SMB")
 
-    # HML (Value): value minus growth
     if "IVE" in merged.columns and "IVW" in merged.columns:
         merged["HML"] = merged["IVE"] - merged["IVW"]
         factor_names.append("Value (HML)")
         factor_cols.append("HML")
 
-    # Momentum
     if "MTUM" in merged.columns and "SPY" in merged.columns:
         merged["MOM"] = merged["MTUM"] - merged["SPY"]
         factor_names.append("Momentum (MOM)")
@@ -2651,7 +2573,6 @@ def run_factor_attribution_task(
     if not factor_cols:
         return {"status": "failed", "error": "No factor data could be constructed"}
 
-    # Dependent variable: strategy excess return
     y = (merged["strategy"] - rf_daily).values
     X = merged[factor_cols].values
 
@@ -2661,12 +2582,10 @@ def run_factor_attribution_task(
 
     self.update_state(state="PROGRESS", meta={"current": 3, "total": 3})
 
-    # Parse results
     alpha_daily = reg["beta"][0]
     alpha_annual = round(((1 + alpha_daily) ** 252 - 1) * 100, 4)
     factor_betas = reg["beta"][1:]
 
-    # Factor contributions: mean daily factor return × beta × 252 (annualized)
     contributions = []
     for i, (name, col) in enumerate(zip(factor_names, factor_cols)):
         mean_factor = float(merged[col].mean())
@@ -2682,12 +2601,10 @@ def run_factor_attribution_task(
             "annual_contribution_pct": annual_contrib,
         })
 
-    # Total strategy annualized return for comparison
     total_strat_return = round(float((equities[-1] / equities[0] - 1) * 100), 4)
     n_days = len(merged)
     annual_strat_return = round(float(((equities[-1] / equities[0]) ** (252 / max(n_days, 1)) - 1) * 100), 4)
 
-    # Sum of factor contributions
     factor_sum = sum(c["annual_contribution_pct"] for c in contributions)
     unexplained = round(alpha_annual, 4)
 

@@ -1,4 +1,4 @@
-// User types
+// App-wide shapes the API returns (users, profiles, billing, …)
 export interface User {
   id: number;
   email: string;
@@ -21,7 +21,7 @@ export interface NotificationPreferences {
   email_marketing: boolean;
 }
 
-// Strategy group types
+// Lab folders / strategy groups
 export interface StrategyGroup {
   id: number;
   name: string;
@@ -49,7 +49,7 @@ export interface ForkGroupResponse {
   forked_count: number;
 }
 
-// Strategy types
+// Saved strategy payloads
 export interface Strategy {
   id: number;
   share_token: string;
@@ -78,10 +78,11 @@ export interface StrategyCreate {
   group_id?: number | null;
 }
 
-// Backtest types
+// Backtests, optimization jobs, shared results
 export type BacktestStatus = 'pending' | 'running' | 'completed' | 'failed';
 
 export interface BacktestTrade {
+  symbol?: string;
   entry_date: string;
   exit_date: string;
   entry_price: number;
@@ -236,7 +237,7 @@ export interface BacktestCreate {
   interval?: string;
 }
 
-// Competition types
+// Competitions & leaderboards
 export interface CompetitionSummary {
   id: number;
   title: string;
@@ -363,7 +364,7 @@ export interface EquityCurvesResponse {
   curves: EquityCurveEntry[];
 }
 
-// Proposal & Voting types
+// Community proposals / votes
 export interface CompetitionProposal {
   id: number;
   title: string;
@@ -387,7 +388,7 @@ export interface ProposalsResponse {
   proposals: CompetitionProposal[];
 }
 
-// Social types
+// Friends, activity feed, notifications
 export interface Vote {
   id: number;
   user_id: number;
@@ -406,7 +407,7 @@ export interface Comment {
   updated_at: string;
 }
 
-// Forum types
+// Forum threads & posts
 export interface ForumTopicResponse {
   id: number;
   slug: string;
@@ -519,7 +520,7 @@ export interface ForumActivityItem {
   created_at: string | null;
 }
 
-// Blog types
+// CMS / blog posts
 export interface BlogPostSummary {
   id: number;
   title: string;
@@ -548,7 +549,7 @@ export interface BlogComment {
   updated_at: string | null;
 }
 
-// Follow types
+// Follow graph
 export interface FollowStats {
   follower_count: number;
   following_count: number;
@@ -574,7 +575,7 @@ export interface FeedItem {
   extra: Record<string, unknown>;
 }
 
-// Endorsement types
+// Skill endorsements
 export interface SkillEndorsement {
   skill: string;
   label: string;
@@ -582,7 +583,7 @@ export interface SkillEndorsement {
   endorsed_by_you: boolean;
 }
 
-// Auth types
+// Login / register payloads
 export interface Token {
   access_token: string;
   refresh_token: string;
@@ -601,7 +602,7 @@ export interface RegisterData {
   full_name?: string;
 }
 
-// Analytics result types
+// Walk-forward, CPCV, factors, etc.
 
 export interface OptimizeResults {
   status?: string;
@@ -614,7 +615,7 @@ export interface OptimizeResults {
     [key: string]: unknown;
   }>;
   heatmap?: Array<{ x: number; y: number; value: number }>;
-  /** Parameter heatmap grid format (from optimize/heatmap task) */
+  /** 2-D grid coming back from the heatmap worker */
   param_x?: string;
   param_y?: string;
   x_values?: number[];
@@ -627,23 +628,20 @@ export interface OptimizeResults {
   optimal?: { xi: number; yi: number; value: number; [k: string]: number };
   diagnostics?: Array<{ reason: string; [k: string]: unknown }>;
   warning?: string;
-  /** First combo that failed (for debugging) */
+  /** When the grid blows up mid-run, we stash the first bad cell here */
   first_failing_combo?: Record<string, number>;
 }
 
 export interface WalkForwardWindow {
   window?: number;
-  // Period objects (backend format)
   train_period?: { start: string; end: string };
   test_period?: { start: string; end: string };
-  // Flat fields (legacy / splits format)
   train_start?: string;
   train_end?: string;
   oos_start?: string;
   test_start?: string;
   oos_end?: string;
   test_end?: string;
-  // Metrics
   train_return?: number;
   test_return?: number;
   oos_return?: number;
