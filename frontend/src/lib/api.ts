@@ -897,7 +897,7 @@ class ApiClient {
     return response.data;
   }
 
-  async searchSymbols(query: string): Promise<{ results: string[] }> {
+  async searchSymbols(query: string): Promise<{ results: { symbol: string; name: string }[] }> {
     const response = await this.client.get('/market-data/search', {
       params: { q: query },
     });

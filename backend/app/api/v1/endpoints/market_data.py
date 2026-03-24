@@ -127,24 +127,60 @@ def _effective_interval(requested: str, start: str, end: str) -> str:
 @limiter.limit("60/minute")
 def search_symbols(
     request: Request,
-    q: str = Query(..., min_length=1, max_length=20, description="Search query"),
+    q: str = Query(..., min_length=1, max_length=50, description="Search query"),
 ):
-    """Search for valid ticker symbols. Returns matching known symbols
-    and validates unknown symbols via yfinance."""
-    q = q.upper().strip()
+    """Search for ticker symbols using Yahoo Finance search API."""
+    import requests as req
 
-    # First check known symbols
-    matches = [
-        s for s in sorted(KNOWN_SYMBOLS | _validated_symbols)
-        if q in s
-    ][:20]
+    q_clean = q.strip()
+    cache_key = f"symbol_search:{q_clean.lower()}"
 
-    # If exact match not found, try to validate via yfinance
-    if q not in matches and len(q) >= 1:
-        if _validate_and_cache_symbol(q):
-            matches.insert(0, q)
+    # Check Redis cache first
+    try:
+        r = _get_redis()
+        cached = r.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
 
-    return {"results": matches}
+    # Hit Yahoo Finance search API
+    try:
+        resp = req.get(
+            "https://query2.finance.yahoo.com/v1/finance/search",
+            params={
+                "q": q_clean,
+                "quotesCount": 10,
+                "newsCount": 0,
+                "listsCount": 0,
+                "enableFuzzyQuery": "false",
+            },
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        quotes = resp.json().get("quotes", [])
+        results = [
+            {
+                "symbol": quote["symbol"],
+                "name": quote.get("shortname") or quote.get("longname") or quote["symbol"],
+            }
+            for quote in quotes
+            if "symbol" in quote
+        ]
+    except Exception:
+        results = []
+
+    response_data = {"results": results}
+
+    # Cache for 1 hour
+    try:
+        r = _get_redis()
+        r.setex(cache_key, 3600, json.dumps(response_data))
+    except Exception:
+        pass
+
+    return response_data
 
 
 @router.get("/ohlcv")

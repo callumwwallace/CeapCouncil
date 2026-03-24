@@ -48,7 +48,7 @@ export default function MultiAssetSelector({
     const timer = setTimeout(async () => {
       try {
         const res = await api.searchSymbols(search);
-        setSearchResults((res.results || []).map((s: string) => ({ value: s, label: s })));
+        setSearchResults((res.results || []).map(r => ({ value: r.symbol, label: r.name || r.symbol })));
       } catch {
         setSearchResults([]);
       }

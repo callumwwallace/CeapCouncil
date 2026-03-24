@@ -129,7 +129,7 @@ export default function AssetSelector({ value, onChange, className = '', compact
   const [assetType, setAssetType] = useState<AssetType>(() => inferAssetType(value));
   const [search, setSearch] = useState('');
   const [showAssetDropdown, setShowAssetDropdown] = useState(false);
-  const [searchResults, setSearchResults] = useState<string[]>([]);
+  const [searchResults, setSearchResults] = useState<{ value: string; label: string }[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
   const assets = ASSETS_BY_TYPE[assetType];
@@ -147,7 +147,7 @@ export default function AssetSelector({ value, onChange, className = '', compact
     const timer = setTimeout(async () => {
       try {
         const res = await api.searchSymbols(search);
-        setSearchResults(res.results || []);
+        setSearchResults((res.results || []).map(r => ({ value: r.symbol, label: r.name || r.symbol })));
       } catch {
         setSearchResults([]);
       }
@@ -157,7 +157,7 @@ export default function AssetSelector({ value, onChange, className = '', compact
   }, [search]);
 
   const displayList = searchResults.length > 0
-    ? searchResults.map(s => ({ value: s, label: s }))
+    ? searchResults
     : assets.filter(a => !search || a.value.toUpperCase().includes(search.toUpperCase()) || a.label.toLowerCase().includes(search.toLowerCase()));
 
   const headerRef = useRef<HTMLDivElement>(null);
