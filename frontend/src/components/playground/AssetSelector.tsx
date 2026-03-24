@@ -15,7 +15,7 @@ export const ASSET_TYPES: { id: AssetType; label: string }[] = [
   { id: 'bonds', label: 'Bonds' },
 ];
 
-const ASSETS_BY_TYPE: Record<AssetType, { value: string; label: string }[]> = {
+export const ASSETS_BY_TYPE: Record<AssetType, { value: string; label: string }[]> = {
   stocks: [
     { value: 'AAPL', label: 'Apple Inc.' },
     { value: 'MSFT', label: 'Microsoft' },

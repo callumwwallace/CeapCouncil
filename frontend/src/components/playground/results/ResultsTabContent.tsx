@@ -22,6 +22,7 @@ import {
   AlertCircle,
   TrendingDown,
   Target,
+  Bell,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -51,7 +52,7 @@ import type { useAnalytics } from '@/app/playground/useAnalytics';
 
 type AnalyticsState = ReturnType<typeof useAnalytics>;
 
-type ResultsTab = 'summary' | 'trades' | 'orders' | 'charts' | 'compare' | 'optimize' | 'walkforward' | 'oos' | 'cpcv' | 'factors' | 'montecarlo' | 'risk' | 'tca' | 'heatmap' | 'distribution';
+type ResultsTab = 'summary' | 'trades' | 'orders' | 'charts' | 'alerts' | 'compare' | 'optimize' | 'walkforward' | 'oos' | 'cpcv' | 'factors' | 'montecarlo' | 'risk' | 'tca' | 'heatmap' | 'distribution';
 
 interface ResultsTabContentProps {
   results: BacktestResult;
@@ -815,6 +816,40 @@ export default function ResultsTabContent({
                             (!results.custom_charts || Object.keys(results.custom_charts).length === 0) && (
                               <div className="text-center py-6 text-gray-400 text-xs">No chart data.</div>
                             )}
+                        </div>
+                      )}
+                      {activeResultsTab === 'alerts' && (
+                        <div className="space-y-1.5">
+                          {results.alerts && results.alerts.length > 0 ? (
+                            results.alerts.map((alert, i) => {
+                              const levelStyles = {
+                                critical: 'bg-red-50 border-red-200 text-red-700',
+                                warning:  'bg-amber-50 border-amber-200 text-amber-700',
+                                info:     'bg-blue-50 border-blue-200 text-blue-700',
+                              }[alert.level] ?? 'bg-gray-50 border-gray-200 text-gray-700';
+                              const badgeStyles = {
+                                critical: 'bg-red-100 text-red-700',
+                                warning:  'bg-amber-100 text-amber-700',
+                                info:     'bg-blue-100 text-blue-700',
+                              }[alert.level] ?? 'bg-gray-100 text-gray-600';
+                              return (
+                                <div key={i} className={`rounded-lg border px-3 py-2 ${levelStyles}`}>
+                                  <div className="flex items-center justify-between gap-2 mb-0.5">
+                                    <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${badgeStyles}`}>
+                                      {alert.level}
+                                    </span>
+                                    <span className="text-[10px] font-mono text-gray-400 shrink-0">{alert.timestamp}</span>
+                                  </div>
+                                  <p className="text-[11px] leading-snug">{alert.message}</p>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div className="flex flex-col items-center justify-center py-10 text-gray-400 gap-2">
+                              <Bell className="h-5 w-5 opacity-40" />
+                              <span className="text-xs">No alerts fired during this backtest.</span>
+                            </div>
+                          )}
                         </div>
                       )}
                       {activeResultsTab === 'optimize' && (

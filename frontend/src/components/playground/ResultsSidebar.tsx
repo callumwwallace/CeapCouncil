@@ -22,6 +22,7 @@ import {
   BarChart2,
   GitCompare,
   Activity,
+  Bell,
 } from 'lucide-react';
 import type { BacktestResult } from '@/app/playground/types';
 import type { ExtractedParam } from '@/app/playground/extractParams';
@@ -35,6 +36,7 @@ type ResultsTab =
   | 'trades'
   | 'orders'
   | 'charts'
+  | 'alerts'
   | 'compare'
   | 'optimize'
   | 'walkforward'
@@ -152,11 +154,13 @@ export default function ResultsSidebar({
   }
 
   // Primary tab nav
-  const primaryTabs: { id: ResultsTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  const alertCount = results.alerts?.length ?? 0;
+  const primaryTabs: { id: ResultsTab; label: string; icon: React.ComponentType<{ className?: string }>; badge?: number }[] = [
     { id: 'summary', label: 'Summary', icon: LayoutDashboard },
     { id: 'trades', label: 'Trades', icon: ArrowLeftRight },
     { id: 'orders', label: 'Orders', icon: ListOrdered },
     { id: 'charts', label: 'Charts', icon: LineChartIcon },
+    { id: 'alerts', label: 'Alerts', icon: Bell, badge: alertCount },
   ];
 
   const analysisTabs: { id: ResultsTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -455,7 +459,7 @@ export default function ResultsSidebar({
 
         {/* Primary tabs */}
         <div className="flex">
-          {primaryTabs.map(({ id, label, icon: Icon }) => (
+          {primaryTabs.map(({ id, label, icon: Icon, badge }) => (
             <button
               key={id}
               onClick={() => { onTabChange(id); setShowAnalysisTabs(false); }}
@@ -465,7 +469,14 @@ export default function ResultsSidebar({
                   : 'border-transparent text-gray-400 hover:text-gray-700 hover:bg-gray-100/60'
               }`}
             >
-              <Icon className="h-3.5 w-3.5" />
+              <div className="relative">
+                <Icon className="h-3.5 w-3.5" />
+                {badge != null && badge > 0 && (
+                  <span className="absolute -top-1 -right-1.5 min-w-[10px] h-[10px] px-0.5 rounded-full bg-amber-400 text-[7px] font-bold text-white flex items-center justify-center leading-none">
+                    {badge > 99 ? '99+' : badge}
+                  </span>
+                )}
+              </div>
               <span className="uppercase tracking-wide">{label}</span>
             </button>
           ))}

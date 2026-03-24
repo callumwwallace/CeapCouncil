@@ -521,10 +521,14 @@ export default function DocsPage() {
                   />
                   <MethodCard
                     signature="on_data(self, bar: BarData) → None"
-                    description="Called on each new bar (after warm-up completes). This is where your main trading logic goes — compute indicators, check signals, and place orders. This method is abstract and must be implemented."
+                    description="Called once per bar (after warm-up completes) with the primary symbol's bar data. This is where your main trading logic goes — compute indicators, check signals, and place orders. This method is abstract and must be implemented."
                   >
                     <div className="mt-2 px-2 py-1 bg-red-50 border border-red-100 rounded text-xs text-red-700">
                       Required — your strategy won&apos;t compile without this method.
+                    </div>
+                    <div className="mt-2 px-2 py-1 bg-blue-50 border border-blue-100 rounded text-xs text-blue-700">
+                      <strong>Multi-asset:</strong> <code className="bg-blue-100 px-0.5 rounded">bar</code> always carries the <em>primary</em> symbol.
+                      Access additional symbols with <code className="bg-blue-100 px-0.5 rounded">self.history(&apos;OTHERSYM&apos;, n)</code>.
                     </div>
                   </MethodCard>
                   <MethodCard
@@ -656,7 +660,7 @@ sma_series = SMA(period=20).series(closes)   # → numpy array`} />
                       { method: 'VWAP()(high=, low=, close=, volume=)', description: 'Volume-Weighted Average Price → float' },
                       { method: 'BollingerBands(period=20, num_std=2.0)(closes)', description: '→ {"upper", "middle", "lower"}' },
                       { method: 'KeltnerChannel()(high=, low=, close=)', description: '→ {"upper", "middle", "lower"}' },
-                      { method: 'DonchianChannel(period=20)(high=, low=)', description: '→ {"highest", "lowest"}' },
+                      { method: 'DonchianChannel(period=20)(high=, low=)', description: '→ {"upper", "middle", "lower"}' },
                       { method: 'IchimokuCloud()(high=, low=, close=)', description: 'Ichimoku Cloud components' },
                       { method: 'ParabolicSAR()(high=, low=, close=)', description: 'Parabolic Stop and Reverse → float' },
                       { method: 'Envelope(period=20, pct=2.5)(closes)', description: 'Price envelope → {"upper", "lower"}' },
@@ -912,6 +916,12 @@ qty = self.portfolio.get_position_quantity(bar.symbol)`} />
                   Aggregate lower-timeframe bars into higher timeframes directly in your strategy.
                   Consolidators are available as global classes — no imports needed.
                 </p>
+                <Callout type="tip">
+                  There is no automatic <code className="bg-emerald-100 px-1 rounded">on_consolidated_bar</code> hook.
+                  You must feed each bar manually by calling <code className="bg-emerald-100 px-1 rounded">consolidator.update(bar)</code>
+                  inside <code className="bg-emerald-100 px-1 rounded">on_data</code>. The callback you pass to the constructor is
+                  invoked automatically once a consolidated bar is ready.
+                </Callout>
 
                 <div className="space-y-4">
                   <MethodCard
@@ -1066,6 +1076,7 @@ def on_data(self, bar):
                       <li><code className="bg-red-100 px-1 rounded">multiprocessing</code>, <code className="bg-red-100 px-1 rounded">threading</code></li>
                       <li>Builtins: <code className="bg-red-100 px-1 rounded">exec</code>, <code className="bg-red-100 px-1 rounded">eval</code>, <code className="bg-red-100 px-1 rounded">compile</code>, <code className="bg-red-100 px-1 rounded">open</code>, <code className="bg-red-100 px-1 rounded">input</code></li>
                       <li>Builtins: <code className="bg-red-100 px-1 rounded">__import__</code>, <code className="bg-red-100 px-1 rounded">globals</code>, <code className="bg-red-100 px-1 rounded">getattr</code>, <code className="bg-red-100 px-1 rounded">setattr</code></li>
+                      <li>Builtins: <code className="bg-red-100 px-1 rounded">super</code>, <code className="bg-red-100 px-1 rounded">type</code></li>
                       <li>All <code className="bg-red-100 px-1 rounded">__dunder__</code> attribute access</li>
                     </ul>
                   </div>
@@ -1076,6 +1087,11 @@ def on_data(self, bar):
                     The history buffer holds <strong>500 bars</strong> per symbol by default. If your strategy needs a longer lookback,
                     call <code className="bg-amber-100 px-1 rounded">self.set_history_length(n)</code> in <code className="bg-amber-100 px-1 rounded">on_init</code> to raise the limit.
                     Note that larger buffers use more memory, so set only what you actually need.
+                  </Callout>
+                  <Callout type="warning">
+                    <strong><code className="bg-amber-100 px-1 rounded">super()</code> and <code className="bg-amber-100 px-1 rounded">type()</code> are blocked</strong> in the sandbox.
+                    Do not define <code className="bg-amber-100 px-1 rounded">__init__</code> — use <code className="bg-amber-100 px-1 rounded">on_init(self)</code> for all setup instead.
+                    Calling <code className="bg-amber-100 px-1 rounded">super().__init__()</code> will raise a sandbox error at runtime.
                   </Callout>
                 </div>
               </section>

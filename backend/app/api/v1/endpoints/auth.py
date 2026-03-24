@@ -117,7 +117,7 @@ async def register(request: Request, user_in: UserCreate, db: AsyncSession = Dep
         str(user.id),
     )
     html = send_verification_email(user_in.email, token)
-    await send_email(user_in.email, "Verify your QuantGuild email", html)
+    await send_email(user_in.email, "Verify your Ceap Council email", html)
 
     return user
 
@@ -212,7 +212,7 @@ async def resend_verification(request: Request, body: ResendVerificationRequest,
     token = secrets.token_urlsafe(32)
     await redis_client.setex(f"{_EMAIL_VERIFY_PREFIX}{token}", _EMAIL_VERIFY_TTL, str(user.id))
     html = send_verification_email(user.email, token)
-    await send_email(user.email, "Verify your QuantGuild email", html)
+    await send_email(user.email, "Verify your Ceap Council email", html)
     return {"message": "If an account exists with this email, a verification link has been sent"}
 
 
@@ -233,7 +233,7 @@ async def forgot_password(
             str(user.id),
         )
         html = send_reset_email_body(user.email, token)
-        await send_email(user.email, "Reset your QuantGuild password", html)
+        await send_email(user.email, "Reset your Ceap Council password", html)
     return {"message": "If an account exists with this email, a password reset link has been sent"}
 
 

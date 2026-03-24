@@ -10,8 +10,6 @@ export interface BacktestConfig {
   slippage: number; // percentage (e.g. 0.1 = 0.1%)
   commission: number; // percentage (e.g. 0.1 = 0.1%)
   brokerPreset?: BrokerPreset;
-  sizingMethod: 'full' | 'percent_equity' | 'fixed_shares' | 'fixed_dollar';
-  sizingValue: number | null;
   stopLossPct: number | null;
   takeProfitPct: number | null;
   benchmarkSymbol: string | null;

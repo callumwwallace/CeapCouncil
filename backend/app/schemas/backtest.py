@@ -15,9 +15,6 @@ class BacktestCreate(BaseModel):
     parameters: dict = Field(default_factory=dict)
     slippage: float = Field(default=0.001, ge=0, le=0.1)  # 0.1% default, max 10%
     commission: float = Field(default=0.001, ge=0, le=0.05)  # 0.1% default, max 5%
-    # Position sizing
-    sizing_method: str = Field(default="full", pattern=r"^(full|percent_equity|fixed_shares|fixed_dollar)$")
-    sizing_value: float | None = Field(default=None, ge=0)
     # Risk management
     stop_loss_pct: float | None = Field(default=None, ge=0, le=50)
     take_profit_pct: float | None = Field(default=None, ge=0, le=500)
@@ -68,8 +65,6 @@ class BacktestWithCodeCreate(BaseModel):
     parameters: dict = Field(default_factory=dict)
     slippage: float = Field(default=0.001, ge=0, le=0.1)
     commission: float = Field(default=0.001, ge=0, le=0.05)
-    sizing_method: str = Field(default="full", pattern=r"^(full|percent_equity|fixed_shares|fixed_dollar)$")
-    sizing_value: float | None = Field(default=None, ge=0)
     stop_loss_pct: float | None = Field(default=None, ge=0, le=50)
     take_profit_pct: float | None = Field(default=None, ge=0, le=500)
     benchmark_symbol: str | None = Field(default=None, max_length=20)

@@ -214,8 +214,6 @@ async def _create_backtest_impl(
         **data.get("parameters", {}),
         "slippage": data.get("slippage", 0.001),
         "commission": data.get("commission", 0.001),
-        "sizing_method": data.pop("sizing_method", "full"),
-        "sizing_value": data.pop("sizing_value", None),
         "stop_loss_pct": data.pop("stop_loss_pct", None),
         "take_profit_pct": data.pop("take_profit_pct", None),
         "benchmark_symbol": data.pop("benchmark_symbol", None),

@@ -230,8 +230,6 @@ export interface BacktestCreate {
   parameters?: Record<string, unknown>;
   slippage?: number;
   commission?: number;
-  sizing_method?: string;
-  sizing_value?: number | null;
   stop_loss_pct?: number | null;
   take_profit_pct?: number | null;
   benchmark_symbol?: string | null;

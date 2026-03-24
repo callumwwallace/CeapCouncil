@@ -41,7 +41,6 @@ import {
   BarChart2,
   GitCompare,
   Filter,
-  Layers,
   PieChart,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -57,7 +56,6 @@ const AssetChart = dynamic(() => import('@/components/playground/AssetChart').th
   loading: () => <div className="h-full flex items-center justify-center text-gray-500 text-sm">Loading chart…</div>,
 });
 import StatusBar from '@/components/playground/StatusBar';
-import AssetSelector from '@/components/playground/AssetSelector';
 import ConfigSelect from '@/components/playground/ConfigSelect';
 import ChartHeader from '@/components/playground/ChartHeader';
 import ResultsSidebar from '@/components/playground/ResultsSidebar';
@@ -132,8 +130,6 @@ export default function PlaygroundPage() {
     initialCapital: 10000,
     slippage: 0.1, // 0.1%
     commission: 0.1, // 0.1%
-    sizingMethod: 'full',
-    sizingValue: null,
     stopLossPct: null,
     takeProfitPct: null,
     benchmarkSymbol: null,
@@ -157,14 +153,14 @@ export default function PlaygroundPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [lastRunTime, setLastRunTime] = useState<string | null>(null);
-  const [activeResultsTab, setActiveResultsTab] = useState<'summary' | 'trades' | 'orders' | 'charts' | 'compare' | 'optimize' | 'walkforward' | 'oos' | 'cpcv' | 'factors' | 'montecarlo' | 'risk' | 'tca' | 'heatmap' | 'distribution'>('summary');
+  const [activeResultsTab, setActiveResultsTab] = useState<'summary' | 'trades' | 'orders' | 'charts' | 'alerts' | 'compare' | 'optimize' | 'walkforward' | 'oos' | 'cpcv' | 'factors' | 'montecarlo' | 'risk' | 'tca' | 'heatmap' | 'distribution'>('summary');
   const [showCostsSection, setShowCostsSection] = useState(false);
   const [showSizingSection, setShowSizingSection] = useState(false);
   const [showRiskSection, setShowRiskSection] = useState(false);
   const [showEngineSection, setShowEngineSection] = useState(false);
   const [showAdvancedSetupSection, setShowAdvancedSetupSection] = useState(false);
   const [additionalSymbols, setAdditionalSymbols] = useState<string[]>([]);
-  const [activeSetupPanel, setActiveSetupPanel] = useState<'strategy' | 'data' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine' | 'history' | null>(null);
+  const [activeSetupPanel, setActiveSetupPanel] = useState<'strategy' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine' | 'history' | null>(null);
   const [setupPanelPosition, setSetupPanelPosition] = useState({ x: 70, y: 120 });
   const [setupPanelSize, setSetupPanelSize] = useState({ w: 320, h: 400 });
   const [isDraggingSetupPanel, setIsDraggingSetupPanel] = useState(false);
@@ -915,9 +911,10 @@ export default function PlaygroundPage() {
       {/* Chart Header - TradingView style: asset, interval, run, actions */}
       <ChartHeader
         symbol={config.symbol}
+        additionalSymbols={additionalSymbols}
         interval={config.interval}
-        symbolOptions={SYMBOLS.some(s => s.value === config.symbol) ? SYMBOLS : [{ value: config.symbol, label: config.symbol }, ...SYMBOLS]}
         onSymbolChange={(s) => setConfig({ ...config, symbol: s })}
+        onAdditionalSymbolsChange={setAdditionalSymbols}
         onIntervalChange={(i) => setConfig({ ...config, interval: i })}
         onRun={handleRunBacktest}
         onCancel={handleCancelBacktest}
@@ -990,7 +987,7 @@ export default function PlaygroundPage() {
         {/* Icon toolbar - absolute overlay on left edge, no layout space */}
         <div className="absolute left-0 top-0 bottom-0 z-30 flex flex-col bg-white border-r border-gray-200 w-12 items-center py-2 gap-0.5 overflow-visible shadow-sm">
             {([
-              'strategy', 'data', 'dates',
+              'strategy', 'dates',
               '---',
               'capital', 'benchmark', 'costs',
               '---',
@@ -999,9 +996,9 @@ export default function PlaygroundPage() {
               'history',
             ] as const).map((item, i) => {
               if (item === '---') return <div key={`sep-${i}`} className="h-px bg-gray-200 w-6 my-1" />;
-              const panel = item as 'strategy' | 'data' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine' | 'history';
-              const labels = { strategy: 'Strategy', data: 'Data', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine', history: 'Run History' };
-              const icons = { strategy: FileCode, data: Layers, dates: Calendar, capital: DollarSign, benchmark: TrendingUp, costs: Percent, risk: Shield, engine: Settings, history: RefreshCw };
+              const panel = item as 'strategy' | 'dates' | 'capital' | 'benchmark' | 'costs' | 'risk' | 'engine' | 'history';
+              const labels = { strategy: 'Strategy', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine', history: 'Run History' };
+              const icons = { strategy: FileCode, dates: Calendar, capital: DollarSign, benchmark: TrendingUp, costs: Percent, risk: Shield, engine: Settings, history: RefreshCw };
               const Icon = icons[panel];
               const isActive = activeSetupPanel === panel;
               return (
@@ -1114,7 +1111,7 @@ export default function PlaygroundPage() {
             onMouseDown={handleSetupPanelDragStart}
           >
             <span className="text-xs font-semibold text-gray-900">
-              {({ strategy: 'Strategy', data: 'Data', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine', history: 'Run History' } as Record<string, string>)[activeSetupPanel]}
+              {({ strategy: 'Strategy', dates: 'Dates', capital: 'Capital & Sizing', benchmark: 'Benchmark', costs: 'Costs', risk: 'Risk', engine: 'Engine', history: 'Run History' } as Record<string, string>)[activeSetupPanel]}
             </span>
             <button
               onClick={() => setActiveSetupPanel(null)}
@@ -1260,72 +1257,6 @@ export default function PlaygroundPage() {
                     <button onClick={() => setShowCodeEditor(true)} className="w-full py-2 text-[11px] text-emerald-600 border border-emerald-200 rounded-md mt-2 hover:bg-emerald-50">Open Editor</button>
                   </>
                 )}
-              </div>
-            )}
-            {activeSetupPanel === 'data' && (
-              <div className="space-y-3">
-                <div>
-                  <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-1">Primary Symbol</div>
-                  <p className="text-[10px] text-gray-400 leading-relaxed mb-2">
-                    The main trading symbol. Change it in the chart header (top left).
-                  </p>
-                  <div className="px-3 py-2 bg-gray-50 rounded-lg border border-gray-200 text-sm font-mono text-gray-900">
-                    {config.symbol}
-                  </div>
-                </div>
-                <div className="pt-2 border-t border-gray-200">
-                  <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Additional Symbols</div>
-                  <p className="text-[10px] text-gray-400 leading-relaxed mb-2">
-                    Add extra symbols for multi-asset strategies. Data is passed to <code className="bg-gray-100 px-0.5 rounded">self.history(symbol)</code>.
-                  </p>
-                  {additionalSymbols.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mb-2">
-                      {additionalSymbols.map((sym) => (
-                        <span key={sym} className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 text-gray-700 text-[10px] font-medium rounded-md">
-                          {sym}
-                          <button
-                            onClick={() => setAdditionalSymbols((prev) => prev.filter((s) => s !== sym))}
-                            className="text-gray-400 hover:text-red-500 transition"
-                          >
-                            <X className="h-2.5 w-2.5" />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex gap-1.5">
-                    <input
-                      type="text"
-                      placeholder="e.g. MSFT"
-                      className="flex-1 px-2 py-1.5 text-xs bg-white border border-gray-200 rounded-md text-gray-900 placeholder-gray-400 uppercase"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          const val = (e.target as HTMLInputElement).value.trim().toUpperCase();
-                          if (val && val !== config.symbol && !additionalSymbols.includes(val)) {
-                            setAdditionalSymbols((prev) => [...prev, val]);
-                            (e.target as HTMLInputElement).value = '';
-                          }
-                        }
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const input = document.querySelector<HTMLInputElement>('input[placeholder="e.g. MSFT"]');
-                        if (input) {
-                          const val = input.value.trim().toUpperCase();
-                          if (val && val !== config.symbol && !additionalSymbols.includes(val)) {
-                            setAdditionalSymbols((prev) => [...prev, val]);
-                            input.value = '';
-                          }
-                        }
-                      }}
-                      className="px-2 py-1.5 text-[10px] font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md transition"
-                    >
-                      <Plus className="h-3 w-3" />
-                    </button>
-                  </div>
-                </div>
               </div>
             )}
             {activeSetupPanel === 'dates' && (

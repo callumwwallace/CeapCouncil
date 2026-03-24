@@ -3,16 +3,18 @@
 import { useState, useRef, useEffect } from 'react';
 import { Settings, Maximize2, Camera, Play, Loader2, RotateCcw, Save, Sun, Moon, Monitor } from 'lucide-react';
 import ConfigSelect, { ConfigSelectOption } from './ConfigSelect';
-import AssetSelector from './AssetSelector';
+import MultiAssetSelector from './MultiAssetSelector';
 import { useThemeStore, type Theme } from '@/stores/themeStore';
 
 export type Interval = '1d' | '1h' | '15m' | '5m' | '1m';
 
 export interface ChartHeaderProps {
   symbol: string;
+  additionalSymbols: string[];
   interval: Interval;
-  symbolOptions: ConfigSelectOption[];
+  symbolOptions?: ConfigSelectOption[];
   onSymbolChange: (symbol: string) => void;
+  onAdditionalSymbolsChange: (symbols: string[]) => void;
   onIntervalChange: (interval: Interval) => void;
   onRun: () => void;
   onCancel?: () => void;
@@ -37,9 +39,10 @@ const THEME_OPTIONS: { value: Theme; label: string; Icon: typeof Sun }[] = [
 
 export default function ChartHeader({
   symbol,
+  additionalSymbols,
   interval,
-  symbolOptions,
   onSymbolChange,
+  onAdditionalSymbolsChange,
   onIntervalChange,
   onRun,
   onCancel,
@@ -70,8 +73,13 @@ export default function ChartHeader({
   return (
     <div className="h-11 flex items-center justify-between px-4 border-b border-gray-200 bg-white gap-4">
       {/* Left: Asset + Interval - TradingView style */}
-      <div className="flex items-center gap-3 flex-1 min-w-0">
-        <AssetSelector value={symbol} onChange={onSymbolChange} variant="header" />
+      <div className="flex items-center gap-3 flex-1 min-w-0 overflow-visible">
+        <MultiAssetSelector
+          primarySymbol={symbol}
+          additionalSymbols={additionalSymbols}
+          onPrimaryChange={onSymbolChange}
+          onAdditionalSymbolsChange={onAdditionalSymbolsChange}
+        />
         <div className="h-4 w-px bg-gray-200" aria-hidden />
         <ConfigSelect
           value={interval}
