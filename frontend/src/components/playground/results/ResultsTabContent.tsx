@@ -1181,6 +1181,24 @@ export default function ResultsTabContent({
                                   <div className={`text-sm font-semibold ${(cpcvResults.prob_oos_loss ?? 0) > 50 ? 'text-red-500' : 'text-emerald-600'}`}>{(cpcvResults.prob_oos_loss ?? 0).toFixed(0)}%</div>
                                 </div>
                               </div>
+                              {(cpcvResults.pbo != null || cpcvResults.deflated_sharpe_ratio != null) && (
+                                <div className="grid grid-cols-2 gap-2">
+                                  {cpcvResults.pbo != null && (
+                                    <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                      <div className="text-[10px] text-gray-500">PBO (heuristic)</div>
+                                      <div className={`text-sm font-semibold ${cpcvResults.pbo > 0.5 ? 'text-amber-600' : 'text-gray-900'}`}>{(cpcvResults.pbo * 100).toFixed(1)}%</div>
+                                      <div className="text-[9px] text-gray-400 mt-0.5">Share of paths with OOS Sharpe below median</div>
+                                    </div>
+                                  )}
+                                  {cpcvResults.deflated_sharpe_ratio != null && (
+                                    <div className="p-3 rounded-lg border border-gray-200 bg-white">
+                                      <div className="text-[10px] text-gray-500">Deflated Sharpe ratio</div>
+                                      <div className="text-sm font-semibold text-gray-900">{cpcvResults.deflated_sharpe_ratio.toFixed(4)}</div>
+                                      <div className="text-[9px] text-gray-400 mt-0.5">Multiple-testing adjusted (López de Prado)</div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                               {cpcvResults.overfit_score != null && (
                                 <div className={`p-2 rounded-lg border text-xs ${cpcvResults.overfit_score > 50 ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-gray-50 border-gray-200'}`}>
                                   Overfit score: <span className="font-semibold">{cpcvResults.overfit_score}%</span> {cpcvResults.overfit_score > 50 ? '(high – strategy may be overfit)' : '(low – good generalization)'}

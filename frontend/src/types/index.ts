@@ -717,7 +717,33 @@ export interface CpcvResults {
   train_sharpe_mean?: number | null;
   prob_oos_loss?: number | null;
   overfit_score?: number | null;
-  paths?: Array<{ path_id: number; oos_sharpe: number; oos_return: number }>;
+  /** Heuristic: fraction of paths with OOS Sharpe below median OOS Sharpe */
+  pbo?: number | null;
+  /** Deflated Sharpe (multiple-testing adjusted), López de Prado */
+  deflated_sharpe_ratio?: number | null;
+  /** Chronological OOS bar segments per combo path */
+  reconstructed_paths?: Array<{
+    combo_index: number;
+    total_bars?: number;
+    oos_segments: Array<{
+      group: number;
+      start_bar: number;
+      end_bar: number;
+      result: Record<string, unknown>;
+    }>;
+  }>;
+  paths?: Array<{
+    path: number;
+    test_groups: number[];
+    train_bars?: number;
+    test_bars?: number;
+    best_params?: Record<string, unknown>;
+    train_sharpe?: number | null;
+    test_sharpe?: number | null;
+    test_return?: number | null;
+    train_error?: string | null;
+    test_error?: string | null;
+  }>;
 }
 
 export interface FactorResults {

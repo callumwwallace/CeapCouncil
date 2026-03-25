@@ -2211,6 +2211,78 @@ def run_oos_validation_task(
     }
 
 
+def _calculate_pbo(path_results: list) -> float | None:
+    """Probability of Backtest Overfitting (heuristic from path distribution).
+
+    Fraction of paths where OOS Sharpe is below the cross-path median OOS Sharpe.
+    """
+    oos_sharpes = [
+        p["test_sharpe"] for p in path_results if p.get("test_sharpe") is not None
+    ]
+    if not oos_sharpes:
+        return None
+    median_oos = float(np.median(oos_sharpes))
+    underperform = sum(1 for s in oos_sharpes if s < median_oos)
+    pbo = underperform / len(oos_sharpes)
+    return round(float(pbo), 4)
+
+
+def _deflated_sharpe(
+    sharpe: float,
+    n_trials: int,
+    skewness: float,
+    kurtosis: float,
+    t: int,
+) -> float | None:
+    """Deflated Sharpe Ratio — López de Prado (2018); multiple-testing adjustment."""
+    from scipy import stats
+
+    if n_trials < 2 or t < 1 or not np.isfinite(sharpe):
+        return None
+    gamma = 0.5772156649  # Euler–Mascheroni constant
+    sharpe_star = np.sqrt(0.5 / t) * (
+        (1 - skewness) * sharpe + ((kurtosis - 1) / 4) * sharpe**2
+    )
+    e_max = (
+        (1 - gamma) * stats.norm.ppf(1 - 1 / n_trials)
+        + gamma * stats.norm.ppf(1 - 1 / (n_trials * np.e))
+    )
+    dsr = stats.norm.cdf((sharpe - e_max) / max(float(sharpe_star), 1e-6))
+    return round(float(dsr), 4)
+
+
+def _reconstruct_paths(
+    combos: list,
+    path_results: list,
+    groups: list,
+    data: pd.DataFrame,
+) -> list:
+    """Chronological OOS segment indices per CPCV path; attach path-level result to each segment.
+
+    Uses bar-index adjacency (same as purge boundaries): segments are contiguous blocks in time.
+    """
+    total_bars = len(data)
+    lookup = {tuple(sorted(p["test_groups"])): p for p in path_results}
+    paths: list = []
+    for ci, test_group_indices in enumerate(combos):
+        key = tuple(sorted(test_group_indices))
+        pr = lookup.get(key)
+        if pr is None:
+            continue
+        sorted_test_groups = sorted(test_group_indices)
+        oos_segments = []
+        for g in sorted_test_groups:
+            g_start, g_end = groups[g]
+            oos_segments.append({
+                "group": g,
+                "start_bar": g_start,
+                "end_bar": g_end,
+                "result": pr,
+            })
+        paths.append({"combo_index": ci, "total_bars": total_bars, "oos_segments": oos_segments})
+    return paths
+
+
 @celery_app.task(bind=True, time_limit=1200, soft_time_limit=1140)
 def run_cpcv_task(
     self,
@@ -2282,24 +2354,76 @@ def run_cpcv_task(
     def _optimize_params(train_data_slice):
         if not param_ranges:
             return {}
+
+        n_train_bars = len(train_data_slice)
+        max_period = max(10, n_train_bars // 4)
+
+        def _resolved_param_type(rng: dict) -> str:
+            """Match playground ranges (min/max/step) + explicit type; int if step==1 and bounds integral."""
+            low = rng.get("low", rng.get("min", 1))
+            high = rng.get("high", rng.get("max", 100))
+            step = rng.get("step")
+            pt = rng.get("type")
+            if pt in ("int", "float"):
+                return pt
+            try:
+                if step is not None and abs(float(step) - 1) < 1e-9:
+                    if float(low).is_integer() and float(high).is_integer():
+                        return "int"
+            except (TypeError, ValueError):
+                pass
+            return "float"
+
+        def _coerce_int_params(combo: dict) -> dict:
+            """Force int-typed keys to Python int so pandas rolling / engine never see 38.079… floats."""
+            if not combo:
+                return combo
+            out = dict(combo)
+            for key, rng in param_ranges.items():
+                if key not in out or not isinstance(rng, dict):
+                    continue
+                if _resolved_param_type(rng) == "int":
+                    out[key] = int(round(float(out[key])))
+            return out
+
         def objective(trial):
             combo = {}
             for key, rng in param_ranges.items():
                 if isinstance(rng, dict):
-                    low, high = rng.get("low", 1), rng.get("high", 100)
-                    pt = rng.get("type", "float")
-                    if pt == "int":
-                        combo[key] = trial.suggest_int(key, int(low), int(high))
+                    raw_low = rng.get("low", rng.get("min", 1))
+                    raw_high = rng.get("high", rng.get("max", 100))
+                    step = rng.get("step", None)
+                    if _resolved_param_type(rng) == "int":
+                        lo = int(float(raw_low))
+                        hi = int(float(raw_high))
+                        hi = min(hi, max_period)
+                        lo = min(lo, max(hi - 1, 1))
+                        lo = max(1, lo)
+                        if lo >= hi:
+                            lo = max(1, hi - 1)
+                        if hi < lo + 1:
+                            hi = lo + 1
+                        combo[key] = trial.suggest_int(
+                            key, lo, hi, step=int(step) if step is not None else 1
+                        )
                     else:
-                        combo[key] = trial.suggest_float(key, float(low), float(high))
+                        combo[key] = trial.suggest_float(
+                            key, float(raw_low), float(raw_high),
+                            step=float(step) if step is not None else None,
+                        )
+                elif isinstance(rng, list) and len(rng) >= 2:
+                    combo[key] = trial.suggest_float(key, float(min(rng)), float(max(rng)))
                 else:
                     combo[key] = rng[0] if isinstance(rng, list) else rng
+            combo = _coerce_int_params(combo)
             r = _run_single_backtest(
                 code=code, initial_capital=initial_capital,
                 commission=commission, slippage=slippage,
                 param_combo=combo, data=train_data_slice.copy(), symbol=symbol,
             )
-            if "error" in r:
+            if r.get("error"):
+                return float("-inf")
+            if (r.get("total_trades") or 0) == 0:
                 return float("-inf")
             return r.get("sharpe_ratio", 0) or 0
 
@@ -2308,7 +2432,8 @@ def run_cpcv_task(
             sampler=optuna.samplers.TPESampler(seed=42),
         )
         study.optimize(objective, n_trials=min(n_trials, 50), show_progress_bar=False)
-        return study.best_params if study.best_trial else {}
+        best = study.best_params if study.best_trial else {}
+        return _coerce_int_params(best)
 
     path_results = []
     for ci, test_group_indices in enumerate(combos):
@@ -2319,15 +2444,10 @@ def run_cpcv_task(
         for g in train_group_indices:
             g_start, g_end = groups[g]
 
-            # Trim the tail of a train chunk if it touches the next test chunk
-            purge_end = 0
-            if (g + 1) in test_indices_set:
-                purge_end = purge_bars + embargo_bars
-
-            # Same idea on the leading edge
-            purge_start = 0
-            if (g - 1) in test_indices_set:
-                purge_start = purge_bars + embargo_bars
+            # Trim train at boundaries that touch a held-out test group (contiguous group layout).
+            pe = purge_bars + embargo_bars
+            purge_end = pe if (g + 1) in test_indices_set else 0
+            purge_start = pe if (g - 1) in test_indices_set else 0
 
             adj_start = min(g_start + purge_start, g_end)
             adj_end = max(g_start, g_end - purge_end)
@@ -2335,10 +2455,14 @@ def run_cpcv_task(
             if adj_start < adj_end:
                 train_idx.extend(range(adj_start, adj_end))
 
+        # Strictly increasing positions — required for correct time order in the engine feed.
+        train_idx = sorted(set(train_idx))
+
         test_idx = []
         for g in test_group_indices:
             g_start, g_end = groups[g]
             test_idx.extend(range(g_start, g_end))
+        test_idx = sorted(set(test_idx))
 
         if len(train_idx) < 30 or len(test_idx) < 10:
             continue
@@ -2347,6 +2471,14 @@ def run_cpcv_task(
         test_data = data.iloc[test_idx].copy()
 
         best_params = _optimize_params(train_data)
+
+        numeric_vals = [
+            float(v) for v in (best_params or {}).values()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        ]
+        min_warmup_bars = int(max(numeric_vals)) + 1 if numeric_vals else 31
+        if len(test_idx) < min_warmup_bars:
+            continue
 
         train_result = _run_single_backtest(
             code=code, initial_capital=initial_capital,
@@ -2363,15 +2495,19 @@ def run_cpcv_task(
         test_sharpe = test_result.get("sharpe_ratio") or 0
         test_return = test_result.get("total_return") or 0
 
+        train_ok = not train_result.get("error")
+        test_trades = test_result.get("total_trades") or 0
+        test_ok = not test_result.get("error") and test_trades > 0
+
         path_results.append({
             "path": ci + 1,
             "test_groups": list(test_group_indices),
             "train_bars": len(train_idx),
             "test_bars": len(test_idx),
             "best_params": best_params,
-            "train_sharpe": train_sharpe if "error" not in train_result else None,
-            "test_sharpe": test_sharpe if "error" not in test_result else None,
-            "test_return": test_return if "error" not in test_result else None,
+            "train_sharpe": train_sharpe if train_ok else None,
+            "test_sharpe": test_sharpe if test_ok else None,
+            "test_return": test_return if test_ok else None,
             "train_error": train_result.get("error"),
             "test_error": test_result.get("error"),
         })
@@ -2401,6 +2537,29 @@ def run_cpcv_task(
     if train_sharpe_mean and train_sharpe_mean > 0 and oos_sharpe_mean is not None:
         overfit_score = round(max(0, 1 - (oos_sharpe_mean / train_sharpe_mean)) * 100, 1)
 
+    pbo = _calculate_pbo(path_results)
+
+    oos_series = pd.Series(oos_sharpes) if oos_sharpes else pd.Series(dtype=float)
+    skew_oos = float(oos_series.skew()) if len(oos_series) > 2 else float("nan")
+    kurt_oos = float(oos_series.kurt()) if len(oos_series) > 3 else float("nan")
+    t_oos = int(group_size * n_test_groups)
+    dsr = None
+    if (
+        oos_sharpes
+        and oos_sharpe_mean is not None
+        and np.isfinite(skew_oos)
+        and np.isfinite(kurt_oos)
+    ):
+        dsr = _deflated_sharpe(
+            float(oos_sharpe_mean),
+            n_trials=len(combos),
+            skewness=skew_oos,
+            kurtosis=kurt_oos,
+            t=max(t_oos, 1),
+        )
+
+    reconstructed_paths = _reconstruct_paths(combos, path_results, groups, data)
+
     return {
         "status": "completed",
         "method": "cpcv",
@@ -2411,6 +2570,7 @@ def run_cpcv_task(
         "total_paths": len(combos),
         "valid_paths": len(path_results),
         "paths": path_results,
+        "reconstructed_paths": reconstructed_paths,
         "oos_sharpe_mean": oos_sharpe_mean,
         "oos_sharpe_std": oos_sharpe_std,
         "oos_sharpe_median": oos_sharpe_median,
@@ -2418,6 +2578,8 @@ def run_cpcv_task(
         "train_sharpe_mean": train_sharpe_mean,
         "prob_oos_loss": prob_oos_loss,
         "overfit_score": overfit_score,
+        "pbo": pbo,
+        "deflated_sharpe_ratio": dsr,
     }
 
 
