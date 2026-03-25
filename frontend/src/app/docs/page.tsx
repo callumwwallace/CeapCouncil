@@ -454,14 +454,14 @@ export default function DocsPage() {
                   Overview
                 </h2>
                 <p className="text-gray-700 leading-relaxed mb-4">
-                  Write trading strategies in Python, backtest them against real historical data, tune parameters, and compete
+                  Write trading strategies in Python, backtest against real historical data, tune parameters, and compete
                   on the leaderboard — all from the <Link href="/playground" className="text-emerald-600 hover:underline font-medium">Playground</Link>.
                   No setup, no installs. Just code and run.
                 </p>
                 <p className="text-gray-700 leading-relaxed mb-4">
-                  Strategies subclass <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">StrategyBase</code> and
-                  override a few lifecycle methods. The engine calls <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">on_data</code> once per bar,
-                  passing you the latest OHLCV data. From there you decide what to trade — the engine handles fills,
+                  Your strategy subclasses <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">StrategyBase</code> and
+                  overrides a few lifecycle methods. The engine calls <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">on_data</code> once per bar
+                  with the latest OHLCV data. You decide what to trade; the engine takes care of fills,
                   slippage, commissions, and position tracking.
                 </p>
 
@@ -567,11 +567,11 @@ export default function DocsPage() {
                 <div className="space-y-4">
                   <MethodCard
                     signature="on_init(self) → None"
-                    description="Called once before the backtest starts. Set default parameters with self.params.setdefault(), configure warm-up with self.set_warmup(), initialize instance variables, and set up scheduled callbacks."
+                    description="Runs once before the backtest begins. This is where you set default parameter values, configure your warm-up period, initialize instance variables, and register any scheduled callbacks."
                   />
                   <MethodCard
                     signature="on_data(self, bar: BarData) → None"
-                    description="Called once per bar (after warm-up completes) with the primary symbol's bar data. This is where your main trading logic goes — compute indicators, check signals, and place orders. This method is abstract and must be implemented."
+                    description="Runs once per bar after warm-up completes, receiving the current bar's OHLCV data. Put your main trading logic here: compute indicators, check signals, place orders. You must implement this method."
                   >
                     <div className="mt-2 px-2 py-1 bg-red-50 border border-red-100 rounded text-xs text-red-700">
                       Required — your strategy won&apos;t compile without this method.
@@ -583,19 +583,19 @@ export default function DocsPage() {
                   </MethodCard>
                   <MethodCard
                     signature="on_order_event(self, fill: FillEvent) → None"
-                    description="Called whenever an order fills. Use this for fill-based logic like adjusting trailing stops, logging trades, or placing follow-up orders."
+                    description="Fires whenever an order fills. Useful for reacting to fills — updating trailing stops, logging trades, or chaining follow-up orders."
                   />
                   <MethodCard
                     signature="on_order_cancel(self, order: Order) → None"
-                    description="Called when one of your orders is cancelled — whether by the broker, by you calling cancel_all_orders(), or by a day-order expiry at session close."
+                    description="Called when an order gets cancelled, whether through cancel_all_orders(), a day-order expiry at session close, or broker action."
                   />
                   <MethodCard
                     signature="on_order_reject(self, order: Order) → None"
-                    description="Called when an order is rejected before it reaches the market, for example if there is insufficient buying power. Useful for logging or adjusting your position sizing logic."
+                    description="Called when an order is rejected before reaching the market, such as when there isn't enough buying power. Handy for logging or rethinking your sizing logic."
                   />
                   <MethodCard
                     signature="on_end(self) → None"
-                    description="Called when the backtest finishes. Use for cleanup, final calculations, or logging summary statistics."
+                    description="Runs once after the backtest ends. Good for cleanup, final calculations, or printing a summary."
                   />
                 </div>
               </section>
@@ -625,7 +625,7 @@ export default function DocsPage() {
                 <h3 className="font-semibold text-gray-900 mt-8 mb-3">Fetching history</h3>
                 <MethodCard
                   signature="self.history(symbol=None, length=1) → list[BarData]"
-                  description="Returns the most recent bars for a symbol. If symbol is omitted, uses the primary symbol. The default history buffer holds 500 bars per symbol — call self.set_history_length() in on_init if you need more."
+                  description="Returns the most recent bars for a symbol. Omit symbol to use the primary. The buffer holds 500 bars by default; call self.set_history_length() in on_init if your indicators need a longer lookback."
                   returns="list[BarData]"
                 />
 
@@ -659,13 +659,11 @@ if len(hist) < 50:
                   Built-in indicators
                 </h2>
                 <p className="text-gray-700 mb-4">
-                  The engine provides 30+ built-in indicators as <strong>global classes</strong>. You don&apos;t need to import them — they&apos;re
-                  available directly in your strategy code. Create an instance with parameters, then call it with your data.
+                  There are 30+ built-in indicators available as <strong>global classes</strong> — no imports needed. Create an instance with your config, then call it with your price data.
                 </p>
 
                 <Callout type="info">
-                  Indicators are <strong>classes, not methods on self</strong>. The pattern
-                  is: <code className="bg-blue-100 px-1 rounded">IndicatorName(params)(data)</code> — instantiate with config, then call with price arrays.
+                  Indicators are <strong>classes, not methods on self</strong>. You instantiate them with config and call them with your data: <code className="bg-blue-100 px-1 rounded">IndicatorName(params)(data)</code>.
                 </Callout>
 
                 <CodeBlock code={`# Single-input indicators: pass a list of closes (or other values)
@@ -775,28 +773,28 @@ sma_series = SMA(period=20).series(closes)   # → numpy array`} />
 
                 <h3 className="font-semibold text-gray-900 mb-3">Order methods</h3>
                 <p className="text-gray-700 mb-4 text-sm">
-                  All order methods return an <code className="bg-gray-100 px-1 rounded">Order</code> object. Use positive quantity for buy, negative for sell.
+                  All order methods return an <code className="bg-gray-100 px-1 rounded">Order</code> object. Positive quantity buys, negative sells.
                 </p>
                 <div className="space-y-3">
                   <MethodCard
                     signature="self.market_order(symbol, quantity) → Order"
-                    description="Submit a market order. Fills at the next bar's open price (or intrabar if enabled). Positive qty = buy, negative = sell."
+                    description="Places a market order, which fills at the next bar's open (or intrabar if enabled). Positive quantity buys, negative sells."
                   />
                   <MethodCard
                     signature="self.limit_order(symbol, quantity, price) → Order"
-                    description="Submit a limit order. Buy limit fills at price or better (lower). Sell limit fills at price or better (higher)."
+                    description="Places a limit order. A buy limit fills at price or below; a sell limit fills at price or above."
                   />
                   <MethodCard
                     signature="self.stop_order(symbol, quantity, stop_price) → Order"
-                    description="Submit a stop-market order. Triggers a market order when the stop price is hit."
+                    description="Places a stop-market order. When the stop price is hit, it triggers a market order."
                   />
                   <MethodCard
                     signature="self.stop_limit_order(symbol, quantity, stop_price, limit_price) → Order"
-                    description="Submit a stop-limit order. When stop price is hit, a limit order is placed at the limit price."
+                    description="Places a stop-limit order. When the stop price is hit, a limit order is submitted at the limit price."
                   />
                   <MethodCard
                     signature="self.trailing_stop(symbol, quantity, trail_amount=None, trail_percent=None) → Order"
-                    description="Submit a trailing stop order. Specify either an absolute trail_amount or a trail_percent (not both). The stop price adjusts as price moves in your favor."
+                    description="Places a trailing stop. Provide either a trail_amount or a trail_percent (not both). The stop price follows as price moves in your favor."
                   />
                 </div>
 
@@ -823,11 +821,11 @@ sma_series = SMA(period=20).series(closes)   # → numpy array`} />
                 <div className="space-y-4">
                   <MethodCard
                     signature='self.bracket_order(symbol, quantity, take_profit_price, stop_loss_price, entry_price=None) → {"entry"}'
-                    description="Submit a bracket (OCO) order. Places an entry order with automatic take-profit and stop-loss attached. When one side fills, the other is cancelled. Returns a dict with the entry Order object. If entry_price is None, the entry is a market order; otherwise a limit order."
+                    description="Places a bracket order: an entry with an attached take-profit and stop-loss. When one leg fills, the other is automatically cancelled. Omit entry_price for a market entry, or pass a price for a limit. Returns a dict containing the entry Order."
                   />
                   <MethodCard
                     signature='self.oco_order(symbol, order_a, order_b) → {"order_a", "order_b"}'
-                    description='One-Cancels-Other: submit two orders — when one fills, the other is cancelled. Each order dict: {"quantity", "price", "order_type": "limit"|"stop"}.'
+                    description='One-cancels-other: two orders linked so that when one fills, the other is cancelled. Each order dict takes quantity, price, and order_type ("limit" or "stop").'
                   />
                 </div>
 
@@ -859,26 +857,26 @@ sma_series = SMA(period=20).series(closes)   # → numpy array`} />
                   Execution algorithms
                 </h2>
                 <p className="text-gray-700 mb-4">
-                  Split large orders across multiple bars to reduce market impact. Each returns an executor
+                  Use these when you need to work into or out of a large position gradually. Each returns an executor
                   object with <code className="bg-gray-100 px-1 rounded">is_complete</code> and <code className="bg-gray-100 px-1 rounded">fill_pct</code> properties.
                 </p>
 
                 <div className="space-y-4">
                   <MethodCard
                     signature="self.twap_order(symbol, quantity, num_slices=10) → TWAPExecutor"
-                    description="Time-Weighted Average Price. Splits the order into equal-sized market orders distributed over N bars."
+                    description="Splits the order into equal-sized market orders spread evenly over N bars."
                   />
                   <MethodCard
                     signature="self.vwap_order(symbol, quantity, num_slices=10, volume_profile=None) → VWAPExecutor"
-                    description="Volume-Weighted Average Price. Distributes order slices proportional to the volume profile. Pass a custom volume_profile list or let the engine use actual volume."
+                    description="Distributes slices proportional to the volume profile. Pass a custom volume_profile list, or leave it out to use actual volume data."
                   />
                   <MethodCard
                     signature="self.iceberg_order(symbol, quantity, visible_quantity, limit_price=None) → IcebergExecutor"
-                    description="Iceberg order. Shows only visible_quantity at a time. Automatically submits the next slice when the current one fills. Use limit_price for limit orders, omit for market."
+                    description="Only exposes visible_quantity at a time. The next slice is submitted automatically once the current one fills. Omit limit_price for market orders."
                   />
                   <MethodCard
                     signature="self.pov_order(symbol, quantity, max_pct_of_volume=0.1) → POVExecutor"
-                    description="Percentage of Volume. Limits execution to max_pct_of_volume of each bar's volume. Continues until the full quantity is filled."
+                    description="Caps each bar's execution at max_pct_of_volume of that bar's volume. Keeps going until the full quantity is filled."
                   />
                 </div>
 
@@ -963,32 +961,31 @@ qty = self.portfolio.get_position_quantity(bar.symbol)`} />
                   Bar consolidators
                 </h2>
                 <p className="text-gray-700 mb-4">
-                  Aggregate lower-timeframe bars into higher timeframes directly in your strategy.
-                  Consolidators are available as global classes — no imports needed.
+                  Consolidators let you build higher-timeframe bars from your incoming data feed directly in the strategy.
+                  Like indicators, they're available as global classes with no imports needed.
                 </p>
                 <Callout type="tip">
-                  There is no automatic <code className="bg-emerald-100 px-1 rounded">on_consolidated_bar</code> hook.
-                  You must feed each bar manually by calling <code className="bg-emerald-100 px-1 rounded">consolidator.update(bar)</code>
-                  inside <code className="bg-emerald-100 px-1 rounded">on_data</code>. The callback you pass to the constructor is
-                  invoked automatically once a consolidated bar is ready.
+                  There's no automatic <code className="bg-emerald-100 px-1 rounded">on_consolidated_bar</code> hook.
+                  Feed each bar into the consolidator yourself by calling <code className="bg-emerald-100 px-1 rounded">consolidator.update(bar)</code>
+                  from <code className="bg-emerald-100 px-1 rounded">on_data</code>. The callback you passed to the constructor fires once a new consolidated bar is complete.
                 </Callout>
 
                 <div className="space-y-4">
                   <MethodCard
                     signature="TimeConsolidator(minutes=60, callback=fn)"
-                    description="Aggregates bars by time. Feed 1-minute bars to get 5-minute, 1-hour, 4-hour, etc. The callback is called with a ConsolidatedBar when each period completes."
+                    description="Groups bars by elapsed time. Feed in 1-minute data to get 5-minute, 1-hour, or 4-hour bars. The callback receives a ConsolidatedBar once each period closes."
                   />
                   <MethodCard
                     signature="BarCountConsolidator(count=10, callback=fn)"
-                    description="Aggregates every N bars into one. Useful for fixed-count aggregation regardless of time."
+                    description="Rolls up every N bars into one, useful when you want fixed-count aggregation instead of clock-based."
                   />
                   <MethodCard
                     signature="RenkoConsolidator(brick_size=10.0, callback=fn)"
-                    description="Creates Renko bars based on price movement. A new brick is formed when price moves by brick_size from the previous brick's close."
+                    description="Builds Renko bars from price movement. A new brick forms whenever price moves brick_size from the previous brick's close."
                   />
                   <MethodCard
                     signature="RangeConsolidator(range_size=5.0, callback=fn)"
-                    description="Creates range bars with a fixed price range. A new bar forms when the high-low range exceeds range_size."
+                    description="Builds fixed-range bars. A new bar closes once the high-low range exceeds range_size."
                   />
                 </div>
 
@@ -1042,15 +1039,15 @@ qty = self.portfolio.get_position_quantity(bar.symbol)`} />
                 <div className="space-y-4">
                   <MethodCard
                     signature="self.set_warmup(bars=0) → None"
-                    description="Set warm-up period. on_data() won't be called until the specified number of bars have passed. Also automatically expands the history buffer if needed, so you don't have to call set_history_length() separately."
+                    description="Sets the warm-up period. on_data won't be called until the specified number of bars have passed. It also expands the history buffer automatically, so you usually don't need to call set_history_length separately."
                   />
                   <MethodCard
                     signature="self.set_history_length(length) → None"
-                    description="Expand the per-symbol history buffer beyond the default 500 bars. Call this in on_init if your indicators need a longer lookback. The engine will keep up to length bars in memory."
+                    description="Expands the per-symbol history buffer past the default 500 bars. Call it in on_init if your indicators need a longer lookback; the engine keeps up to length bars per symbol in memory."
                   />
                   <MethodCard
                     signature="self.schedule(name, every_n_bars, callback) → None"
-                    description="Schedule a callback to run every N bars. The callback is called with the current bar as its argument, so you can use bar.symbol and bar.close directly inside it."
+                    description="Registers a callback to run every N bars. The callback receives the current bar, so bar.symbol and bar.close are available inside it."
                   />
                 </div>
 
@@ -1070,8 +1067,8 @@ qty = self.portfolio.get_position_quantity(bar.symbol)`} />
                   Parameters
                 </h2>
                 <p className="text-gray-700 mb-4">
-                  Define parameters in <code className="bg-gray-100 px-1.5 rounded">on_init</code> with <code className="bg-gray-100 px-1.5 rounded">self.params.setdefault()</code>.
-                  Parameters appear as adjustable inputs in the Playground sidebar and can be optimized using grid search, Bayesian optimization, or genetic algorithms.
+                  Declare parameters in <code className="bg-gray-100 px-1.5 rounded">on_init</code> using <code className="bg-gray-100 px-1.5 rounded">self.params.setdefault()</code>.
+                  They show up as adjustable inputs in the Playground sidebar, and the optimizer can sweep through combinations to find the best settings.
                 </p>
                 <CodeBlock code={`def on_init(self):
     # These become sliders/inputs in the Playground
@@ -1085,9 +1082,7 @@ def on_data(self, bar):
     # ... use parameters in your logic`} />
 
                 <Callout type="tip">
-                  When you run optimization, the engine sweeps through parameter combinations
-                  and ranks results by Sharpe ratio, return, or your chosen objective. Use <code className="bg-emerald-100 px-1 rounded">self.params.setdefault()</code> (not direct assignment)
-                  so the optimizer can inject values.
+                  During optimization, the engine tests combinations of your parameters and ranks them by Sharpe ratio, return, or whichever metric you pick. Make sure to use <code className="bg-emerald-100 px-1 rounded">self.params.setdefault()</code> rather than direct assignment, otherwise the optimizer can't override the values.
                 </Callout>
               </section>
 
@@ -1098,7 +1093,7 @@ def on_data(self, bar):
                   Restrictions
                 </h2>
                 <p className="text-gray-700 mb-4">
-                  Strategy code runs in a sandboxed environment. The validator checks your code before execution.
+                  Strategies run in a sandboxed environment. Before anything executes, the validator scans your code for restricted operations.
                 </p>
 
                 <div className="grid sm:grid-cols-2 gap-4">
@@ -1134,14 +1129,10 @@ def on_data(self, bar):
 
                 <div className="mt-4 space-y-2">
                   <Callout type="warning">
-                    The history buffer holds <strong>500 bars</strong> per symbol by default. If your strategy needs a longer lookback,
-                    call <code className="bg-amber-100 px-1 rounded">self.set_history_length(n)</code> in <code className="bg-amber-100 px-1 rounded">on_init</code> to raise the limit.
-                    Note that larger buffers use more memory, so set only what you actually need.
+                    The history buffer holds <strong>500 bars</strong> per symbol by default. If you need more, call <code className="bg-amber-100 px-1 rounded">self.set_history_length(n)</code> in <code className="bg-amber-100 px-1 rounded">on_init</code>. Larger buffers do use more memory, so only set what you actually need.
                   </Callout>
                   <Callout type="warning">
-                    <strong><code className="bg-amber-100 px-1 rounded">super()</code> and <code className="bg-amber-100 px-1 rounded">type()</code> are blocked</strong> in the sandbox.
-                    Do not define <code className="bg-amber-100 px-1 rounded">__init__</code> — use <code className="bg-amber-100 px-1 rounded">on_init(self)</code> for all setup instead.
-                    Calling <code className="bg-amber-100 px-1 rounded">super().__init__()</code> will raise a sandbox error at runtime.
+                    <strong><code className="bg-amber-100 px-1 rounded">super()</code> and <code className="bg-amber-100 px-1 rounded">type()</code> are blocked.</strong> Don&apos;t define <code className="bg-amber-100 px-1 rounded">__init__</code> in your strategy class — use <code className="bg-amber-100 px-1 rounded">on_init</code> for all setup instead. Calling <code className="bg-amber-100 px-1 rounded">super().__init__()</code> will cause a sandbox error at runtime.
                   </Callout>
                 </div>
               </section>
@@ -1153,26 +1144,25 @@ def on_data(self, bar):
                   Multi-asset strategies
                 </h2>
                 <p className="text-gray-700 mb-4">
-                  Add extra symbols in the asset selector to run your strategy across multiple markets simultaneously.
-                  The engine loads data for every selected symbol and calls <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">on_data</code> once
-                  per symbol per bar, so your existing single-asset logic works unchanged — each call receives the bar for one specific symbol.
+                  Select multiple symbols in the asset picker to run your strategy across several markets at once.
+                  The engine calls <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">on_data</code> once per symbol per bar,
+                  so single-asset logic works as-is — each invocation gets the bar for one specific symbol.
                 </p>
 
                 <h3 className="font-semibold text-gray-900 mb-3">Multi-asset API</h3>
                 <ApiTable rows={[
                   { method: 'self.symbols', description: 'List of all symbols loaded into the engine for this backtest' },
-                  { method: 'self.capital_per_symbol()', description: 'self.equity / len(self.symbols) — equal capital slice per asset. Identical to self.equity for single-asset backtests.' },
+                  { method: 'self.capital_per_symbol()', description: 'Divides self.equity equally across all loaded symbols. For single-asset runs this is just self.equity.' },
                   { method: 'self.history(symbol, n)', description: 'Fetch the last N bars for any loaded symbol by name' },
                   { method: 'self.is_flat(symbol)', description: 'True if no open position for the given symbol' },
                   { method: 'self.close_position(symbol)', description: 'Close the open position for a specific symbol' },
                 ]} />
 
                 <Callout type="tip" className="mt-6">
-                  Always size positions with <code className="bg-emerald-100 px-1 rounded">self.capital_per_symbol()</code> rather than{' '}
-                  <code className="bg-emerald-100 px-1 rounded">self.portfolio.cash</code> in multi-asset strategies.
-                  Using raw cash means the first symbol called on each bar consumes most of the available capital,
-                  leaving insufficient funds for subsequent assets — especially when mixing asset classes with very
-                  different price scales (e.g. equities at ~$150 vs Bitcoin at ~$40,000).
+                  In multi-asset strategies, always size positions with <code className="bg-emerald-100 px-1 rounded">self.capital_per_symbol()</code> instead of{' '}
+                  <code className="bg-emerald-100 px-1 rounded">self.portfolio.cash</code>.
+                  If you use raw cash, the first symbol processed each bar absorbs most of the available capital,
+                  leaving little for the rest — this gets worse when price scales vary widely (e.g. a $150 stock alongside $40,000 Bitcoin).
                 </Callout>
 
                 <h3 className="font-semibold text-gray-900 mt-8 mb-3">Example — equal-weight crossover across all assets</h3>
@@ -1180,9 +1170,8 @@ def on_data(self, bar):
 
                 <h3 className="font-semibold text-gray-900 mt-8 mb-3">How bar dispatch works</h3>
                 <p className="text-gray-700 mb-3">
-                  On each timestamp the engine groups all loaded symbols into a single bar group, then loops through them
-                  calling <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">on_data(bar)</code> once per symbol.
-                  Use <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">bar.symbol</code> inside your strategy to identify which asset triggered the call.
+                  At each timestamp the engine iterates through all loaded symbols and calls <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">on_data(bar)</code> once for each.
+                  Use <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">bar.symbol</code> to know which asset the current call is for.
                 </p>
                 <CodeBlock code={`def on_data(self, bar):
     # bar.symbol tells you which asset this call is for
@@ -1201,10 +1190,10 @@ def on_data(self, bar):
 
                 <h3 className="font-semibold text-gray-900 mt-8 mb-3">Mixing asset classes</h3>
                 <p className="text-gray-700">
-                  You can combine equities, ETFs, crypto, and forex in the same backtest. The engine aligns all data to
-                  the primary symbol&apos;s calendar and forward-fills gaps (e.g. weekend crypto prices fill into equity
-                  trading days). <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">capital_per_symbol()</code> ensures
-                  each asset gets a fair share of capital regardless of price magnitude.
+                  Equities, ETFs, crypto, and forex can all run in the same backtest. Data is aligned to the primary
+                  symbol&apos;s calendar, with gaps forward-filled where needed (for example, weekend crypto prices carry
+                  forward into equity trading days). <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm">capital_per_symbol()</code> keeps
+                  the allocation fair regardless of how different the price scales are.
                 </p>
               </section>
 
@@ -1215,7 +1204,7 @@ def on_data(self, bar):
                   Version control
                 </h2>
                 <p className="text-gray-700 mb-4">
-                  Custom strategies support Git-style versioning in the Playground code editor:
+                  The Playground code editor has built-in Git-style versioning for your strategies:
                 </p>
 
                 <div className="space-y-4">
@@ -1224,7 +1213,7 @@ def on_data(self, bar):
                     <div>
                       <h3 className="font-semibold text-gray-900">Save</h3>
                       <p className="text-gray-600 text-sm mt-1">
-                        Persists your working copy without creating a version. Auto-saves periodically while editing.
+                        Saves your current code without creating a new version. The editor also auto-saves in the background as you write.
                       </p>
                     </div>
                   </div>
@@ -1233,7 +1222,7 @@ def on_data(self, bar):
                     <div>
                       <h3 className="font-semibold text-gray-900">Commit</h3>
                       <p className="text-gray-600 text-sm mt-1">
-                        Creates a new version with a title and optional description. Each commit is a snapshot you can restore later.
+                        Takes a snapshot of your code with a title and optional description. You can restore any commit later.
                       </p>
                     </div>
                   </div>
@@ -1242,7 +1231,7 @@ def on_data(self, bar):
                     <div>
                       <h3 className="font-semibold text-gray-900">Revert</h3>
                       <p className="text-gray-600 text-sm mt-1">
-                        Restores your working copy to a previous version. You can also rename and delete strategies from the strategy list.
+                        Rolls your working copy back to a previous commit. Strategies can also be renamed or deleted from the strategy list.
                       </p>
                     </div>
                   </div>
