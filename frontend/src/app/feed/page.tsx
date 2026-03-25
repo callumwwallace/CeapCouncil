@@ -124,7 +124,7 @@ export default function FeedPage() {
             <p className="text-lg text-gray-700 font-semibold">No activity yet</p>
             <p className="text-sm text-gray-400 mt-1">Follow users to see their strategies and competition entries here.</p>
             <Link
-              href="/leaderboard"
+              href="/community"
               className="inline-block mt-4 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition"
             >
               Discover users
