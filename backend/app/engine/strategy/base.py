@@ -7,6 +7,7 @@ You get lifecycle hooks, the portfolio/broker handles, helpers for orders and
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -53,7 +54,7 @@ class StrategyBase(ABC):
         self._name = self.__class__.__name__
 
         # Ring buffer per symbol for history()
-        self._history: dict[str, list[BarData]] = {}
+        self._history: dict[str, deque[BarData]] = {}
         self._max_history: int = 500
 
         # (label, every_n_bars, callback)
@@ -118,8 +119,12 @@ class StrategyBase(ABC):
         """Set the maximum number of bars retained per symbol in history().
 
         Call this in on_init() if your strategy needs more than the default 500 bars.
+        Rebuilds any already-allocated deques with the new maxlen.
         """
         self._max_history = max(length, 1)
+        # Rebuild existing deques so the new limit takes effect immediately
+        for sym, dq in list(self._history.items()):
+            self._history[sym] = deque(dq, maxlen=self._max_history)
 
     @property
     def is_warming_up(self) -> bool:
@@ -206,17 +211,23 @@ class StrategyBase(ABC):
         if symbol is None:
             feed = self._context.data_feed
             symbol = feed.primary_symbol if feed else ""
-        bars = self._history.get(symbol or "", [])
-        return bars[-length:] if length < len(bars) else bars
+        dq = self._history.get(symbol or "", deque())
+        # Convert to list so callers get a plain sequence with normal indexing.
+        # Slicing is done here to avoid an extra copy when length >= len(dq).
+        if length >= len(dq):
+            return list(dq)
+        return list(dq)[-length:]
 
     def _record_bar(self, bar: BarData) -> None:
-        """Record bar in history (called by engine)."""
+        """Record bar in history (called by engine).
+
+        Uses a deque with maxlen so old bars are evicted automatically without
+        creating a new list object on every bar (the old slice approach did
+        that, causing ~5 M allocations for a 500-bar window over 10 k bars).
+        """
         if bar.symbol not in self._history:
-            self._history[bar.symbol] = []
-        hist = self._history[bar.symbol]
-        hist.append(bar)
-        if len(hist) > self._max_history:
-            self._history[bar.symbol] = hist[-self._max_history:]
+            self._history[bar.symbol] = deque(maxlen=self._max_history)
+        self._history[bar.symbol].append(bar)
 
     # --- Orders ---
 

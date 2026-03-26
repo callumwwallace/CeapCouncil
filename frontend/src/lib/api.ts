@@ -539,7 +539,7 @@ class ApiClient {
   }
 
   // Monte Carlo
-  async runMonteCarlo(backtestId: number, data: { backtest_id: number; n_simulations?: number }): Promise<{ task_id: string }> {
+  async runMonteCarlo(backtestId: number, data: { n_simulations?: number }): Promise<{ task_id: string }> {
     const response = await this.client.post(`/backtests/${backtestId}/monte-carlo`, data);
     return response.data;
   }

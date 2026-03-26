@@ -31,6 +31,10 @@ class BarData:
     close: float
     volume: float
     bar_index: int = 0
+    # True when this bar was synthesised to fill a timestamp gap for a symbol
+    # that didn't trade (e.g. holiday or illiquid name in a multi-symbol run).
+    # Volume-based indicators (VWAP, OBV, MFI, CMF …) should skip these bars.
+    is_synthetic: bool = False
 
     @property
     def mid(self) -> float:
@@ -175,6 +179,7 @@ class DataFeed:
                             close=ev.close,
                             volume=0.0,
                             bar_index=ev.bar_index,
+                            is_synthetic=True,
                         ))
                 yield pending
                 pending = []

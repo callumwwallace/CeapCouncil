@@ -196,17 +196,36 @@ class Portfolio:
         self._current_prices.update(prices)
 
     def record_equity(self, timestamp: datetime) -> None:
-        """Record current equity for the equity curve."""
-        if timestamp.hour == 0 and timestamp.minute == 0 and timestamp.second == 0:
-            date_str = timestamp.strftime("%Y-%m-%d")
-        else:
-            date_str = timestamp.strftime("%Y-%m-%dT%H:%M:%S")
-        self.equity_curve.append(EquityPoint(
+        """Record current equity for the equity curve.
+
+        For daily data each bar gets its own point.  For intraday data we
+        update the last point in-place while we're still on the same calendar
+        day, and only append a new point when the day changes.  This prevents
+        100k-bar backtests from creating massive arrays while still giving the
+        frontend a complete daily equity curve.
+        """
+        is_eod = timestamp.hour == 0 and timestamp.minute == 0 and timestamp.second == 0
+        date_str = timestamp.strftime("%Y-%m-%d") if is_eod else timestamp.strftime("%Y-%m-%dT%H:%M:%S")
+        current_day = timestamp.strftime("%Y-%m-%d")
+
+        new_point = EquityPoint(
             date=date_str,
             equity=round(self.equity, 2),
             cash=round(self.cash, 2),
             margin_used=round(self._margin_used, 2),
-        ))
+        )
+
+        if not is_eod and self.equity_curve:
+            last = self.equity_curve[-1]
+            # Same calendar day → update in place instead of appending
+            if last.date[:10] == current_day:
+                last.date = date_str
+                last.equity = new_point.equity
+                last.cash = new_point.cash
+                last.margin_used = new_point.margin_used
+                return
+
+        self.equity_curve.append(new_point)
 
     def _update_margin(self) -> None:
         """Recalculate margin usage (in base currency)."""
@@ -222,16 +241,28 @@ class Portfolio:
         self._margin_used = total_margin
 
     def check_margin_call(self, timestamp: datetime) -> bool:
-        """Check if equity has fallen below maintenance margin. Returns True if margin call."""
+        """Check if equity has fallen below maintenance margin. Returns True if margin call.
+
+        Maintenance margin is a percentage of total open position *market value*,
+        not a percentage of margin already posted.  Calculating it from
+        _margin_used (which is itself a fraction of position value) would produce
+        a maintenance requirement that is far too small.
+        """
         if not self.margin.enabled:
             return False
 
-        maintenance_req = self._margin_used * (self.margin.maintenance_margin_pct / 100)
+        total_position_value = sum(
+            self._to_base(abs(pos.quantity) * self._current_prices.get(symbol, pos.avg_cost), symbol)
+            for symbol, pos in self._positions.items()
+            if not pos.is_flat
+        )
+        maintenance_req = total_position_value * (self.margin.maintenance_margin_pct / 100)
         if self.equity < maintenance_req:
             self._margin_calls.append({
                 "timestamp": timestamp.isoformat(),
                 "equity": round(self.equity, 2),
                 "maintenance_required": round(maintenance_req, 2),
+                "total_position_value": round(total_position_value, 2),
                 "margin_used": round(self._margin_used, 2),
             })
             return True
@@ -286,12 +317,15 @@ class Portfolio:
             notional = self._to_base(abs(pos.quantity) * price, symbol)
             payment = notional * per_payment_rate
 
+            # Funding mechanics (Binance/Bybit standard):
+            #   annual_rate_pct > 0  →  longs pay shorts
+            #   annual_rate_pct < 0  →  shorts pay longs
+            # payment = notional * per_payment_rate, so its sign already
+            # follows annual_rate_pct.  No conditional needed.
             if pos.is_long:
-                # Positive rate: longs pay → cost
-                cost = -payment if per_payment_rate >= 0 else payment
+                cost = -payment   # positive rate → pay; negative rate → receive
             else:
-                # Positive rate: shorts receive → revenue
-                cost = payment if per_payment_rate >= 0 else -payment
+                cost = payment    # positive rate → receive; negative rate → pay
 
             self.cash += cost
             net_funding += cost

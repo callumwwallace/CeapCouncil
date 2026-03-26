@@ -37,7 +37,8 @@ export default function KpiStrip({ results }: KpiStripProps) {
 
   const returnColor = results.total_return >= 0 ? 'green' : 'red';
   const sharpeColor = results.sharpe_ratio >= 1.5 ? 'green' : results.sharpe_ratio >= 1 ? 'amber' : 'red';
-  const ddColor = results.max_drawdown > -10 ? 'green' : results.max_drawdown > -20 ? 'amber' : 'red';
+  const ddAbs = Math.abs(results.max_drawdown);
+  const ddColor: 'green' | 'amber' | 'red' = ddAbs < 10 ? 'green' : ddAbs < 20 ? 'amber' : 'red';
   const pnlColor = netProfit >= 0 ? 'green' : 'red';
 
   const alphaColor =
@@ -88,13 +89,11 @@ export default function KpiStrip({ results }: KpiStripProps) {
           color={results.sortino_ratio >= 1 ? 'green' : 'amber'}
         />
       )}
-      {results.calmar_ratio !== undefined && (
-        <KpiItem
-          label="Calmar"
-          value={results.calmar_ratio.toFixed(2)}
-          color={results.calmar_ratio >= 1 ? 'green' : 'amber'}
-        />
-      )}
+      <KpiItem
+        label="Calmar"
+        value={results.calmar_ratio != null ? results.calmar_ratio.toFixed(2) : '—'}
+        color={results.calmar_ratio != null ? (results.calmar_ratio >= 1 ? 'green' : 'amber') : 'neutral'}
+      />
       {results.profit_factor !== undefined && (
         <KpiItem
           label="Prof. Factor"

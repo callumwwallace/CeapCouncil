@@ -2,6 +2,7 @@ import ast
 import logging
 import resource
 import signal
+import sys
 import math
 from datetime import datetime, timedelta, timezone
 
@@ -36,32 +37,37 @@ _BLOCKED_BUILTINS = {
     "type", "super",
 }
 
-_BLOCKED_DUNDER_ATTRS = {
-    "__subclasses__", "__bases__", "__mro__", "__base__",
-    "__class__", "__dict__", "__globals__", "__code__",
-    "__func__", "__self__", "__module__", "__import__",
-    "__builtins__", "__qualname__", "__wrapped__",
-    "__loader__", "__spec__", "__path__", "__file__",
-    "__reduce__", "__reduce_ex__", "__getstate__",
-}
+
+def _is_dunder(name: str) -> bool:
+    return name.startswith("__") and name.endswith("__") and len(name) > 4
 
 
 def _validate_no_dunder_access(code: str) -> None:
     tree = ast.parse(code)
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute):
-            if node.attr in _BLOCKED_DUNDER_ATTRS:
+            if _is_dunder(node.attr):
                 raise ValueError(
-                    f"Access to '{node.attr}' is not allowed "
+                    f"Access to dunder attribute '{node.attr}' is not allowed "
                     f"(line {getattr(node, 'lineno', '?')})"
                 )
         if isinstance(node, ast.Subscript):
             if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
-                if node.slice.value in _BLOCKED_DUNDER_ATTRS:
+                key = node.slice.value
+                if _is_dunder(key):
                     raise ValueError(
-                        f"Access to '{node.slice.value}' is not allowed "
+                        f"Access to dunder key '{key}' is not allowed "
                         f"(line {getattr(node, 'lineno', '?')})"
                     )
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in {"getattr", "setattr", "delattr"}:
+                if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                    key = node.args[1].value
+                    if isinstance(key, str) and _is_dunder(key):
+                        raise ValueError(
+                            f"Access to dunder attribute '{key}' via {node.func.id}() is not allowed "
+                            f"(line {getattr(node, 'lineno', '?')})"
+                        )
 
 
 class BacktestTimeout(Exception):
@@ -77,18 +83,28 @@ def _set_resource_limits():
     mem_bytes = settings.BACKTEST_MAX_MEMORY_MB * 1024 * 1024
     signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(timeout)
+    if sys.platform == "darwin":
+        # macOS kernel does not enforce RLIMIT_AS — setrlimit always returns
+        # EINVAL on Darwin regardless of the values supplied.  Skip silently;
+        # the timeout signal still provides a hard execution ceiling.
+        return
     try:
-        resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
-    except (ValueError, resource.error):
-        pass
+        _, hard = resource.getrlimit(resource.RLIMIT_AS)
+        effective = min(mem_bytes, hard) if hard != resource.RLIM_INFINITY else mem_bytes
+        resource.setrlimit(resource.RLIMIT_AS, (effective, hard))
+    except (ValueError, resource.error) as e:
+        logger.warning(
+            "Could not set memory limit for backtest worker — "
+            "running without enforced memory cap. Error: %s", e
+        )
 
 
 def _clear_resource_limits():
     signal.alarm(0)
     try:
         resource.setrlimit(resource.RLIMIT_AS, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
-    except (ValueError, resource.error):
-        pass
+    except (ValueError, resource.error) as e:
+        logger.warning("Could not restore resource limits after backtest. Error: %s", e)
 
 
 def _compile_with_timeout(code: str, params: dict | None = None, restore_alarm_after: int | None = 0):
@@ -255,31 +271,13 @@ class TradeRecorder(bt.Analyzer):
         }
 
 
-def _compute_sortino_ratio(
-    equity_curve: list[dict], risk_free_rate: float = 0.0, annualize: bool = True
-) -> float | None:
-    """Sortino ratio from daily equity values. MAR = risk_free_rate (default 0)."""
-    if len(equity_curve) < 2:
-        return None
-    equities = np.array([p["equity"] for p in equity_curve], dtype=float)
-    returns = np.diff(equities) / equities[:-1]
-    excess = returns - risk_free_rate / 252
-    # Classic Sortino: only downside volatility counts
-    downside_std = float(np.sqrt(np.mean(np.minimum(excess, 0) ** 2)))
-    if downside_std == 0:
-        return None
-    sortino = float(np.mean(excess)) / downside_std
-    if annualize:
-        sortino *= math.sqrt(252)
-    return round(sortino, 4)
-
 
 def _compute_profit_factor(trades: list[dict]) -> float | None:
     """Gross profit / |gross loss|. None if no losing trades."""
     if not trades:
         return None
-    gross_profit = sum(t["pnl"] for t in trades if t["pnl"] > 0)
-    gross_loss = abs(sum(t["pnl"] for t in trades if t["pnl"] < 0))
+    gross_profit = sum(t.get("pnl", 0) for t in trades if (t.get("pnl") or 0) > 0)
+    gross_loss = abs(sum(t.get("pnl", 0) for t in trades if (t.get("pnl") or 0) < 0))
     if gross_loss == 0:
         return None  # infinite / undefined
     return round(gross_profit / gross_loss, 4)
@@ -307,25 +305,13 @@ def _compute_max_consecutive_losses(trades: list[dict]) -> int:
     max_streak = 0
     current = 0
     for t in trades:
-        if t["pnl"] < 0:
+        if (t.get("pnl") or 0) < 0:
             current += 1
             max_streak = max(max_streak, current)
         else:
             current = 0
     return max_streak
 
-
-def _compute_calmar_ratio(
-    total_return_pct: float, max_drawdown_pct: float, num_days: int
-) -> float | None:
-    """Calmar = annualized return / max drawdown. None if max dd is 0."""
-    if max_drawdown_pct == 0 or num_days <= 0:
-        return None
-    years = num_days / 365.25
-    if years == 0:
-        return None
-    annualized = ((1 + total_return_pct / 100) ** (1 / years) - 1) * 100
-    return round(annualized / max_drawdown_pct, 4)
 
 
 def _compute_exposure_pct(trades: list[dict], total_bars: int) -> float | None:
@@ -361,11 +347,13 @@ def _run_backtest(
         for ind in ["-USD", "BTC", "ETH", "SOL", "DOGE", "XRP"]
     )
 
+    # API stores slippage as a decimal (0.001 = 0.1%) but the engine wants a percentage (0.1)
+    _raw_slip = params.get("slippage", 0.001)
     config = EngineConfig(
         initial_capital=initial_capital,
         commission_rate=params.get("commission", 0.001),
         slippage_model="percentage",
-        slippage_pct=params.get("slippage", 0.1),
+        slippage_pct=_raw_slip * 100 if _raw_slip < 1 else _raw_slip,
         spread_model="volatility" if is_crypto else "none",
         is_crypto=is_crypto,
         funding_enabled=is_crypto,
@@ -382,39 +370,6 @@ def _run_backtest(
     return engine.run()
 
 
-# downsample equity, drawdown series
-
-def _sample_series(series: list[dict], max_points: int = 200) -> list[dict]:
-    """Down-sample a list of dicts to at most *max_points* entries.
-
-    Always keeps the first and last element so the full date range is
-    represented.
-    """
-    n = len(series)
-    if n <= max_points:
-        return series
-
-    step = (n - 1) / (max_points - 1)
-    indices = {0, n - 1}
-    for i in range(1, max_points - 1):
-        indices.add(round(i * step))
-    return [series[i] for i in sorted(indices)]
-
-
-def _derive_drawdown_series(equity_curve: list[dict]) -> list[dict]:
-    """Compute a drawdown-percentage series from an equity curve."""
-    if not equity_curve:
-        return []
-
-    peak = equity_curve[0]["equity"]
-    drawdowns: list[dict] = []
-    for point in equity_curve:
-        equity = point["equity"]
-        if equity > peak:
-            peak = equity
-        dd_pct = round((peak - equity) / peak * 100, 4) if peak else 0.0
-        drawdowns.append({"date": point["date"], "drawdown_pct": dd_pct})
-    return drawdowns
 
 
 # mechanical bt -> engine code pass
@@ -569,11 +524,13 @@ def run_backtest_task(self, backtest_id: int):
         funding_enabled = bool(params.get("funding_enabled", is_crypto))
         funding_rate = float(params.get("funding_rate_annual_pct", 10.0))
 
+        # same decimal-to-percentage conversion as the analysis helper
+        _raw_slip = params.get("slippage", 0.001)
         engine_config = EngineConfig(
             initial_capital=backtest.initial_capital,
             commission_rate=params.get("commission", 0.001),
             slippage_model=user_slippage_model,
-            slippage_pct=params.get("slippage", 0.1),
+            slippage_pct=_raw_slip * 100 if _raw_slip < 1 else _raw_slip,
             liquidity_tier=liquidity_tier,
             spread_model=resolved_spread,
             is_crypto=is_crypto,
@@ -1112,25 +1069,31 @@ def run_genetic_optimization_task(
             param_bounds.append((0, 100))
             param_types.append("float")
 
-    # DEAP is picky — blow away stale fitness classes between runs
-    if hasattr(creator, "GeneticFitness"):
-        del creator.GeneticFitness
-    if hasattr(creator, "GeneticIndividual"):
-        del creator.GeneticIndividual
+    # Use task-unique class names so concurrent genetic tasks on the same worker
+    # don't clobber each other — DEAP's creator uses a module-level registry.
+    _task_id = self.request.id or id(self)
+    _fitness_cls = f"GeneticFitness_{_task_id}"
+    _individual_cls = f"GeneticIndividual_{_task_id}"
+    if hasattr(creator, _fitness_cls):
+        delattr(creator, _fitness_cls)
+    if hasattr(creator, _individual_cls):
+        delattr(creator, _individual_cls)
 
-    creator.create("GeneticFitness", base.Fitness, weights=(1.0,))
-    creator.create("GeneticIndividual", list, fitness=creator.GeneticFitness)
+    creator.create(_fitness_cls, base.Fitness, weights=(1.0,))
+    creator.create(_individual_cls, list, fitness=getattr(creator, _fitness_cls))
 
     toolbox = base.Toolbox()
 
     for i, (low, high) in enumerate(param_bounds):
         toolbox.register(f"attr_{i}", random.uniform, low, high)
 
+    _IndividualCls = getattr(creator, _individual_cls)
+
     def create_individual():
         ind = []
         for i, (low, high) in enumerate(param_bounds):
             ind.append(random.uniform(low, high))
-        return creator.GeneticIndividual(ind)
+        return _IndividualCls(ind)
 
     toolbox.register("individual", create_individual)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
@@ -1794,7 +1757,7 @@ def run_walk_forward_task(
         test_sharpe = test_result.get("sharpe_ratio") or 0
         overfit_score = None
         if train_sharpe > 0:
-            overfit_score = round(max(0, 1 - (test_sharpe / train_sharpe)) * 100, 1)
+            overfit_score = round(min(100, max(0, 1 - (test_sharpe / train_sharpe)) * 100), 1)
 
         windows.append({
             "window": i + 1,
@@ -1850,7 +1813,7 @@ def run_monte_carlo_task(
     if not trades:
         return {"status": "failed", "error": "No trades to simulate"}
 
-    pnls = [t["pnl"] for t in trades]
+    pnls = [t.get("pnl", 0) for t in trades]
     rng = np.random.default_rng(42)
 
     n_steps = 100  # normalised curve length
@@ -2053,9 +2016,9 @@ def _run_kfold_oos(
         "oos_return_std": round(float(np.std(oos_returns)), 4),
         "fold_results": fold_results,
         "is_result": None,
-        "oos_result": {"sharpe_ratio": np.mean(oos_sharpes), "total_return": np.mean(oos_returns)},
+        "oos_result": {"sharpe_ratio": float(np.mean(oos_sharpes)), "total_return": float(np.mean(oos_returns))},
         "is_sharpe": None,
-        "oos_sharpe": np.mean(oos_sharpes),
+        "oos_sharpe": float(np.mean(oos_sharpes)),
         "best_params": fold_results[0]["best_params"] if fold_results else {},
         "overfit_score": None,
     }
@@ -2190,7 +2153,7 @@ def run_oos_validation_task(
     oos_sharpe = oos_result.get("sharpe_ratio", 0) or 0
     overfit_score = None
     if is_sharpe > 0:
-        overfit_score = round(max(0, 1 - (oos_sharpe / is_sharpe)) * 100, 1)
+        overfit_score = round(min(100, max(0, 1 - (oos_sharpe / is_sharpe)) * 100), 1)
 
     multiple_testing_note = None
     if n_trials > 1:
@@ -2212,19 +2175,40 @@ def run_oos_validation_task(
 
 
 def _calculate_pbo(path_results: list) -> float | None:
-    """Probability of Backtest Overfitting (heuristic from path distribution).
+    """Probability of Backtest Overfitting — López de Prado (2018).
 
-    Fraction of paths where OOS Sharpe is below the cross-path median OOS Sharpe.
+    Finds the IS-optimal path (highest train Sharpe), then computes the
+    normalised rank of its OOS Sharpe among all paths. Returns the probability
+    that the IS-best strategy underperforms the median OOS, via a logit/normal
+    transform: PBO = Φ(−logit(ω)) where ω is the normalised OOS rank.
+
+    PBO near 1.0 → high overfitting; PBO near 0.0 → not overfitted.
     """
-    oos_sharpes = [
-        p["test_sharpe"] for p in path_results if p.get("test_sharpe") is not None
+    from scipy import stats as _stats
+
+    valid = [
+        p for p in path_results
+        if p.get("train_sharpe") is not None and p.get("test_sharpe") is not None
     ]
-    if not oos_sharpes:
+    if len(valid) < 2:
         return None
-    median_oos = float(np.median(oos_sharpes))
-    underperform = sum(1 for s in oos_sharpes if s < median_oos)
-    pbo = underperform / len(oos_sharpes)
-    return round(float(pbo), 4)
+
+    is_sharpes = [p["train_sharpe"] for p in valid]
+    oos_sharpes = [p["test_sharpe"] for p in valid]
+
+    # Find the IS-optimal path index
+    best_is_idx = int(np.argmax(is_sharpes))
+    best_oos = oos_sharpes[best_is_idx]
+
+    # Normalised rank of IS-best's OOS Sharpe (fraction of paths it beats)
+    n = len(oos_sharpes)
+    rank = sum(1 for s in oos_sharpes if s <= best_oos) / n
+
+    # Clamp to avoid log(0) at boundaries
+    rank = max(1e-6, min(1 - 1e-6, rank))
+    logit_omega = float(np.log(rank / (1 - rank)))
+    pbo = float(_stats.norm.cdf(-logit_omega))
+    return round(pbo, 4)
 
 
 def _deflated_sharpe(
@@ -2535,7 +2519,7 @@ def run_cpcv_task(
 
     overfit_score = None
     if train_sharpe_mean and train_sharpe_mean > 0 and oos_sharpe_mean is not None:
-        overfit_score = round(max(0, 1 - (oos_sharpe_mean / train_sharpe_mean)) * 100, 1)
+        overfit_score = round(min(100, max(0, 1 - (oos_sharpe_mean / train_sharpe_mean)) * 100), 1)
 
     pbo = _calculate_pbo(path_results)
 
@@ -2653,8 +2637,14 @@ def run_factor_attribution_task(
 
     equities = np.array([p["equity"] for p in equity_curve], dtype=float)
     dates = [p["date"] for p in equity_curve]
-    strat_returns = np.diff(equities) / equities[:-1]
-    strat_dates = dates[1:]
+    raw_returns = np.diff(equities) / equities[:-1]
+    raw_dates = dates[1:]
+    # Drop any inf/nan that arise when equity hits zero or data is corrupt
+    finite_mask = np.isfinite(raw_returns)
+    strat_returns = raw_returns[finite_mask]
+    strat_dates = [d for d, keep in zip(raw_dates, finite_mask) if keep]
+    if len(strat_returns) < 30:
+        return {"status": "failed", "error": "Insufficient finite return observations for factor regression"}
 
     factor_etfs = ["SPY", "IWM", "IVE", "IVW", "MTUM"]
     factor_data = {}

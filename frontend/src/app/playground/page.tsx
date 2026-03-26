@@ -79,7 +79,7 @@ import {
 } from 'recharts';
 
 import { STRATEGY_TEMPLATES, DEFAULT_CODE, type StrategyTemplateKey } from './strategyTemplates';
-import { applyDatePreset, formatRelativeTime, formatCommitTime, extractApiError, type DatePreset } from './utils';
+import { applyDatePreset, formatRelativeTime, formatCommitTime, extractApiError, categorizeBacktestError, type DatePreset } from './utils';
 import type { BacktestConfig, BacktestResult, BrokerPreset } from './types';
 import { SYMBOLS, BROKER_PRESETS } from './types';
 import { useExport } from './useExport';
@@ -230,6 +230,29 @@ export default function PlaygroundPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [lastBacktestShareToken, setLastBacktestShareToken] = useState<string | null>(null);
   const runCancelledRef = useRef(false);
+  // Cancel any in-flight poll when the component unmounts (e.g. user navigates away)
+  useEffect(() => {
+    return () => {
+      runCancelledRef.current = true;
+    };
+  }, []);
+
+  // Track the last-persisted code so we can warn before the user navigates away
+  // with unsaved changes.  Initialise to the current code so the warning only
+  // fires after the user has made an edit, not on first load.
+  const lastSavedCodeRef = useRef(code);
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (code !== lastSavedCodeRef.current) {
+        e.preventDefault();
+        // Modern browsers ignore the custom message and show their own text,
+        // but returnValue must be set for the dialog to appear at all.
+        e.returnValue = 'You have unsaved changes. Leave anyway?';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [code]);
   const playgroundRef = useRef<HTMLDivElement>(null);
   const chartAreaRef = useRef<HTMLDivElement>(null);
   const theme = useThemeStore((s) => s.theme);
@@ -301,8 +324,11 @@ export default function PlaygroundPage() {
   }, [results?.drawdown_series]);
 
   const validateConfig = (): string | null => {
-    const start = new Date(config.startDate);
-    const end = new Date(config.endDate);
+    // Append a local-time midnight so `new Date('YYYY-MM-DD')` is not
+    // interpreted as UTC midnight (which shifts the date by the user's UTC
+    // offset and produces off-by-one-day errors for western timezones).
+    const start = new Date(config.startDate + 'T00:00:00');
+    const end = new Date(config.endDate + 'T00:00:00');
     const now = new Date();
 
     if (end <= start) return 'End date must be after start date';
@@ -401,21 +427,26 @@ export default function PlaygroundPage() {
 
       // Never silently run stale code — ship exactly what's in the editor
       const CREATE_TIMEOUT_MS = 30000;
+      let createTimeoutId: ReturnType<typeof setTimeout> | null = null;
       const createPromise = api.createBacktestWithCode({ ...backtestConfig, code });
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Request timed out. Check your connection and try again.')), CREATE_TIMEOUT_MS)
-      );
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        createTimeoutId = setTimeout(
+          () => reject(new Error('Request timed out. Check your connection and try again.')),
+          CREATE_TIMEOUT_MS
+        );
+      });
       const backtest = await Promise.race([createPromise, timeoutPromise]);
+      if (createTimeoutId !== null) clearTimeout(createTimeoutId);
 
       let attempts = 0;
       const maxAttempts = 120;
-      
+
       while (attempts < maxAttempts) {
         if (runCancelledRef.current) {
           setError('Cancelled');
           break;
         }
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise<void>(resolve => setTimeout(resolve, 1000));
         let result;
         try {
           result = await api.getBacktest(backtest.id);
@@ -431,13 +462,15 @@ export default function PlaygroundPage() {
           const r = result.results;
           const benchmarkReturn = r?.benchmark_return ?? undefined;
           const resultsObj: BacktestResult = {
-            total_return: result.total_return || 0,
-            sharpe_ratio: result.sharpe_ratio || 0,
-            max_drawdown: result.max_drawdown || 0,
-            win_rate: result.win_rate || 0,
-            total_trades: result.total_trades || 0,
-            final_value: r?.final_value || config.initialCapital,
-            initial_capital: r?.initial_capital || config.initialCapital,
+            // Use ?? (nullish coalescing) not || so that a legitimate value of 0
+            // is preserved rather than replaced by the fallback.
+            total_return: result.total_return ?? 0,
+            sharpe_ratio: result.sharpe_ratio ?? 0,
+            max_drawdown: result.max_drawdown ?? 0,
+            win_rate: result.win_rate ?? 0,
+            total_trades: result.total_trades ?? 0,
+            final_value: r?.final_value ?? config.initialCapital,
+            initial_capital: r?.initial_capital ?? config.initialCapital,
             trades: r?.trades || [],
             equity_curve: r?.equity_curve || [],
             drawdown_series: r?.drawdown_series || [],
@@ -486,7 +519,7 @@ export default function PlaygroundPage() {
             ...prev.slice(-9),
             {
               ...resultsObj,
-              label: `${STRATEGY_TEMPLATES[selectedStarter]?.name ?? 'Strategy'} - ${config.symbol}`,
+              label: `${savedStrategyId ? (labStrategies.find(s => s.id === savedStrategyId)?.title ?? displayedSavedStrategies.find(s => s.id === savedStrategyId)?.title ?? 'Strategy') : (STRATEGY_TEMPLATES[selectedStarter]?.name ?? 'Strategy')} - ${config.symbol}`,
               timestamp: Date.now(),
               configSnapshot: {
                 symbol: config.symbol,
@@ -500,7 +533,7 @@ export default function PlaygroundPage() {
           ]);
           break;
         } else if (result.status === 'failed') {
-          setError(result.error_message || 'Backtest failed');
+          setError(categorizeBacktestError(result.error_message));
           break;
         }
         attempts++;
@@ -684,6 +717,7 @@ export default function PlaygroundPage() {
       setLabStrategies(prev => [strat, ...prev]);
       setSavedStrategyId(strat.id);
       setStrategySource('lab');
+      lastSavedCodeRef.current = code;
     } catch (err) {
       setError(extractApiError(err, 'Failed to create strategy'));
     }
@@ -752,6 +786,7 @@ export default function PlaygroundPage() {
       const params = { ...strategyParams } as Record<string, unknown>;
       if (additionalSymbols.length > 0) params.additional_symbols = additionalSymbols;
       await api.updateStrategy(savedStrategyId, { code, parameters: params });
+      lastSavedCodeRef.current = code;
       setSaveMessage('Strategy saved!');
       setTimeout(() => setSaveMessage(null), 3000);
     } catch (err: unknown) {
@@ -1024,8 +1059,8 @@ export default function PlaygroundPage() {
                   endDate={config.endDate}
                   interval={config.interval}
                   trades={tradeMarkers}
-                  equityCurve={results?.equity_curve}
-                  drawdownSeries={results?.drawdown_series}
+                  equityCurve={equityCurveData}
+                  drawdownSeries={drawdownData}
                   benchmarkReturn={results?.benchmark_return ?? undefined}
                   chartTheme={effectiveChartTheme}
                   additionalSymbols={additionalSymbols}
@@ -1445,7 +1480,7 @@ export default function PlaygroundPage() {
                               </span>
                               <div className="flex items-center gap-2 text-[10px] text-gray-500">
                                 <span>SR {run.sharpe_ratio.toFixed(2)}</span>
-                                <span>DD {(run.max_drawdown * 100).toFixed(1)}%</span>
+                                <span>DD {run.max_drawdown.toFixed(1)}%</span>
                               </div>
                             </div>
                             {changes.length > 0 && (

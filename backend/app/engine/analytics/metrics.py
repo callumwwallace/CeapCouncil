@@ -98,9 +98,7 @@ def compute_metrics(
     risk_free_rate: float = 0.0,
     num_backtests_tried: int = 1,
 ) -> MetricsResult:
-    """Compute all analytics from an equity curve and trade list.
-    
-    """
+    """Compute all analytics from an equity curve and trade list."""
     result = MetricsResult()
 
     if len(equity_curve) < 2:
@@ -115,16 +113,21 @@ def compute_metrics(
             trade_dicts.append(t)
 
     equities = np.array([p["equity"] for p in equity_curve], dtype=float)
-    raw_returns = np.diff(equities) / equities[:-1]
+    # Suppress divide-by-zero/invalid warnings: equity can legitimately be 0
+    # (e.g. first bar before any capital is deployed).  The resulting inf/nan
+    # values are then removed by finite_mask, so they never affect calculations.
+    with np.errstate(divide='ignore', invalid='ignore'):
+        raw_returns = np.diff(equities) / equities[:-1]
     finite_mask = np.isfinite(raw_returns)
     returns = raw_returns[finite_mask]
-    # Map each return to its date so rolling metrics line up
+    # Return at position j = change from equity[j] → equity[j+1].
+    # Date it as equity_curve[j+1] (the bar where the new value is observed).
     return_dates = [equity_curve[j + 1]["date"] for j in range(len(raw_returns)) if finite_mask[j]]
 
     if len(returns) == 0:
         return result
 
-    # -- Performance Metrics --
+    # performance
     final = equities[-1]
     result.total_return_pct = round((final - initial_capital) / initial_capital * 100, 4)
 
@@ -139,7 +142,11 @@ def compute_metrics(
     downside_returns = np.minimum(excess, 0)
     downside_std = float(np.sqrt(np.mean(downside_returns ** 2)))
     if downside_std > 0:
-        result.sortino_ratio = round(float(np.mean(excess) / downside_std * math.sqrt(252)), 4)
+        sortino = float(np.mean(excess) / downside_std * math.sqrt(252))
+        # Guard against inf/nan from floating-point edge cases (e.g. a single
+        # tiny negative return producing a near-zero downside_std)
+        if math.isfinite(sortino):
+            result.sortino_ratio = round(sortino, 4)
 
     # Volatility (annualised)
     result.volatility_annual = round(float(np.std(returns, ddof=1) * math.sqrt(252)) * 100, 4)
@@ -166,8 +173,11 @@ def compute_metrics(
             result.cvar_99 = round(float(np.mean(tail_99)) * 100, 4)
 
     # Max Drawdown
+    # Use np.where to avoid division by zero when peak == 0 (e.g. strategy
+    # starts with zero equity or equity goes negative).
     peak = np.maximum.accumulate(equities)
-    drawdowns = (peak - equities) / peak * 100
+    with np.errstate(divide='ignore', invalid='ignore'):
+        drawdowns = np.where(peak > 0, (peak - equities) / peak * 100, 0.0)
     result.max_drawdown_pct = round(float(np.max(drawdowns)), 4)
 
     # CAGR & Calmar: use calendar days between first/last bar
@@ -199,7 +209,7 @@ def compute_metrics(
             current_dur = 0
     result.max_drawdown_duration_days = max_dd_dur
 
-    # -- Trade Metrics --
+    # trade stats
     result.total_trades = len(trade_dicts)
     if trade_dicts:
         winners = [t for t in trade_dicts if t.get("pnl", 0) > 0]
@@ -276,7 +286,7 @@ def compute_metrics(
         if total_calendar_days > 0:
             result.exposure_pct = round(len(held_days) / total_calendar_days * 100, 2)
 
-    # -- CAPM Decomposition --
+    # CAPM decomposition (beta, alpha, R², IR)
     if benchmark_returns is not None and len(benchmark_returns) >= len(returns):
         bm = np.array(benchmark_returns[:len(returns)])
         valid = np.isfinite(bm) & np.isfinite(returns)
@@ -308,8 +318,8 @@ def compute_metrics(
     if result.beta and result.beta != 0 and result.cagr is not None:
         result.treynor_ratio = round((result.cagr - risk_free_rate * 100) / result.beta, 4)
 
-    # -- Rolling Metrics --
-    window = min(63, len(returns) // 2)  # ~3 months or half the data
+    # rolling metrics — 63-bar window (~3 months), or half the data if shorter
+    window = min(63, len(returns) // 2)
     if window >= 20:
         result.rolling_sharpe = _compute_rolling_metric(
             returns, return_dates, window, "sharpe", daily_rf
@@ -324,7 +334,7 @@ def compute_metrics(
             )
         result.rolling_vol = _compute_rolling_vol(returns, return_dates, 21)
 
-    # -- Overfitting Detection --
+    # overfitting checks — only run when there were multiple trial runs
     if result.sharpe_ratio is not None and num_backtests_tried > 1:
         result.deflated_sharpe_ratio = _deflated_sharpe(
             result.sharpe_ratio, len(returns), num_backtests_tried
@@ -394,30 +404,32 @@ def _compute_rolling_vol(
 
 
 def _deflated_sharpe(sharpe: float, n_obs: int, n_trials: int) -> float:
-    """Deflated Sharpe Ratio: accounts for multiple testing.
+    """Deflated Sharpe Ratio — Bailey & López de Prado (2014).
 
-    Based on Bailey & López de Prado (2014).
+    Returns a probability in [0, 1] representing the confidence that the
+    observed Sharpe is genuine after correcting for multiple testing.
+    Values >= 0.95 indicate high confidence; < 0.5 suggests the result
+    may be a product of data-snooping.
     """
     if n_obs <= 1 or n_trials <= 1:
-        return sharpe
+        # not enough runs to adjust — return a neutral 0.5
+        return 0.5
 
-    # Expected max Sharpe under null (assumes independent tests)
+    # expected max Sharpe under the null (Gumbel approximation)
     euler_mascheroni = 0.5772
     expected_max_sr = math.sqrt(2 * math.log(n_trials)) - (
         (euler_mascheroni + math.log(math.pi / 2)) / (2 * math.sqrt(2 * math.log(n_trials)))
     ) if n_trials > 1 else 0
 
-    # Standard error of Sharpe
+    # SE of the Sharpe estimate
     se = math.sqrt((1 + 0.5 * sharpe ** 2) / n_obs) if n_obs > 0 else 1
 
-    # Probability Sharpe is real (vs. noise from multiple testing)
+    # map to a probability via normal CDF
     z = (sharpe - expected_max_sr) / se if se > 0 else 0
-
-    # Use normal CDF approximation
     from math import erf
     psr = 0.5 * (1 + erf(z / math.sqrt(2)))
 
-    return round(psr * sharpe, 4)
+    return round(psr, 4)
 
 
 def _robustness_score(result: MetricsResult) -> float:
@@ -446,9 +458,9 @@ def _robustness_score(result: MetricsResult) -> float:
     if 35 <= result.win_rate <= 65:
         score += 5
 
-    # Deflated Sharpe bonus
+    # Deflated Sharpe bonus (DSR is now a probability 0-1; scale to max 10 pts)
     if result.deflated_sharpe_ratio and result.deflated_sharpe_ratio > 0:
-        score += min(result.deflated_sharpe_ratio * 5, 10)
+        score += min(result.deflated_sharpe_ratio * 10, 10)
 
     return round(max(0, min(100, score)), 1)
 

@@ -14,7 +14,33 @@ export interface ExtractedParam {
 
 // Core extraction
 
-const PARAM_REGEX = /self\.params\.setdefault\(\s*['"](\w+)['"]\s*,\s*([^)]+)\)/g;
+// Matches `self.params.setdefault( 'key' ,` — does NOT try to capture the value
+// because [^)]+ breaks on nested parens like func().  Value extraction is done
+// manually by extractBalancedValue() so nesting depth is respected.
+const CALL_PREFIX_REGEX = /self\.params\.setdefault\(\s*['"](\w+)['"]\s*,\s*/g;
+
+/**
+ * Extract the value argument from a setdefault call, respecting paren nesting.
+ * `code`  – full source string
+ * `start` – index of the first character of the value (right after the comma)
+ * Returns the raw value string (without the outer closing paren), or null if
+ * the parens are unbalanced.
+ */
+function extractBalancedValue(code: string, start: number): string | null {
+  // We entered the outer call's `(` before reaching `start`, so depth starts at 1.
+  let depth = 1;
+  let i = start;
+  while (i < code.length) {
+    const ch = code[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      depth--;
+      if (depth === 0) return code.slice(start, i);
+    }
+    i++;
+  }
+  return null; // unbalanced source
+}
 
 /**
  * Extract all parameters from strategy code by parsing
@@ -24,19 +50,33 @@ export function extractParamsFromCode(code: string): ExtractedParam[] {
   const params: ExtractedParam[] = [];
 
   let match: RegExpExecArray | null;
-  const regex = new RegExp(PARAM_REGEX.source, PARAM_REGEX.flags);
+  const regex = new RegExp(CALL_PREFIX_REGEX.source, CALL_PREFIX_REGEX.flags);
 
   while ((match = regex.exec(code)) !== null) {
     const key = match[1];
-    const rawValue = match[2].trim();
-
     if (seen.has(key)) continue;
+
+    // Extract the value argument with balanced-paren awareness
+    const valueStart = match.index + match[0].length;
+    const rawValue = extractBalancedValue(code, valueStart);
+    if (rawValue === null) continue;
+
+    const trimmed = rawValue.trim();
+
+    // Python booleans are not numeric params — skip them
+    if (trimmed === 'True' || trimmed === 'False') continue;
+
+    const numValue = parseFloat(trimmed);
+    if (isNaN(numValue)) continue; // skip non-numeric defaults (e.g. strings)
+
     seen.add(key);
 
-    const numValue = parseFloat(rawValue);
-    if (isNaN(numValue)) continue; // skip non-numeric defaults
-
-    const isFloat = rawValue.includes('.') || Math.abs(numValue) < 1 && numValue !== 0;
+    // Scientific notation (e.g. 1e-5, 2.5e3) contains 'e'/'E' → float
+    const lc = trimmed.toLowerCase();
+    const isFloat =
+      trimmed.includes('.') ||
+      lc.includes('e') ||
+      (Math.abs(numValue) < 1 && numValue !== 0);
     const type: 'int' | 'float' = isFloat ? 'float' : 'int';
     const range = deriveRange(key, numValue, type);
 

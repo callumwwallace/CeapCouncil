@@ -47,32 +47,49 @@ _BLOCKED_BUILTINS = {
     "type", "super",
 }
 
-_BLOCKED_DUNDER_ATTRS = {
-    "__subclasses__", "__bases__", "__mro__", "__base__",
-    "__class__", "__dict__", "__globals__", "__code__",
-    "__func__", "__self__", "__module__", "__import__",
-    "__builtins__", "__qualname__", "__wrapped__",
-    "__loader__", "__spec__", "__path__", "__file__",
-    "__reduce__", "__reduce_ex__", "__getstate__",
+def _is_dunder(name: str) -> bool:
+    """Return True for any __dunder__ name."""
+    return name.startswith("__") and name.endswith("__") and len(name) > 4
+
+
+# Explicitly blocked single-underscore and other dangerous attrs
+_BLOCKED_ATTRS = {
+    "_module", "_class", "_bases", "_mro", "_dict",
+    "_globals", "_code", "_func", "_self",
 }
 
 
 def _validate_no_dunder_access(code: str) -> None:
+    """Reject any AST node that touches a dunder or other dangerous attribute."""
     tree = ast.parse(code)
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute):
-            if node.attr in _BLOCKED_DUNDER_ATTRS:
+            attr = node.attr
+            if _is_dunder(attr):
                 raise ValueError(
-                    f"Access to '{node.attr}' is not allowed "
+                    f"Access to dunder attribute '{attr}' is not allowed "
                     f"(line {getattr(node, 'lineno', '?')})"
                 )
         if isinstance(node, ast.Subscript):
+            # Catch obj['__class__'] style access via constant string key
             if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
-                if node.slice.value in _BLOCKED_DUNDER_ATTRS:
+                key = node.slice.value
+                if _is_dunder(key):
                     raise ValueError(
-                        f"Access to '{node.slice.value}' is not allowed "
+                        f"Access to dunder key '{key}' is not allowed "
                         f"(line {getattr(node, 'lineno', '?')})"
                     )
+        if isinstance(node, ast.Call):
+            # Block getattr(obj, '__class__') etc. even though getattr is
+            # already in _BLOCKED_BUILTINS — belt-and-suspenders check.
+            if isinstance(node.func, ast.Name) and node.func.id in {"getattr", "setattr", "delattr"}:
+                if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                    key = node.args[1].value
+                    if isinstance(key, str) and _is_dunder(key):
+                        raise ValueError(
+                            f"Access to dunder attribute '{key}' via {node.func.id}() is not allowed "
+                            f"(line {getattr(node, 'lineno', '?')})"
+                        )
 
 
 def _build_safe_builtins() -> dict:

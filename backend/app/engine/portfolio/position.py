@@ -188,6 +188,11 @@ class Position:
 
             self.realized_pnl += pnl_net
             remaining -= close_qty
+            # Clamp sub-epsilon noise to zero so accumulating floating-point
+            # errors across many micro-trades don't keep the loop running or
+            # leave phantom open lots.
+            if remaining < 1e-9:
+                remaining = 0.0
 
             if close_qty >= lot_qty - 1e-9:
                 self._lots.pop(0)
@@ -205,12 +210,21 @@ class Position:
             total_qty = sum(abs(l.quantity) for l in self._lots)
             self.avg_cost = total_cost / total_qty if total_qty > 0 else 0
 
-        if abs(self.quantity) > 1e-9 and not self._lots and remaining > 1e-9:
-            self._add_lot(
-                remaining if quantity > 0 else -remaining,
-                price, commission * (remaining / abs(quantity)),
-                timestamp,
-            )
+        if abs(self.quantity) > 1e-9 and not self._lots:
+            # Position was flipped (e.g. long 100 → sell 150 → short 50).
+            # self.quantity already holds the correct net position from
+            # `self.quantity += quantity` above.  We must NOT call _add_lot()
+            # here because that method would add `quantity` to self.quantity a
+            # second time, doubling the flip size.  Instead, open the new lot
+            # directly without touching self.quantity.
+            flip_qty = self.quantity   # signed net position after flip
+            self.avg_cost = price
+            self._lots.append(PositionLot(
+                quantity=flip_qty,
+                price=price,
+                commission=commission * (abs(flip_qty) / abs(quantity)),
+                timestamp=timestamp,
+            ))
 
         self.trades.extend(trades)
         return trades

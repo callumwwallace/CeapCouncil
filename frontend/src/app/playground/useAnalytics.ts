@@ -1,9 +1,17 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import api from '@/lib/api';
 import type { OptimizeResults, WalkForwardResults, OosResults, MonteCarloResults, CpcvResults, FactorResults } from '@/types';
 import type { BacktestConfig } from './types';
 import { extractApiError, pollTaskResult } from './utils';
 import { type ExtractedParam, buildParamRanges } from './extractParams';
+
+// Polling budgets per operation type.
+// Standard tasks (grid, bayesian, genetic, WFO, OOS, Monte Carlo): 4 min
+// CPCV runs N×(N-1)/2 backtests so we budget 9 min at a longer interval.
+// Factor attribution is fast (seconds), 2 min is plenty.
+const POLL_STANDARD   = { maxAttempts: 120, intervalMs: 2000 } as const; // 4 min
+const POLL_CPCV       = { maxAttempts: 180, intervalMs: 3000 } as const; // 9 min
+const POLL_FACTOR     = { maxAttempts:  60, intervalMs: 2000 } as const; // 2 min
 
 interface UseAnalyticsInput {
   config: BacktestConfig;
@@ -18,9 +26,11 @@ export function useAnalytics({
   paramDefs,
   strategyParams,
 }: UseAnalyticsInput) {
-  // Optimization
+  // optimization state
   const [optimizeResults, setOptimizeResults] = useState<OptimizeResults | null>(null);
   const [optimizeLoading, setOptimizeLoading] = useState(false);
+  const [optimizeElapsed, setOptimizeElapsed] = useState(0);
+  const optimizeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [optimizeMethod, setOptimizeMethod] = useState<'grid' | 'bayesian' | 'genetic' | 'multiobjective' | 'heatmap'>('grid');
   const [optConstraints, setOptConstraints] = useState<{max_drawdown?: number; min_trades?: number; min_win_rate?: number}>({});
   const [showConstraints, setShowConstraints] = useState(false);
@@ -28,40 +38,45 @@ export function useAnalytics({
   const [heatmapParamY, setHeatmapParamY] = useState('');
   const [multiObjMetrics, setMultiObjMetrics] = useState<[string, string]>(['sharpe_ratio', 'max_drawdown']);
 
-  // Walk-forward
+  // walk-forward state
   const [walkForwardResults, setWalkForwardResults] = useState<WalkForwardResults | null>(null);
   const [walkForwardLoading, setWalkForwardLoading] = useState(false);
   const [walkForwardPurgeBars, setWalkForwardPurgeBars] = useState(0);
   const [walkForwardWindowMode, setWalkForwardWindowMode] = useState<'rolling' | 'anchored'>('rolling');
 
-  // OOS
+  // out-of-sample state
   const [oosResults, setOosResults] = useState<OosResults | null>(null);
   const [oosLoading, setOosLoading] = useState(false);
   const [oosNfolds, setOosNfolds] = useState(1);
 
-  // CPCV
+  // CPCV state
   const [cpcvResults, setCpcvResults] = useState<CpcvResults | null>(null);
   const [cpcvLoading, setCpcvLoading] = useState(false);
   const [cpcvNGroups, setCpcvNGroups] = useState(6);
   const [cpcvPurgeBars, setCpcvPurgeBars] = useState(10);
 
-  // Factor attribution
+  // factor attribution state
   const [factorResults, setFactorResults] = useState<FactorResults | null>(null);
   const [factorLoading, setFactorLoading] = useState(false);
 
-  // Monte Carlo
+  // monte carlo state
   const [monteCarloResults, setMonteCarloResults] = useState<MonteCarloResults | null>(null);
   const [monteCarloLoading, setMonteCarloLoading] = useState(false);
 
-  // Shared
+  // the last backtest ID — needed for factor attribution and monte carlo
   const [lastBacktestId, setLastBacktestId] = useState<number | null>(null);
 
-  // Optimization
+  // handlers
 
   const handleRunOptimization = useCallback(async () => {
-    if (paramDefs.length === 0) return;
+    if (paramDefs.length === 0) {
+      setOptimizeResults({ error: 'No parameters detected — add at least one @param annotation to your strategy' });
+      return;
+    }
     setOptimizeLoading(true);
     setOptimizeResults(null);
+    setOptimizeElapsed(0);
+    optimizeTimerRef.current = setInterval(() => setOptimizeElapsed(s => s + 1), 1000);
     try {
       const activeConstraints = showConstraints && Object.keys(optConstraints).length > 0 ? optConstraints : undefined;
       const basePayload = {
@@ -89,11 +104,14 @@ export function useAnalytics({
       };
 
       const poll = (task_id: string) =>
-        pollTaskResult(api.getOptimizationResult.bind(api), task_id).then(setOptimizeResults);
+        pollTaskResult(api.getOptimizationResult.bind(api), task_id, POLL_STANDARD).then(setOptimizeResults);
 
       if (optimizeMethod === 'bayesian') {
         const ranges = buildRanges();
-        if (Object.keys(ranges).length === 0) return;
+        if (Object.keys(ranges).length === 0) {
+          setOptimizeResults({ error: 'No parameter ranges defined for optimization' });
+          return;
+        }
         const { task_id } = await api.runBayesianOptimization({
           ...basePayload,
           param_ranges: ranges, n_trials: 50, objective_metric: 'sharpe_ratio',
@@ -103,7 +121,10 @@ export function useAnalytics({
 
       } else if (optimizeMethod === 'genetic') {
         const ranges = buildRanges();
-        if (Object.keys(ranges).length === 0) return;
+        if (Object.keys(ranges).length === 0) {
+          setOptimizeResults({ error: 'No parameter ranges defined for optimization' });
+          return;
+        }
         const { task_id } = await api.runGeneticOptimization({
           ...basePayload,
           param_ranges: ranges, population_size: 50, n_generations: 20,
@@ -114,7 +135,10 @@ export function useAnalytics({
 
       } else if (optimizeMethod === 'multiobjective') {
         const ranges = buildRanges();
-        if (Object.keys(ranges).length === 0) return;
+        if (Object.keys(ranges).length === 0) {
+          setOptimizeResults({ error: 'No parameter ranges defined for optimization' });
+          return;
+        }
         const { task_id } = await api.runMultiObjectiveOptimization({
           ...basePayload,
           param_ranges: ranges, n_trials: 50,
@@ -131,7 +155,10 @@ export function useAnalytics({
         }
         const px = paramDefs.find(p => p.key === heatmapParamX);
         const py = paramDefs.find(p => p.key === heatmapParamY);
-        if (!px || !py) return;
+        if (!px || !py) {
+          setOptimizeResults({ error: 'Selected heatmap parameters not found in strategy code' });
+          return;
+        }
         const { task_id } = await api.runHeatmap({
           ...basePayload,
           param_x: heatmapParamX, param_y: heatmapParamY,
@@ -155,7 +182,10 @@ export function useAnalytics({
           }
           if (vals.length > 0) grid[p.key] = [...new Set(vals)];
         }
-        if (Object.keys(grid).length === 0) return;
+        if (Object.keys(grid).length === 0) {
+          setOptimizeResults({ error: 'Could not build a parameter grid — check your parameter ranges' });
+          return;
+        }
         const { task_id } = await api.runOptimization({
           ...basePayload,
           param_grid: grid, constraints: activeConstraints,
@@ -166,10 +196,12 @@ export function useAnalytics({
       setOptimizeResults({ error: extractApiError(err, 'Optimization failed') });
     } finally {
       setOptimizeLoading(false);
+      if (optimizeTimerRef.current) {
+        clearInterval(optimizeTimerRef.current);
+        optimizeTimerRef.current = null;
+      }
     }
   }, [paramDefs, strategyParams, config, code, optimizeMethod, optConstraints, showConstraints, heatmapParamX, heatmapParamY, multiObjMetrics]);
-
-  // Walk-forward
 
   const handleRunWalkForward = useCallback(async () => {
     setWalkForwardLoading(true);
@@ -190,7 +222,7 @@ export function useAnalytics({
         interval: config.interval,
       });
 
-      const res = await pollTaskResult(api.getWalkForwardResult.bind(api), task_id);
+      const res = await pollTaskResult(api.getWalkForwardResult.bind(api), task_id, POLL_STANDARD);
       setWalkForwardResults(res);
     } catch (err: unknown) {
       setWalkForwardResults({ error: extractApiError(err, 'Walk-forward failed') });
@@ -198,8 +230,6 @@ export function useAnalytics({
       setWalkForwardLoading(false);
     }
   }, [code, config, walkForwardPurgeBars, walkForwardWindowMode]);
-
-  // Out-of-sample
 
   const handleRunOos = useCallback(async () => {
     setOosLoading(true);
@@ -220,7 +250,7 @@ export function useAnalytics({
         n_trials: 30,
         interval: config.interval,
       });
-      const res = await pollTaskResult(api.getOosResult.bind(api), task_id);
+      const res = await pollTaskResult(api.getOosResult.bind(api), task_id, POLL_STANDARD);
       setOosResults(res);
     } catch (err: unknown) {
       setOosResults({ error: extractApiError(err, 'OOS validation failed') });
@@ -228,8 +258,6 @@ export function useAnalytics({
       setOosLoading(false);
     }
   }, [code, config, oosNfolds, paramDefs]);
-
-  // CPCV
 
   const handleRunCpcv = useCallback(async () => {
     setCpcvLoading(true);
@@ -252,7 +280,7 @@ export function useAnalytics({
         n_trials: 30,
         interval: config.interval,
       });
-      const res = await pollTaskResult(api.getCpcvResult.bind(api), task_id, { maxAttempts: 180, intervalMs: 3000 });
+      const res = await pollTaskResult(api.getCpcvResult.bind(api), task_id, POLL_CPCV);
       setCpcvResults(res);
     } catch (err: unknown) {
       setCpcvResults({ error: extractApiError(err, 'CPCV failed') });
@@ -261,15 +289,16 @@ export function useAnalytics({
     }
   }, [code, config, cpcvNGroups, cpcvPurgeBars, paramDefs]);
 
-  // Factor attribution
-
   const handleRunFactorAttribution = useCallback(async () => {
-    if (!lastBacktestId) return;
+    if (!lastBacktestId) {
+      setFactorResults({ error: 'Run a backtest first — factor attribution requires a completed backtest' });
+      return;
+    }
     setFactorLoading(true);
     setFactorResults(null);
     try {
       const { task_id } = await api.runFactorAttribution(lastBacktestId);
-      const res = await pollTaskResult(api.getFactorAttributionResult.bind(api), task_id, { maxAttempts: 60 });
+      const res = await pollTaskResult(api.getFactorAttributionResult.bind(api), task_id, POLL_FACTOR);
       setFactorResults(res);
     } catch (err: unknown) {
       setFactorResults({ error: extractApiError(err, 'Factor attribution failed') });
@@ -278,19 +307,19 @@ export function useAnalytics({
     }
   }, [lastBacktestId]);
 
-  // Monte Carlo
-
   const handleRunMonteCarlo = useCallback(async () => {
-    if (!lastBacktestId) return;
+    if (!lastBacktestId) {
+      setMonteCarloResults({ error: 'Run a backtest first — Monte Carlo simulation requires a completed backtest' });
+      return;
+    }
     setMonteCarloLoading(true);
     setMonteCarloResults(null);
     try {
       const { task_id } = await api.runMonteCarlo(lastBacktestId, {
-        backtest_id: lastBacktestId,
         n_simulations: 1000,
       });
 
-      const res = await pollTaskResult(api.getMonteCarloResult.bind(api), task_id, { maxAttempts: 60 });
+      const res = await pollTaskResult(api.getMonteCarloResult.bind(api), task_id, POLL_STANDARD);
       setMonteCarloResults(res);
     } catch (err: unknown) {
       setMonteCarloResults({ error: extractApiError(err, 'Monte Carlo failed') });
@@ -300,21 +329,22 @@ export function useAnalytics({
   }, [lastBacktestId]);
 
   return {
-    // Results
+    // results
     optimizeResults,
     walkForwardResults,
     oosResults,
     cpcvResults,
     factorResults,
     monteCarloResults,
-    // Loading states
+    // loading flags
     optimizeLoading,
+    optimizeElapsed,
     walkForwardLoading,
     oosLoading,
     cpcvLoading,
     factorLoading,
     monteCarloLoading,
-    // Config state
+    // per-tab config
     optimizeMethod, setOptimizeMethod,
     optConstraints, setOptConstraints,
     showConstraints, setShowConstraints,
@@ -327,7 +357,7 @@ export function useAnalytics({
     cpcvNGroups, setCpcvNGroups,
     cpcvPurgeBars, setCpcvPurgeBars,
     lastBacktestId, setLastBacktestId,
-    // Handlers
+    // run handlers
     handleRunOptimization,
     handleRunWalkForward,
     handleRunOos,

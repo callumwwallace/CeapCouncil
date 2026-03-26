@@ -602,7 +602,7 @@ export interface RegisterData {
   full_name?: string;
 }
 
-// Walk-forward, CPCV, factors, etc.
+// analytics result shapes — walk-forward, CPCV, factors, monte carlo, etc.
 
 export interface OptimizeResults {
   status?: string;
@@ -615,7 +615,7 @@ export interface OptimizeResults {
     [key: string]: unknown;
   }>;
   heatmap?: Array<{ x: number; y: number; value: number }>;
-  /** 2-D grid coming back from the heatmap worker */
+  // 2-D heatmap fields — only present when optimizeMethod === 'heatmap'
   param_x?: string;
   param_y?: string;
   x_values?: number[];
@@ -628,7 +628,7 @@ export interface OptimizeResults {
   optimal?: { xi: number; yi: number; value: number; [k: string]: number };
   diagnostics?: Array<{ reason: string; [k: string]: unknown }>;
   warning?: string;
-  /** When the grid blows up mid-run, we stash the first bad cell here */
+  // the first parameter combo that caused a crash, so the UI can surface it
   first_failing_combo?: Record<string, number>;
 }
 
@@ -717,11 +717,11 @@ export interface CpcvResults {
   train_sharpe_mean?: number | null;
   prob_oos_loss?: number | null;
   overfit_score?: number | null;
-  /** Heuristic: fraction of paths with OOS Sharpe below median OOS Sharpe */
+  // probability of backtest overfitting (López de Prado) — fraction of paths where IS-best lost OOS
   pbo?: number | null;
-  /** Deflated Sharpe (multiple-testing adjusted), López de Prado */
+  // deflated Sharpe after adjusting for multiple testing (López de Prado)
   deflated_sharpe_ratio?: number | null;
-  /** Chronological OOS bar segments per combo path */
+  // chronological OOS bar segments stitched together for each combo path
   reconstructed_paths?: Array<{
     combo_index: number;
     total_bars?: number;
@@ -757,10 +757,17 @@ export interface FactorResults {
   strategy_annual_return_pct?: number | null;
   n_observations?: number | null;
   factors?: Array<{
-    name: string;
-    coefficient: number;
+    factor: string;
+    beta: number;
     t_stat: number;
     p_value: number;
-    exposure_pct: number;
+    significance: string;
+    annual_contribution_pct: number;
   }>;
+  alpha_significant?: boolean;
+  adj_r_squared?: number | null;
+  factor_contribution_sum_pct?: number | null;
+  unexplained_alpha_pct?: number | null;
+  strategy_annual_return_pct?: number | null;
+  strategy_total_return_pct?: number | null;
 }

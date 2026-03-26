@@ -96,6 +96,25 @@ class BrokerSimulator:
     def submit_order(self, order: Order, timestamp: datetime) -> Order:
         """Submit a new order. Returns the order with SUBMITTED or REJECTED status."""
         order.created_at = timestamp
+
+        # Basic field validation — reject early with a clear message
+        validation_errors: list[str] = []
+        if order.quantity <= 0:
+            validation_errors.append(f"quantity must be positive (got {order.quantity})")
+        if order.order_type in (OrderType.LIMIT, OrderType.STOP_LIMIT):
+            if order.limit_price is not None and order.limit_price <= 0:
+                validation_errors.append(f"limit_price must be positive (got {order.limit_price})")
+        if order.order_type in (OrderType.STOP_MARKET, OrderType.STOP_LIMIT, OrderType.TRAILING_STOP):
+            if order.stop_price is not None and order.stop_price <= 0:
+                validation_errors.append(f"stop_price must be positive (got {order.stop_price})")
+        if validation_errors:
+            order.reject("; ".join(validation_errors))
+            self._all_orders.append(order)
+            self._order_map[order.order_id] = order
+            if self._on_reject:
+                self._on_reject(order)
+            return order
+
         if self._pre_submit_check:
             allowed, reason = self._pre_submit_check(order)
             if not allowed:
@@ -185,12 +204,15 @@ class BrokerSimulator:
             if not order.is_active:
                 continue
 
-            # Still no margin? Don't let a buy slip through if cash can't cover it
+            # Reject buys that would exceed available cash.
+            # Commission is charged after the fill so we check against raw fill
+            # cost only.  No hidden buffer — the comparison is exact so users
+            # can see exactly why an order was rejected.
             if (order.side == OrderSide.BUY
                     and not self.allow_overdraft
                     and self._cash_fn is not None):
                 fill_cost = result.fill_price * result.fill_quantity
-                if fill_cost > self._cash_fn() * 1.02:
+                if fill_cost > self._cash_fn():
                     order.reject("Insufficient cash")
                     if self._on_reject:
                         self._on_reject(order)

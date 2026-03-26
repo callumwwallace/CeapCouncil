@@ -12,7 +12,7 @@ export interface TradeLogProps {
 type SortKey = 'entry_date' | 'type' | 'symbol' | 'entry_price' | 'exit_price' | 'size' | 'pnl' | 'commission';
 
 const ROW_HEIGHT = 32;
-const VIRTUALIZATION_THRESHOLD = 100;
+const VIRTUALIZATION_THRESHOLD = 20;
 
 // Multi-asset runs get a Symbol column; single-symbol layouts stay tighter
 const COLUMN_GRID_SINGLE = 'grid grid-cols-[1fr_60px_80px_80px_56px_120px_64px]';

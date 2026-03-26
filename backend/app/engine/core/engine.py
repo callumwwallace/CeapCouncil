@@ -325,6 +325,10 @@ class Engine:
 
     def run(self) -> EngineResult:
         """Execute the backtest. Returns complete results."""
+        if self.config.initial_capital <= 0:
+            raise ValueError(
+                f"initial_capital must be positive (got {self.config.initial_capital})"
+            )
         start_time = time.monotonic()
 
         if self._strategy is None:
@@ -361,12 +365,19 @@ class Engine:
             if self._fx_data:
                 self._update_fx_rates(timestamp)
 
-            # Skip NaN closes — happens early in a series before forward-fill kicks in
-            prices = {
-                ev.symbol: ev.close
-                for ev in bar_group
-                if ev.close == ev.close  # NaN != NaN
-            }
+            # Skip NaN closes — happens early in a series before forward-fill kicks in.
+            # Also skip bars where high < low, which indicates corrupted data.
+            prices = {}
+            for ev in bar_group:
+                if ev.close != ev.close:  # NaN check
+                    continue
+                if ev.high < ev.low:
+                    logger.warning(
+                        "OHLC sanity: high %.4f < low %.4f for %s at %s — bar skipped",
+                        ev.high, ev.low, ev.symbol, ev.timestamp,
+                    )
+                    continue
+                prices[ev.symbol] = ev.close
             self._portfolio.update_prices(prices)
 
             # Audit trail: what the engine saw this step
@@ -393,6 +404,7 @@ class Engine:
                     close=event.close,
                     volume=event.volume,
                     bar_index=event.bar_index,
+                    is_synthetic=event.is_synthetic,
                 )
                 self._broker.process_bar(bar, timestamp)
 
@@ -437,6 +449,7 @@ class Engine:
                     close=event.close,
                     volume=event.volume,
                     bar_index=event.bar_index,
+                    is_synthetic=event.is_synthetic,
                 )
                 self._strategy._record_bar(b)
 
@@ -452,6 +465,7 @@ class Engine:
                         close=event.close,
                         volume=event.volume,
                         bar_index=event.bar_index,
+                        is_synthetic=event.is_synthetic,
                     )
                     self._strategy.on_data(b)
 
@@ -466,6 +480,7 @@ class Engine:
                     close=event.close,
                     volume=event.volume,
                     bar_index=event.bar_index,
+                    is_synthetic=event.is_synthetic,
                 )
                 self._strategy._tick_executors(b, timestamp)
 
@@ -599,7 +614,15 @@ class Engine:
 
     def _on_fill(self, fill: FillEvent) -> None:
         """Portfolio books the fill; strategy hears about it too."""
+        # Track position opens for PDT enforcement BEFORE the portfolio update
+        # so we can compare flat→open transitions.
+        was_flat = not self._portfolio.has_position(fill.symbol)
         completed_trades = self._portfolio.on_fill(fill)
+        # If this fill opened a brand-new position, tell the risk manager so the
+        # PDT rule can identify same-day opens when a closing order arrives later.
+        if was_flat and self._portfolio.has_position(fill.symbol):
+            day_str = fill.timestamp.strftime("%Y-%m-%d")
+            self._risk_manager.record_position_open(fill.symbol, day_str)
         if self._strategy:
             self._strategy._route_executor_fill(fill)
             self._strategy.on_order_event(fill)

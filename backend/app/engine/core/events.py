@@ -48,6 +48,10 @@ class MarketDataEvent(Event):
     close: float = 0.0
     volume: float = 0.0
     bar_index: int = 0
+    # True when this bar was synthesised to pad a timestamp gap (e.g. a symbol
+    # that didn't trade on a given day in a multi-symbol backtest).  Volume-
+    # based indicators (VWAP, OBV, MFI, CMF …) should ignore synthetic bars.
+    is_synthetic: bool = False
 
     def __post_init__(self):
         self.priority = EventPriority.MARKET_DATA

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 
 export interface ConfigSelectOption {
@@ -32,14 +33,34 @@ export default function ConfigSelect({
   light = false,
 }: ConfigSelectProps) {
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
 
   const selectedOption = options.find(o => o.value === value);
   const displayValue = selectedOption?.label ?? selectedOption?.value ?? (value || placeholder);
 
+  const handleToggle = useCallback(() => {
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setDropdownStyle({
+        position: 'fixed',
+        top: rect.bottom + 6,
+        left: rect.left,
+        width: rect.width,
+        zIndex: 9999,
+      });
+    }
+    setOpen(prev => !prev);
+  }, [open]);
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        (!buttonRef.current || !buttonRef.current.contains(target)) &&
+        (!dropdownRef.current || !dropdownRef.current.contains(target))
+      ) {
         setOpen(false);
       }
     };
@@ -48,10 +69,11 @@ export default function ConfigSelect({
   }, []);
 
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
+    <div className={`relative ${className}`}>
       <button
+        ref={buttonRef}
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={handleToggle}
         className={`w-full flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 transition-colors duration-150
           focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500
           ${light
@@ -67,8 +89,12 @@ export default function ConfigSelect({
           size={16}
         />
       </button>
-      {open && (
-        <div className={`absolute top-full left-0 right-0 mt-1.5 rounded-lg shadow-xl z-50 max-h-52 overflow-y-auto ${light ? 'bg-white border border-gray-200 shadow-black/10' : 'bg-gray-800 border border-gray-600 shadow-black/30'}`}>
+      {open && typeof window !== 'undefined' && createPortal(
+        <div
+          ref={dropdownRef}
+          style={dropdownStyle}
+          className={`rounded-lg shadow-xl max-h-52 overflow-y-auto ${light ? 'bg-white border border-gray-200 shadow-black/10' : 'bg-gray-800 border border-gray-600 shadow-black/30'}`}
+        >
           {options.map((opt) => (
             <button
               key={opt.value}
@@ -86,7 +112,8 @@ export default function ConfigSelect({
               <span className="font-medium truncate">{opt.label}</span>
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

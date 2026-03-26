@@ -74,7 +74,7 @@ export default function ResultsTabContent({
 }: ResultsTabContentProps) {
   const {
     optimizeResults, walkForwardResults, oosResults, cpcvResults, factorResults, monteCarloResults,
-    optimizeLoading, walkForwardLoading, oosLoading, cpcvLoading, factorLoading, monteCarloLoading,
+    optimizeLoading, optimizeElapsed, walkForwardLoading, oosLoading, cpcvLoading, factorLoading, monteCarloLoading,
     optimizeMethod, setOptimizeMethod,
     heatmapParamX, setHeatmapParamX,
     heatmapParamY, setHeatmapParamY,
@@ -93,8 +93,10 @@ export default function ResultsTabContent({
     equityValues.length >= 2
       ? ((equityValues.at(-1)! - equityValues[0]) / equityValues[0]) * 100
       : null;
+  // Use reduce instead of Math.max(...spread) to avoid call-stack overflow on
+  // large series (spread operator hits argument count limits for big arrays).
   const maxDrawdown = results.drawdown_series?.length
-    ? Math.max(...results.drawdown_series.map((p) => p.drawdown_pct))
+    ? results.drawdown_series.reduce((m, p) => Math.max(m, p.drawdown_pct), -Infinity)
     : null;
   const lastSharpe =
     results.rolling_sharpe?.filter((p) => p.value != null).at(-1)?.value ?? null;
@@ -899,6 +901,11 @@ export default function ResultsTabContent({
                                   <button onClick={handleRunOptimization} disabled={optimizeLoading || (optimizeMethod === 'heatmap' && (!heatmapParamX || !heatmapParamY || heatmapParamX === heatmapParamY))} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-medium">
                                     {optimizeLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Run
                                   </button>
+                                  {optimizeLoading && (
+                                    <span className="text-[10px] text-gray-400 tabular-nums">
+                                      {Math.floor(optimizeElapsed / 60)}m {optimizeElapsed % 60}s
+                                    </span>
+                                  )}
                           </div>
                             </div>
                               {optimizeResults?.error && (
@@ -1109,11 +1116,6 @@ export default function ResultsTabContent({
                                   Overfit score: <span className="font-semibold">{oosResults.overfit_score}%</span> {oosResults.overfit_score > 50 ? '(high – strategy may be overfit)' : '(low – good generalization)'}
                         </div>
                       )}
-                              {(oosResults.n_folds ?? 0) > 1 && !oosResults.is_result && (
-                                <div className="p-2 rounded-lg border border-gray-200 bg-gray-50 text-xs">
-                                  <span className="font-medium">K-fold ({oosResults.n_folds} folds):</span> Sharpe {oosResults.oos_sharpe_mean?.toFixed(2)} ± {oosResults.oos_sharpe_std?.toFixed(2)} · Return {(oosResults.oos_return_mean ?? 0).toFixed(1)}% ± {(oosResults.oos_return_std ?? 0).toFixed(1)}%
-                          </div>
-                        )}
                               {Object.keys(oosResults.best_params || {}).length > 0 && (
                                 <div className="text-[10px] text-gray-500">Best params: {JSON.stringify(oosResults.best_params)}</div>
                         )}
@@ -1302,7 +1304,7 @@ export default function ResultsTabContent({
                                       </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
-                                      {(factorResults.factors ?? []).map((f: any) => (
+                                      {(factorResults.factors ?? []).map((f) => (
                                         <tr key={f.factor} className="hover:bg-gray-50">
                                           <td className="px-3 py-1.5 text-gray-700 font-medium">{f.factor} <span className="text-emerald-500">{f.significance}</span></td>
                                           <td className={`px-3 py-1.5 text-right font-mono ${Math.abs(f.beta) > 0.3 ? 'font-semibold' : ''}`}>{f.beta.toFixed(3)}</td>
@@ -1327,9 +1329,9 @@ export default function ResultsTabContent({
                               <div>
                                 <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Return Decomposition</div>
                                 <div className="p-3 rounded-lg border border-gray-200 bg-white space-y-2">
-                                  {(factorResults.factors ?? []).map((f: any) => {
+                                  {(factorResults.factors ?? []).map((f) => {
                                     const maxAbs = Math.max(
-                                      ...(factorResults.factors ?? []).map((x: any) => Math.abs(x.annual_contribution_pct)),
+                                      ...(factorResults.factors ?? []).map((x) => Math.abs(x.annual_contribution_pct)),
                                       Math.abs(factorResults.alpha_annual_pct ?? 0),
                                       0.01
                                     );
@@ -1349,7 +1351,7 @@ export default function ResultsTabContent({
                                     <div className="flex-1 h-4 bg-gray-100 rounded-full overflow-hidden relative">
                                       {(() => {
                                         const maxAbs = Math.max(
-                                          ...(factorResults.factors ?? []).map((x: any) => Math.abs(x.annual_contribution_pct)),
+                                          ...(factorResults.factors ?? []).map((x) => Math.abs(x.annual_contribution_pct)),
                                           Math.abs(factorResults.alpha_annual_pct ?? 0),
                                           0.01
                                         );
@@ -1405,7 +1407,7 @@ export default function ResultsTabContent({
                               label: `W${(w.window ?? i + 1)}`,
                               is_sharpe: w.train_sharpe ?? null,
                               oos_sharpe: w.test_sharpe ?? w.oos_sharpe ?? null,
-                              oos_return: (w.test_return ?? w.oos_return ?? 0) * 100,
+                              oos_return: w.test_return ?? w.oos_return ?? 0,
                               testStart: w.test_period?.start ?? w.test_start ?? '-',
                               testEnd: w.test_period?.end ?? w.oos_end ?? '-',
                             }));
@@ -1418,7 +1420,7 @@ export default function ResultsTabContent({
                                     <div className="p-2 rounded-lg border border-gray-200 bg-white">
                                       <div className="text-[10px] text-gray-500 mb-0.5">Avg OOS Return</div>
                                       <div className={`text-sm font-semibold ${walkForwardResults.avg_oos_return >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                                        {(walkForwardResults.avg_oos_return * 100).toFixed(1)}%
+                                        {walkForwardResults.avg_oos_return.toFixed(1)}%
                                       </div>
                                     </div>
                                   )}
@@ -1596,7 +1598,12 @@ export default function ResultsTabContent({
                                             tickLine={false}
                                             axisLine={false}
                                             tick={{ fontSize: 10, fontFamily: 'monospace', fill: '#9ca3af' }}
-                                            tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
+                                            tickFormatter={(v: number) => {
+                                              const abs = Math.abs(v);
+                                              if (abs >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+                                              if (abs >= 1_000) return `$${(v / 1_000).toFixed(0)}k`;
+                                              return `$${v.toFixed(0)}`;
+                                            }}
                                             domain={['auto', 'auto']}
                                           />
                                           <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(0,0,0,0.1)', strokeWidth: 1 }} />
@@ -1644,15 +1651,15 @@ export default function ResultsTabContent({
                               </div>
                             <div className="p-3 rounded-lg border border-gray-200 bg-white">
                               <div className="text-[11px] text-gray-500 mb-1">Sortino</div>
-                              <div className="text-sm font-semibold text-gray-900">{(results as { sortino_ratio?: number }).sortino_ratio?.toFixed(2) ?? '-'}</div>
+                              <div className="text-sm font-semibold text-gray-900">{results.sortino_ratio?.toFixed(2) ?? '-'}</div>
                             </div>
                             <div className="p-3 rounded-lg border border-gray-200 bg-white">
                               <div className="text-[11px] text-gray-500 mb-1">Calmar</div>
-                              <div className="text-sm font-semibold text-gray-900">{(results as { calmar_ratio?: number }).calmar_ratio?.toFixed(2) ?? '-'}</div>
+                              <div className="text-sm font-semibold text-gray-900">{results.calmar_ratio?.toFixed(2) ?? '-'}</div>
                               </div>
                             <div className="p-3 rounded-lg border border-gray-200 bg-white">
                               <div className="text-[11px] text-gray-500 mb-1">Max consec. losses</div>
-                              <div className="text-sm font-semibold text-gray-900">{(results as { max_consecutive_losses?: number }).max_consecutive_losses ?? '-'}</div>
+                              <div className="text-sm font-semibold text-gray-900">{results.max_consecutive_losses ?? '-'}</div>
                             </div>
                             <div className="p-3 rounded-lg border border-gray-200 bg-white">
                               <div className="text-[11px] text-gray-500 mb-1">VaR 95%</div>
@@ -1671,11 +1678,11 @@ export default function ResultsTabContent({
                               <div className="text-sm font-semibold text-red-500">{results.cvar_99 != null ? `${results.cvar_99.toFixed(2)}%` : '-'}</div>
                             </div>
                           </div>
-                          {(results as { risk_violations?: Array<{ rule: string; description: string }> }).risk_violations?.length ? (
+                          {results.risk_violations?.length ? (
                             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
                               <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-700 mb-2">Risk violations</div>
                               <ul className="space-y-1.5">
-                                {(results as { risk_violations: Array<{ rule: string; description: string }> }).risk_violations.map((v, i) => (
+                                {results.risk_violations.map((v, i) => (
                                   <li key={i} className="text-xs text-amber-800 flex items-start gap-2">
                                     <span className="text-amber-500 mt-0.5">•</span>
                                     <span><span className="font-medium">{v.rule}:</span> {v.description}</span>
@@ -1697,37 +1704,91 @@ export default function ResultsTabContent({
                           if (!byMonth[m]) byMonth[m] = { first: p.equity, last: p.equity };
                           else byMonth[m]!.last = p.equity;
                         }
-                        const months = Object.keys(byMonth).sort();
                         const monthReturns: Record<string, number> = {};
-                        for (const m of months) {
-                          const v = byMonth[m]!;
+                        for (const [m, v] of Object.entries(byMonth)) {
                           if (v.first > 0) monthReturns[m] = (v.last / v.first - 1) * 100;
                         }
                         const validMonths = Object.keys(monthReturns).sort();
                         if (validMonths.length === 0) return <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center text-gray-500 text-xs">No equity curve for monthly returns heatmap.</div>;
+
+                        const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                        const years = [...new Set(validMonths.map(m => m.slice(0, 4)))].sort();
+
+                        // Compounded yearly return = product of (1 + monthReturn/100) - 1
+                        const yearlyReturn = (year: string) => {
+                          const factor = MONTH_LABELS.reduce((acc, _, i) => {
+                            const key = `${year}-${String(i + 1).padStart(2, '0')}`;
+                            const r = monthReturns[key];
+                            return r !== undefined ? acc * (1 + r / 100) : acc;
+                          }, 1);
+                          return (factor - 1) * 100;
+                        };
+
+                        const cellStyle = (ret: number | undefined): string => {
+                          if (ret === undefined) return 'bg-gray-50 border-gray-100 text-gray-300';
+                          if (ret >= 0) return 'bg-emerald-50 border-emerald-200 text-emerald-700';
+                          return 'bg-red-50 border-red-200 text-red-700';
+                        };
+
                         return (
-                          <div className="space-y-2">
+                          <div className="space-y-2 overflow-x-auto">
                             <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Monthly Returns (%)</div>
-                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                              {validMonths.map(m => {
-                                const ret = monthReturns[m] ?? 0;
-                                return (
-                                  <div key={m} className={`p-2.5 rounded-lg border text-center ${ret >= 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
-                                    <div className="text-[10px] text-gray-500">{m}</div>
-                                    <div className="text-sm font-semibold">{ret >= 0 ? '+' : ''}{ret.toFixed(2)}%</div>
-                                  </div>
-                                );
-                              })}
+                            <table className="w-full text-xs border-separate" style={{ borderSpacing: '3px' }}>
+                              <thead>
+                                <tr>
+                                  <th className="text-[10px] font-medium text-gray-400 text-left pr-2 w-10"></th>
+                                  {MONTH_LABELS.map(label => (
+                                    <th key={label} className="text-[10px] font-medium text-gray-500 text-center w-12">{label}</th>
+                                  ))}
+                                  <th className="text-[10px] font-medium text-gray-500 text-center w-14 pl-1">Year</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {years.map(year => {
+                                  const yr = yearlyReturn(year);
+                                  return (
+                                    <tr key={year}>
+                                      <td className="text-[10px] font-medium text-gray-500 pr-2 text-right">{year}</td>
+                                      {MONTH_LABELS.map((_, i) => {
+                                        const key = `${year}-${String(i + 1).padStart(2, '0')}`;
+                                        const ret = monthReturns[key];
+                                        return (
+                                          <td key={key} className={`rounded border text-center py-1 px-0.5 ${cellStyle(ret)}`}
+                                            title={ret !== undefined ? `${key}: ${ret >= 0 ? '+' : ''}${ret.toFixed(2)}%` : key}>
+                                            {ret !== undefined
+                                              ? <span className="font-semibold" style={{ fontSize: '10px' }}>{ret >= 0 ? '+' : ''}{ret.toFixed(1)}</span>
+                                              : <span style={{ fontSize: '10px' }}>—</span>}
+                                          </td>
+                                        );
+                                      })}
+                                      <td className={`rounded border text-center py-1 px-1 font-semibold ${yr >= 0 ? 'bg-emerald-100 border-emerald-300 text-emerald-800' : 'bg-red-100 border-red-300 text-red-800'}`}
+                                        style={{ fontSize: '10px' }}>
+                                        {yr >= 0 ? '+' : ''}{yr.toFixed(1)}%
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                            <div className="flex items-center gap-3 pt-1">
+                              <div className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-emerald-50 border border-emerald-200" /><span className="text-[10px] text-gray-500">Positive</span></div>
+                              <div className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-red-50 border border-red-200" /><span className="text-[10px] text-gray-500">Negative</span></div>
+                              <div className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-gray-50 border border-gray-100" /><span className="text-[10px] text-gray-500">No data</span></div>
                             </div>
                           </div>
                         );
                       })()}
                       {activeResultsTab === 'distribution' && (() => {
                         const trades = results.trades || [];
-                        const pnls = trades.map(t => t.pnl ?? 0).filter(Boolean);
+                        const pnls = trades.map(t => t.pnl).filter((p): p is number => p !== undefined && p !== null);
                         if (pnls.length === 0) return <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center text-gray-500 text-xs">No trade P&amp;L data.</div>;
                         const bins: Record<string, number> = {};
-                        const step = 50;
+                        const minPnl = Math.min(...pnls);
+                        const maxPnl = Math.max(...pnls);
+                        const range = maxPnl - minPnl || 1;
+                        const rawStep = range / 15;
+                        const magnitude = Math.pow(10, Math.floor(Math.log10(Math.abs(rawStep) || 1)));
+                        const step = Math.max(Math.ceil(rawStep / magnitude) * magnitude, 0.01);
                         for (const p of pnls) {
                           const b = Math.floor(p / step) * step;
                           bins[b] = (bins[b] ?? 0) + 1;
@@ -1770,9 +1831,9 @@ export default function ResultsTabContent({
                                   <div className={`text-sm font-semibold ${results.benchmark_return >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{results.benchmark_return.toFixed(1)}%</div>
                               </div>
                           </div>
-                              <div className="p-3 rounded-lg border border-emerald-200 bg-emerald-50">
+                              <div className={`p-3 rounded-lg border ${results.total_return > results.benchmark_return ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}`}>
                                 <div className="text-[11px] text-gray-600 mb-0.5">Alpha</div>
-                                <div className={`text-lg font-bold ${results.total_return > results.benchmark_return ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                <div className={`text-lg font-bold ${results.total_return > results.benchmark_return ? 'text-emerald-600' : 'text-red-500'}`}>
                                   {(results.total_return - results.benchmark_return) >= 0 ? '+' : ''}{(results.total_return - results.benchmark_return).toFixed(1)}%
                         </div>
                     </div>
@@ -1786,20 +1847,20 @@ export default function ResultsTabContent({
                       )}
                       {activeResultsTab === 'tca' && (
                         <div className="space-y-3">
-                          {((results as { total_commission?: number }).total_commission || (results as { total_slippage?: number }).total_slippage) ? (
+                          {(results.total_commission != null || results.total_slippage != null) ? (
                             <>
                             <div className="grid grid-cols-2 gap-2">
                               <div className="p-3 rounded-lg border border-gray-200 bg-white">
                                 <div className="text-[11px] text-gray-500 mb-1">Total commission</div>
-                                <div className="text-sm font-semibold text-gray-900">${((results as { total_commission?: number }).total_commission ?? 0).toFixed(2)}</div>
+                                <div className="text-sm font-semibold text-gray-900">${(results.total_commission ?? 0).toFixed(2)}</div>
                               </div>
                               <div className="p-3 rounded-lg border border-gray-200 bg-white">
                                 <div className="text-[11px] text-gray-500 mb-1">Total slippage</div>
-                                <div className="text-sm font-semibold text-gray-900">${((results as { total_slippage?: number }).total_slippage ?? 0).toFixed(2)}</div>
+                                <div className="text-sm font-semibold text-gray-900">${(results.total_slippage ?? 0).toFixed(2)}</div>
                               </div>
                               <div className="p-3 rounded-lg border border-gray-200 bg-white col-span-2">
                                 <div className="text-[11px] text-gray-500 mb-1">Cost as % of P&amp;L</div>
-                                <div className="text-sm font-semibold text-gray-900">{((results as { cost_as_pct_of_pnl?: number }).cost_as_pct_of_pnl ?? 0).toFixed(2)}%</div>
+                                <div className="text-sm font-semibold text-gray-900">{(results.cost_as_pct_of_pnl ?? 0).toFixed(2)}%</div>
                               </div>
                             </div>
                             {((results.total_funding_paid ?? 0) > 0 || (results.total_funding_received ?? 0) > 0) && (

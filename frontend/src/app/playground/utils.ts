@@ -60,6 +60,31 @@ export function extractApiError(err: unknown, fallback = 'Something went wrong')
   return fallback;
 }
 
+// Categorize a raw backend error_message into a user-friendly string
+export function categorizeBacktestError(msg: string | null | undefined): string {
+  if (!msg) return 'Backtest failed';
+  const lower = msg.toLowerCase();
+  if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('alarm'))
+    return `Timeout: strategy exceeded the maximum execution time`;
+  if (lower.includes('out of memory') || lower.includes('memory limit'))
+    return `Memory: strategy used too much memory`;
+  if (lower.includes('syntaxerror'))
+    return `Syntax error in strategy code: ${msg.replace(/^.*SyntaxError:\s*/i, '')}`;
+  if (lower.includes('nameerror'))
+    return `Name error in strategy: ${msg.replace(/^.*NameError:\s*/i, '')}`;
+  if (lower.includes('attributeerror'))
+    return `Attribute error in strategy: ${msg.replace(/^.*AttributeError:\s*/i, '')}`;
+  if (lower.includes('typeerror'))
+    return `Type error in strategy: ${msg.replace(/^.*TypeError:\s*/i, '')}`;
+  if (lower.includes('no data') || lower.includes('insufficient data') || lower.includes('empty dataframe'))
+    return `Data error: no price data returned for the selected symbol and date range`;
+  if (lower.includes('not allowed') || lower.includes('permission') || lower.includes('blocked'))
+    return `Security: ${msg}`;
+  if (lower.includes('initial_capital'))
+    return `Config error: ${msg}`;
+  return msg;
+}
+
 // Poll until task finishes or times out
 export async function pollTaskResult<T extends { status: string; error?: string }>(
   fetchResult: (taskId: string) => Promise<T>,
