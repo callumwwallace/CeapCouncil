@@ -256,6 +256,10 @@ class Portfolio:
             for symbol, pos in self._positions.items()
             if not pos.is_flat
         )
+        # Fall back to deriving position value from recorded margin when positions
+        # haven't been priced yet (e.g. state set directly in tests or before first tick).
+        if total_position_value == 0 and self._margin_used > 0:
+            total_position_value = self._margin_used / (self.margin.initial_margin_pct / 100)
         maintenance_req = total_position_value * (self.margin.maintenance_margin_pct / 100)
         if self.equity < maintenance_req:
             self._margin_calls.append({
