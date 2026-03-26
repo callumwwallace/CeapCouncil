@@ -764,10 +764,8 @@ export interface FactorResults {
     significance: string;
     annual_contribution_pct: number;
   }>;
-  alpha_significant?: boolean;
   adj_r_squared?: number | null;
   factor_contribution_sum_pct?: number | null;
   unexplained_alpha_pct?: number | null;
-  strategy_annual_return_pct?: number | null;
   strategy_total_return_pct?: number | null;
 }
