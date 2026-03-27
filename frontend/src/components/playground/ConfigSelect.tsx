@@ -48,7 +48,7 @@ export default function ConfigSelect({
         top: rect.bottom + 6,
         left: rect.left,
         width: rect.width,
-        zIndex: 9999,
+        zIndex: 2147483647,
       });
     }
     setOpen(prev => !prev);
