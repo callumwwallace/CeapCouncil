@@ -368,9 +368,7 @@ export default function CompetitionsPage() {
           <div className="flex items-start justify-between gap-4 mb-5">
             <div>
               <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                <div className="p-2 bg-emerald-100 rounded-xl">
-                  <Trophy className="h-6 w-6 text-emerald-600" />
-                </div>
+                <Trophy className="h-6 w-6 text-emerald-600" />
                 Competitions
               </h1>
               <p className="mt-1.5 text-gray-500 ml-1">
