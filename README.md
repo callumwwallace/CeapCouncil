@@ -184,7 +184,7 @@ Copy `.env.example` to `.env` in both `/frontend` and `/backend`. The key ones t
 
 ## Roadmap
 
-- **Arena** — live paper trading with real-time data feeds
+- **Arena** live paper trading with real-time data feeds
 - More market data sources beyond yfinance
 - Redesign UI for competitions with potential tournament system for competitions 
 - Add notebook support for a research area (notebook sharing to community so on)
