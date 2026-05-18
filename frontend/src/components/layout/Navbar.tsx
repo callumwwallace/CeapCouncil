@@ -11,7 +11,7 @@ import { safeProfilePath } from '@/lib/safePaths';
 const navLinks = [
   { href: '/playground', label: 'Playground' },
   { href: '/lab', label: 'Lab' },
-  { href: '/arena', label: 'Arena' },
+  // { href: '/arena', label: 'Arena' }, // hidden for now - still just a placeholder
   { href: '/competitions', label: 'Competitions' },
   { href: '/community', label: 'Community' },
   { href: '/docs', label: 'Docs' },

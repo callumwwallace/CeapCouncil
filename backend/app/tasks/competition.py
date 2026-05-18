@@ -448,10 +448,14 @@ def _generate_fallback_competitions(db, start_date: datetime, end_date: datetime
 
     created_ids = []
     now = datetime.utcnow()
-    recent = db.query(Competition.title).filter(Competition.created_at >= now - relativedelta(weeks=8)).all()
-    recent_titles = {r[0] for r in recent}
+    week_tag = start_date.strftime("%b %d")
 
-    def _create(tmpl, title, symbol):
+    templates = list(_PROPOSAL_TEMPLATES)
+    random.shuffle(templates)
+    for i in range(count):
+        tmpl = templates[i % len(templates)]
+        symbol = random.choice(tmpl["symbols"])
+        title = f"{tmpl['title'].format(symbol=symbol)} · Week of {week_tag}"[:200]
         end_dt = now - relativedelta(months=1)
         start_dt = end_dt - relativedelta(months=tmpl["period_months"])
         comp = Competition(
@@ -471,29 +475,6 @@ def _generate_fallback_competitions(db, start_date: datetime, end_date: datetime
         db.add(comp)
         db.flush()
         created_ids.append(comp.id)
-
-    templates = list(_PROPOSAL_TEMPLATES)
-    random.shuffle(templates)
-    for tmpl in templates:
-        if len(created_ids) >= count:
-            break
-        symbol = random.choice(tmpl["symbols"])
-        title = tmpl["title"].format(symbol=symbol)
-        if title in recent_titles:
-            continue
-        recent_titles.add(title)
-        _create(tmpl, title, symbol)
-
-    week_tag = start_date.strftime("%b %d")
-    while len(created_ids) < count:
-        tmpl = random.choice(_PROPOSAL_TEMPLATES)
-        symbol = random.choice(tmpl["symbols"])
-        title = f"{tmpl['title'].format(symbol=symbol)} ({week_tag})"[:200]
-        if title in recent_titles:
-            continue
-        recent_titles.add(title)
-        _create(tmpl, title, symbol)
-
     return created_ids
 
 
